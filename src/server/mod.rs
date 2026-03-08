@@ -84,6 +84,7 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .allow_headers(tower_http::cors::Any);
 
     let api_routes = Router::new()
+        .route("/health", get(|| async { axum::Json(serde_json::json!({"ok": true})) }))
         .route("/status", get(api::get_status))
         .route("/review", post(api::start_review))
         .route("/reviews", get(api::list_reviews))
