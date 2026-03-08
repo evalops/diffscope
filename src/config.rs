@@ -20,6 +20,12 @@ pub struct Config {
     #[serde(default = "default_max_diff_chars")]
     pub max_diff_chars: usize,
 
+    #[serde(default = "default_context_max_chunks")]
+    pub context_max_chunks: usize,
+
+    #[serde(default = "default_context_budget_chars")]
+    pub context_budget_chars: usize,
+
     #[serde(default = "default_min_confidence")]
     pub min_confidence: f32,
 
@@ -92,6 +98,12 @@ pub struct Config {
 
     #[serde(default)]
     pub pattern_repositories: Vec<PatternRepositoryConfig>,
+
+    #[serde(default)]
+    pub rules_files: Vec<String>,
+
+    #[serde(default = "default_max_active_rules")]
+    pub max_active_rules: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -140,6 +152,12 @@ pub struct PatternRepositoryConfig {
 
     #[serde(default = "default_pattern_repo_max_lines")]
     pub max_lines: usize,
+
+    #[serde(default)]
+    pub rule_patterns: Vec<String>,
+
+    #[serde(default = "default_pattern_repo_max_rules")]
+    pub max_rules: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -162,6 +180,8 @@ impl Default for Config {
             max_tokens: default_max_tokens(),
             max_context_chars: default_max_context_chars(),
             max_diff_chars: default_max_diff_chars(),
+            context_max_chunks: default_context_max_chunks(),
+            context_budget_chars: default_context_budget_chars(),
             min_confidence: default_min_confidence(),
             strictness: default_strictness(),
             comment_types: default_comment_types(),
@@ -188,6 +208,8 @@ impl Default for Config {
             paths: HashMap::new(),
             custom_context: Vec::new(),
             pattern_repositories: Vec::new(),
+            rules_files: Vec::new(),
+            max_active_rules: default_max_active_rules(),
         }
     }
 }
@@ -244,6 +266,12 @@ impl Config {
 
         if self.max_tokens == 0 {
             self.max_tokens = default_max_tokens();
+        }
+        if self.context_max_chunks == 0 {
+            self.context_max_chunks = default_context_max_chunks();
+        }
+        if self.context_budget_chars == 0 {
+            self.context_budget_chars = default_context_budget_chars();
         }
 
         if self.symbol_index_max_files == 0 {
@@ -369,10 +397,29 @@ impl Config {
             if repo.max_lines == 0 {
                 repo.max_lines = default_pattern_repo_max_lines();
             }
+            if repo.max_rules == 0 {
+                repo.max_rules = default_pattern_repo_max_rules();
+            }
+            repo.rule_patterns = repo
+                .rule_patterns
+                .into_iter()
+                .map(|pattern| pattern.trim().to_string())
+                .filter(|pattern| !pattern.is_empty())
+                .collect();
 
             normalized_pattern_repositories.push(repo);
         }
         self.pattern_repositories = normalized_pattern_repositories;
+
+        self.rules_files = self
+            .rules_files
+            .iter()
+            .map(|pattern| pattern.trim().to_string())
+            .filter(|pattern| !pattern.is_empty())
+            .collect();
+        if self.max_active_rules == 0 {
+            self.max_active_rules = default_max_active_rules();
+        }
     }
 
     pub fn get_path_config(&self, file_path: &Path) -> Option<&PathConfig> {
@@ -461,46 +508,6 @@ impl Config {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalize_clamps_values() {
-        let mut config = Config::default();
-        config.model = "   ".to_string();
-        config.temperature = 5.0;
-        config.max_tokens = 0;
-        config.min_confidence = 2.0;
-        config.strictness = 0;
-        config.review_profile = Some("ASSERTIVE".to_string());
-
-        config.normalize();
-
-        assert_eq!(config.model, default_model());
-        assert_eq!(config.temperature, default_temperature());
-        assert_eq!(config.max_tokens, default_max_tokens());
-        assert_eq!(config.min_confidence, 1.0);
-        assert_eq!(config.strictness, default_strictness());
-        assert_eq!(config.review_profile.as_deref(), Some("assertive"));
-    }
-
-    #[test]
-    fn normalize_comment_types_filters_unknown_values() {
-        let mut config = Config::default();
-        config.comment_types = vec![
-            " LOGIC ".to_string(),
-            "style".to_string(),
-            "unknown".to_string(),
-            "STYLE".to_string(),
-        ];
-
-        config.normalize();
-
-        assert_eq!(config.comment_types, vec!["logic", "style"]);
-    }
-}
-
 fn default_model() -> String {
     "gpt-4o".to_string()
 }
@@ -519,6 +526,14 @@ fn default_max_context_chars() -> usize {
 
 fn default_max_diff_chars() -> usize {
     40000
+}
+
+fn default_context_max_chunks() -> usize {
+    24
+}
+
+fn default_context_budget_chars() -> usize {
+    24000
 }
 
 fn default_min_confidence() -> f32 {
@@ -580,6 +595,14 @@ fn default_pattern_repo_max_lines() -> usize {
     200
 }
 
+fn default_pattern_repo_max_rules() -> usize {
+    200
+}
+
+fn default_max_active_rules() -> usize {
+    30
+}
+
 fn default_true() -> bool {
     true
 }
@@ -607,5 +630,49 @@ fn normalize_comment_types(values: &[String]) -> Vec<String> {
         default_comment_types()
     } else {
         normalized
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_clamps_values() {
+        let mut config = Config {
+            model: "   ".to_string(),
+            temperature: 5.0,
+            max_tokens: 0,
+            min_confidence: 2.0,
+            strictness: 0,
+            review_profile: Some("ASSERTIVE".to_string()),
+            ..Config::default()
+        };
+
+        config.normalize();
+
+        assert_eq!(config.model, default_model());
+        assert_eq!(config.temperature, default_temperature());
+        assert_eq!(config.max_tokens, default_max_tokens());
+        assert_eq!(config.min_confidence, 1.0);
+        assert_eq!(config.strictness, default_strictness());
+        assert_eq!(config.review_profile.as_deref(), Some("assertive"));
+    }
+
+    #[test]
+    fn normalize_comment_types_filters_unknown_values() {
+        let mut config = Config {
+            comment_types: vec![
+                " LOGIC ".to_string(),
+                "style".to_string(),
+                "unknown".to_string(),
+                "STYLE".to_string(),
+            ],
+            ..Config::default()
+        };
+
+        config.normalize();
+
+        assert_eq!(config.comment_types, vec!["logic", "style"]);
     }
 }

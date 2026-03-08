@@ -62,6 +62,7 @@ For each issue found, respond with exactly this format:
 ```
 ISSUE: [Brief title]
 LINE: [line number]
+RULE: [optional rule id or empty]
 SEVERITY: [CRITICAL|HIGH|MEDIUM|LOW]
 CATEGORY: [Security|Performance|Bug|Maintainability|Testing|Style|Documentation]
 CONFIDENCE: [0-100]%

@@ -7,6 +7,8 @@ temperature: 0.2
 max_tokens: 4000
 max_context_chars: 20000  # 0 disables context truncation
 max_diff_chars: 40000     # 0 disables diff truncation
+context_max_chunks: 24    # Max context chunks sent to the model per file
+context_budget_chars: 24000 # Max chars across ranked context chunks per file
 min_confidence: 0.0       # Drop comments below this confidence (0.0-1.0)
 strictness: 2             # 1 = high-signal only, 2 = balanced, 3 = deep scan
 comment_types:            # logic | syntax | style | informational
@@ -56,6 +58,17 @@ pattern_repositories:
       - "examples/**/*.yml"
     max_files: 8
     max_lines: 200
+    rule_patterns:
+      - "policy/**/*.yml"
+      - "policy/**/*.json"
+    max_rules: 200
+
+# Rule files to load directly from this repository.
+# If omitted, diffscope auto-discovers .diffscope-rules.{yml,yaml,json} and rules/**/*.y{a,}ml/json.
+rules_files:
+  - ".diffscope-rules.yml"
+  - "rules/**/*.yml"
+max_active_rules: 30
 
 # API configuration (optional - can use environment variables)
 # api_key: your-api-key-here

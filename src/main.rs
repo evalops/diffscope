@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::io::IsTerminal;
@@ -190,6 +191,14 @@ enum Commands {
         #[arg(long, help = "Interactive discussion mode")]
         interactive: bool,
     },
+    #[command(about = "Evaluate review quality against fixture expectations")]
+    Eval {
+        #[arg(long, default_value = "eval/fixtures")]
+        fixtures: PathBuf,
+
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -323,6 +332,9 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Commands::Eval { fixtures, output } => {
+            eval_command(config, fixtures, output).await?;
+        }
     }
 
     Ok(())
@@ -343,6 +355,8 @@ async fn review_command(
         .unwrap_or_else(|| PathBuf::from("."));
     let repo_path_str = repo_root.to_string_lossy().to_string();
     let context_fetcher = core::ContextFetcher::new(repo_root.clone());
+    let pattern_repositories = resolve_pattern_repositories(&config, &repo_root);
+    let review_rules = load_review_rules(&config, &pattern_repositories, &repo_root);
 
     let mut plugin_manager = plugins::plugin::PluginManager::new();
     plugin_manager.load_builtin_plugins(&config.plugins).await?;
@@ -475,6 +489,23 @@ async fn review_command(
             }
         }
         inject_custom_context(&config, &context_fetcher, diff, &mut context_chunks).await?;
+        inject_pattern_repository_context(
+            &config,
+            &pattern_repositories,
+            &context_fetcher,
+            diff,
+            &mut context_chunks,
+        )
+        .await?;
+        let active_rules =
+            core::active_rules_for_file(&review_rules, &diff.file_path, config.max_active_rules);
+        inject_rule_context(diff, &active_rules, &mut context_chunks);
+        context_chunks = rank_and_trim_context_chunks(
+            diff,
+            context_chunks,
+            config.context_max_chunks,
+            config.context_budget_chars,
+        );
 
         if let Some(guidance) = build_review_guidance(&config, path_config) {
             local_prompt_config.system_prompt.push_str("\n\n");
@@ -515,6 +546,7 @@ async fn review_command(
                     }
                 }
             }
+            let comments = apply_rule_overrides(comments, &active_rules);
 
             let comments = filter_comments_for_diff(diff, comments);
             all_comments.extend(comments);
@@ -817,36 +849,279 @@ async fn pr_command(
 
     let comments = review_diff_content_raw(&diff_content, config.clone(), &repo_root).await?;
 
-    if post_comments && !comments.is_empty() {
+    if post_comments {
         info!("Posting {} comments to PR", comments.len());
+        let metadata = fetch_pr_metadata(&pr_number, repo.as_ref())?;
+        let mut inline_posted = 0usize;
+        let mut fallback_posted = 0usize;
 
         for comment in &comments {
-            let body = format!("**{:?}**: {}", comment.severity, comment.content);
+            let body = build_github_comment_body(comment);
+            let inline_result =
+                post_inline_pr_comment(&pr_number, repo.as_ref(), &metadata, comment, &body);
 
-            let mut comment_args = vec![
-                "pr".to_string(),
-                "comment".to_string(),
-                pr_number.clone(),
-                "--body".to_string(),
-                body,
-            ];
-            if let Some(repo) = repo.as_ref() {
-                comment_args.push("--repo".to_string());
-                comment_args.push(repo.clone());
+            if inline_result.is_ok() {
+                inline_posted += 1;
+                continue;
             }
-            let comment_output = Command::new("gh").args(&comment_args).output()?;
-            if !comment_output.status.success() {
-                let stderr = String::from_utf8_lossy(&comment_output.stderr);
-                anyhow::bail!("gh pr comment failed: {}", stderr.trim());
+
+            if let Err(err) = inline_result {
+                warn!(
+                    "Inline comment failed for {}:{} (falling back to PR comment): {}",
+                    comment.file_path.display(),
+                    comment.line_number,
+                    err
+                );
             }
+            post_pr_comment(&pr_number, repo.as_ref(), &body)?;
+            fallback_posted += 1;
         }
+        upsert_pr_summary_comment(&pr_number, repo.as_ref(), &metadata, &comments)?;
 
-        println!("Posted {} comments to PR #{}", comments.len(), pr_number);
+        println!(
+            "Posted {} comments to PR #{} (inline: {}, fallback: {}, summary: updated)",
+            comments.len(),
+            pr_number,
+            inline_posted,
+            fallback_posted
+        );
     } else {
         output_comments(&comments, None, format).await?;
     }
 
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct GhPrMetadata {
+    #[serde(rename = "headRefOid")]
+    head_ref_oid: String,
+    #[serde(rename = "baseRepository")]
+    base_repository: GhBaseRepository,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhBaseRepository {
+    #[serde(rename = "nameWithOwner")]
+    name_with_owner: String,
+}
+
+fn fetch_pr_metadata(pr_number: &str, repo: Option<&String>) -> Result<GhPrMetadata> {
+    use std::process::Command;
+
+    let mut args = vec![
+        "pr".to_string(),
+        "view".to_string(),
+        pr_number.to_string(),
+        "--json".to_string(),
+        "headRefOid,baseRepository".to_string(),
+    ];
+    if let Some(repo) = repo {
+        args.push("--repo".to_string());
+        args.push(repo.clone());
+    }
+
+    let output = Command::new("gh").args(&args).output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("gh pr view metadata failed: {}", stderr.trim());
+    }
+
+    let metadata: GhPrMetadata = serde_json::from_slice(&output.stdout)?;
+    Ok(metadata)
+}
+
+fn build_github_comment_body(comment: &core::Comment) -> String {
+    let mut body = format!(
+        "**{:?} ({:?})**\n\n{}",
+        comment.severity, comment.category, comment.content
+    );
+    if let Some(suggestion) = &comment.suggestion {
+        body.push_str("\n\n**Suggested fix:** ");
+        body.push_str(suggestion);
+    }
+    body.push_str(&format!(
+        "\n\n_Confidence: {:.0}%_",
+        comment.confidence * 100.0
+    ));
+    body
+}
+
+fn post_inline_pr_comment(
+    pr_number: &str,
+    repo: Option<&String>,
+    metadata: &GhPrMetadata,
+    comment: &core::Comment,
+    body: &str,
+) -> Result<()> {
+    use std::process::Command;
+
+    if comment.line_number == 0 {
+        anyhow::bail!("line number is 0");
+    }
+
+    let endpoint = format!(
+        "repos/{}/pulls/{}/comments",
+        metadata.base_repository.name_with_owner, pr_number
+    );
+    let mut args = vec![
+        "api".to_string(),
+        "-X".to_string(),
+        "POST".to_string(),
+        endpoint,
+        "-f".to_string(),
+        format!("body={}", body),
+        "-f".to_string(),
+        format!("commit_id={}", metadata.head_ref_oid),
+        "-f".to_string(),
+        format!("path={}", comment.file_path.display()),
+        "-F".to_string(),
+        format!("line={}", comment.line_number),
+        "-f".to_string(),
+        "side=RIGHT".to_string(),
+    ];
+    if let Some(repo) = repo {
+        args.push("--repo".to_string());
+        args.push(repo.clone());
+    }
+
+    let output = Command::new("gh").args(&args).output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("gh api inline comment failed: {}", stderr.trim());
+    }
+
+    Ok(())
+}
+
+fn post_pr_comment(pr_number: &str, repo: Option<&String>, body: &str) -> Result<()> {
+    use std::process::Command;
+
+    let mut args = vec![
+        "pr".to_string(),
+        "comment".to_string(),
+        pr_number.to_string(),
+        "--body".to_string(),
+        body.to_string(),
+    ];
+    if let Some(repo) = repo {
+        args.push("--repo".to_string());
+        args.push(repo.clone());
+    }
+
+    let output = Command::new("gh").args(&args).output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("gh pr comment failed: {}", stderr.trim());
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct GhIssueComment {
+    id: u64,
+    body: String,
+}
+
+fn upsert_pr_summary_comment(
+    pr_number: &str,
+    repo: Option<&String>,
+    metadata: &GhPrMetadata,
+    comments: &[core::Comment],
+) -> Result<()> {
+    use std::process::Command;
+
+    const SUMMARY_MARKER: &str = "<!-- diffscope:summary -->";
+    let summary_body = build_pr_summary_comment_body(comments);
+    let full_body = format!("{}\n\n{}", SUMMARY_MARKER, summary_body);
+
+    let comments_endpoint = format!(
+        "repos/{}/issues/{}/comments?per_page=100",
+        metadata.base_repository.name_with_owner, pr_number
+    );
+    let mut args = vec!["api".to_string(), comments_endpoint];
+    if let Some(repo) = repo {
+        args.push("--repo".to_string());
+        args.push(repo.clone());
+    }
+
+    let output = Command::new("gh").args(&args).output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("gh api list issue comments failed: {}", stderr.trim());
+    }
+
+    let issue_comments: Vec<GhIssueComment> = serde_json::from_slice(&output.stdout)?;
+    if let Some(existing) = issue_comments
+        .iter()
+        .find(|comment| comment.body.contains(SUMMARY_MARKER))
+    {
+        let patch_endpoint = format!(
+            "repos/{}/issues/comments/{}",
+            metadata.base_repository.name_with_owner, existing.id
+        );
+        let mut patch_args = vec![
+            "api".to_string(),
+            "-X".to_string(),
+            "PATCH".to_string(),
+            patch_endpoint,
+            "-f".to_string(),
+            format!("body={}", full_body),
+        ];
+        if let Some(repo) = repo {
+            patch_args.push("--repo".to_string());
+            patch_args.push(repo.clone());
+        }
+
+        let patch_output = Command::new("gh").args(&patch_args).output()?;
+        if !patch_output.status.success() {
+            let stderr = String::from_utf8_lossy(&patch_output.stderr);
+            anyhow::bail!("gh api patch summary comment failed: {}", stderr.trim());
+        }
+        return Ok(());
+    }
+
+    post_pr_comment(pr_number, repo, &full_body)
+}
+
+fn build_pr_summary_comment_body(comments: &[core::Comment]) -> String {
+    let summary = core::CommentSynthesizer::generate_summary(comments);
+    let mut body = String::new();
+    body.push_str("## DiffScope Review Summary\n\n");
+    body.push_str(&format!("- Total issues: {}\n", summary.total_comments));
+    body.push_str(&format!("- Critical issues: {}\n", summary.critical_issues));
+    body.push_str(&format!("- Files reviewed: {}\n", summary.files_reviewed));
+    body.push_str(&format!(
+        "- Overall score: {:.1}/10\n",
+        summary.overall_score
+    ));
+
+    if summary.total_comments == 0 {
+        body.push_str("\nNo issues detected in this PR by DiffScope.\n");
+        return body;
+    }
+
+    body.push_str("\n### Severity Breakdown\n");
+    for severity in ["Error", "Warning", "Info", "Suggestion"] {
+        let count = summary.by_severity.get(severity).copied().unwrap_or(0);
+        body.push_str(&format!("- {}: {}\n", severity, count));
+    }
+
+    body.push_str("\n### Top Findings\n");
+    for (shown, comment) in comments.iter().enumerate() {
+        if shown >= 5 {
+            break;
+        }
+        body.push_str(&format!(
+            "- `{}:{}` [{:?}] {}\n",
+            comment.file_path.display(),
+            comment.line_number,
+            comment.severity,
+            comment.content
+        ));
+    }
+
+    body
 }
 
 async fn suggest_commit_message(config: config::Config) -> Result<()> {
@@ -990,6 +1265,424 @@ async fn compare_command(
     review_diff_content(&diff_string, config, format).await
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+struct EvalFixture {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    diff: Option<String>,
+    #[serde(default)]
+    diff_file: Option<PathBuf>,
+    #[serde(default)]
+    repo_path: Option<PathBuf>,
+    #[serde(default)]
+    expect: EvalExpectations,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct EvalExpectations {
+    #[serde(default)]
+    must_find: Vec<EvalPattern>,
+    #[serde(default)]
+    must_not_find: Vec<EvalPattern>,
+    #[serde(default)]
+    min_total: Option<usize>,
+    #[serde(default)]
+    max_total: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct EvalPattern {
+    #[serde(default)]
+    file: Option<String>,
+    #[serde(default)]
+    line: Option<usize>,
+    #[serde(default)]
+    contains: Option<String>,
+    #[serde(default)]
+    severity: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    rule_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EvalFixtureResult {
+    fixture: String,
+    passed: bool,
+    total_comments: usize,
+    required_matches: usize,
+    required_total: usize,
+    failures: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EvalReport {
+    fixtures_total: usize,
+    fixtures_passed: usize,
+    fixtures_failed: usize,
+    results: Vec<EvalFixtureResult>,
+}
+
+async fn eval_command(
+    config: config::Config,
+    fixtures_dir: PathBuf,
+    output_path: Option<PathBuf>,
+) -> Result<()> {
+    let fixture_paths = collect_fixture_paths(&fixtures_dir)?;
+    if fixture_paths.is_empty() {
+        anyhow::bail!(
+            "No fixture files found in {} (expected .json/.yml/.yaml)",
+            fixtures_dir.display()
+        );
+    }
+
+    let mut results = Vec::new();
+    for fixture_path in fixture_paths {
+        let fixture = load_eval_fixture(&fixture_path)?;
+        let result = run_eval_fixture(&config, &fixture_path, fixture).await?;
+        results.push(result);
+    }
+
+    let fixtures_total = results.len();
+    let fixtures_passed = results.iter().filter(|result| result.passed).count();
+    let fixtures_failed = fixtures_total.saturating_sub(fixtures_passed);
+    let report = EvalReport {
+        fixtures_total,
+        fixtures_passed,
+        fixtures_failed,
+        results,
+    };
+
+    println!(
+        "Eval summary: {}/{} fixture(s) passed",
+        report.fixtures_passed, report.fixtures_total
+    );
+    for result in &report.results {
+        if result.passed {
+            println!(
+                "[PASS] {} ({} comments, {}/{})",
+                result.fixture,
+                result.total_comments,
+                result.required_matches,
+                result.required_total
+            );
+        } else {
+            println!(
+                "[FAIL] {} ({} comments, {}/{})",
+                result.fixture,
+                result.total_comments,
+                result.required_matches,
+                result.required_total
+            );
+            for failure in &result.failures {
+                println!("  - {}", failure);
+            }
+        }
+    }
+
+    if let Some(path) = output_path {
+        let serialized = serde_json::to_string_pretty(&report)?;
+        tokio::fs::write(path, serialized).await?;
+    }
+
+    if report.fixtures_failed > 0 {
+        anyhow::bail!(
+            "Evaluation failed: {} fixture(s) did not meet expectations",
+            report.fixtures_failed
+        );
+    }
+
+    Ok(())
+}
+
+fn collect_fixture_paths(fixtures_dir: &Path) -> Result<Vec<PathBuf>> {
+    if !fixtures_dir.exists() {
+        anyhow::bail!("Fixtures directory not found: {}", fixtures_dir.display());
+    }
+    if !fixtures_dir.is_dir() {
+        anyhow::bail!(
+            "Fixtures path is not a directory: {}",
+            fixtures_dir.display()
+        );
+    }
+
+    let mut paths = Vec::new();
+    let mut stack = vec![fixtures_dir.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+
+            let extension = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| value.to_ascii_lowercase());
+            if matches!(extension.as_deref(), Some("json" | "yml" | "yaml")) {
+                paths.push(path);
+            }
+        }
+    }
+
+    paths.sort();
+    Ok(paths)
+}
+
+fn load_eval_fixture(path: &Path) -> Result<EvalFixture> {
+    let content = std::fs::read_to_string(path)?;
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    match extension.as_deref() {
+        Some("json") => Ok(serde_json::from_str(&content)?),
+        _ => match serde_yaml::from_str(&content) {
+            Ok(parsed) => Ok(parsed),
+            Err(_) => Ok(serde_json::from_str(&content)?),
+        },
+    }
+}
+
+async fn run_eval_fixture(
+    config: &config::Config,
+    fixture_path: &Path,
+    fixture: EvalFixture,
+) -> Result<EvalFixtureResult> {
+    let fixture_name = fixture.name.unwrap_or_else(|| {
+        fixture_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("fixture")
+            .to_string()
+    });
+    let fixture_dir = fixture_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let diff_content = match (fixture.diff, fixture.diff_file) {
+        (Some(diff), _) => diff,
+        (None, Some(diff_file)) => {
+            let path = if diff_file.is_absolute() {
+                diff_file
+            } else {
+                fixture_dir.join(diff_file)
+            };
+            std::fs::read_to_string(path)?
+        }
+        (None, None) => anyhow::bail!(
+            "Fixture '{}' must define either diff or diff_file",
+            fixture_name
+        ),
+    };
+
+    let repo_path = fixture
+        .repo_path
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                fixture_dir.join(path)
+            }
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let comments = review_diff_content_raw(&diff_content, config.clone(), &repo_path).await?;
+    let total_comments = comments.len();
+    let mut failures = Vec::new();
+    let mut required_matches = 0usize;
+    let required_total = fixture.expect.must_find.len();
+
+    for expected in &fixture.expect.must_find {
+        if comments.iter().any(|comment| expected.matches(comment)) {
+            required_matches = required_matches.saturating_add(1);
+        } else {
+            failures.push(format!("Missing expected finding: {}", expected.describe()));
+        }
+    }
+
+    for unexpected in &fixture.expect.must_not_find {
+        if let Some(comment) = comments.iter().find(|comment| unexpected.matches(comment)) {
+            failures.push(format!(
+                "Unexpected finding matched {}:{} '{}'",
+                comment.file_path.display(),
+                comment.line_number,
+                summarize_for_eval(&comment.content)
+            ));
+        }
+    }
+
+    if let Some(min_total) = fixture.expect.min_total {
+        if total_comments < min_total {
+            failures.push(format!(
+                "Expected at least {} comments, got {}",
+                min_total, total_comments
+            ));
+        }
+    }
+    if let Some(max_total) = fixture.expect.max_total {
+        if total_comments > max_total {
+            failures.push(format!(
+                "Expected at most {} comments, got {}",
+                max_total, total_comments
+            ));
+        }
+    }
+
+    Ok(EvalFixtureResult {
+        fixture: fixture_name,
+        passed: failures.is_empty(),
+        total_comments,
+        required_matches,
+        required_total,
+        failures,
+    })
+}
+
+impl EvalPattern {
+    fn matches(&self, comment: &core::Comment) -> bool {
+        if self.is_empty() {
+            return false;
+        }
+
+        if let Some(file) = &self.file {
+            let file = file.trim();
+            if !file.is_empty() {
+                let candidate = comment.file_path.to_string_lossy();
+                if !(candidate == file || candidate.ends_with(file)) {
+                    return false;
+                }
+            }
+        }
+
+        if let Some(line) = self.line {
+            if comment.line_number != line {
+                return false;
+            }
+        }
+
+        if let Some(contains) = &self.contains {
+            let needle = contains.trim().to_ascii_lowercase();
+            if !needle.is_empty() && !comment.content.to_ascii_lowercase().contains(&needle) {
+                return false;
+            }
+        }
+
+        if let Some(severity) = &self.severity {
+            if !format!("{:?}", comment.severity).eq_ignore_ascii_case(severity.trim()) {
+                return false;
+            }
+        }
+
+        if let Some(category) = &self.category {
+            if !format!("{:?}", comment.category).eq_ignore_ascii_case(category.trim()) {
+                return false;
+            }
+        }
+
+        if let Some(rule_id) = &self.rule_id {
+            let expected = rule_id.trim().to_ascii_lowercase();
+            let actual = comment
+                .rule_id
+                .as_deref()
+                .map(|value| value.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            if expected != actual {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(file) = &self.file {
+            let file = file.trim();
+            if !file.is_empty() {
+                parts.push(format!("file={}", file));
+            }
+        }
+        if let Some(line) = self.line {
+            parts.push(format!("line={}", line));
+        }
+        if let Some(contains) = &self.contains {
+            let contains = contains.trim();
+            if !contains.is_empty() {
+                parts.push(format!("contains='{}'", contains));
+            }
+        }
+        if let Some(severity) = &self.severity {
+            let severity = severity.trim();
+            if !severity.is_empty() {
+                parts.push(format!("severity={}", severity));
+            }
+        }
+        if let Some(category) = &self.category {
+            let category = category.trim();
+            if !category.is_empty() {
+                parts.push(format!("category={}", category));
+            }
+        }
+        if let Some(rule_id) = &self.rule_id {
+            let rule_id = rule_id.trim();
+            if !rule_id.is_empty() {
+                parts.push(format!("rule_id={}", rule_id));
+            }
+        }
+
+        if parts.is_empty() {
+            "empty-pattern".to_string()
+        } else {
+            parts.join(", ")
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.file.as_deref().map(str::trim).unwrap_or("").is_empty()
+            && self.line.is_none()
+            && self
+                .contains
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            && self
+                .severity
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            && self
+                .category
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            && self
+                .rule_id
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+    }
+}
+
+fn summarize_for_eval(content: &str) -> String {
+    let mut summary = content.trim().replace('\n', " ");
+    if summary.len() > 120 {
+        summary.truncate(117);
+        summary.push_str("...");
+    }
+    summary
+}
+
 fn format_diff_as_unified(diff: &core::UnifiedDiff) -> String {
     let mut output = String::new();
 
@@ -1039,6 +1732,7 @@ async fn review_diff_content_raw(
     info!("Parsed {} file diffs", diffs.len());
     let symbol_index = build_symbol_index(&config, repo_path);
     let pattern_repositories = resolve_pattern_repositories(&config, repo_path);
+    let review_rules = load_review_rules(&config, &pattern_repositories, repo_path);
 
     // Initialize plugin manager and load builtin plugins
     let mut plugin_manager = plugins::plugin::PluginManager::new();
@@ -1149,6 +1843,15 @@ async fn review_diff_content_raw(
             &mut context_chunks,
         )
         .await?;
+        let active_rules =
+            core::active_rules_for_file(&review_rules, &diff.file_path, config.max_active_rules);
+        inject_rule_context(diff, &active_rules, &mut context_chunks);
+        context_chunks = rank_and_trim_context_chunks(
+            diff,
+            context_chunks,
+            config.context_max_chunks,
+            config.context_budget_chars,
+        );
 
         // Create prompt builder with config
         let mut local_prompt_config = base_prompt_config.clone();
@@ -1198,6 +1901,7 @@ async fn review_diff_content_raw(
                     }
                 }
             }
+            let comments = apply_rule_overrides(comments, &active_rules);
 
             let comments = filter_comments_for_diff(diff, comments);
             all_comments.extend(comments);
@@ -1236,6 +1940,7 @@ fn parse_llm_response(content: &str, file_path: &Path) -> Result<Vec<core::comme
         if let Some(caps) = LINE_PATTERN.captures(line) {
             let line_number: usize = caps.get(1).unwrap().as_str().parse()?;
             let comment_text = caps.get(2).unwrap().as_str().trim();
+            let (rule_id, comment_text) = extract_rule_id_from_text(comment_text);
 
             // Extract suggestion if present
             let (content, suggestion) = if let Some(sugg_idx) = comment_text.rfind(". Consider ") {
@@ -1264,6 +1969,7 @@ fn parse_llm_response(content: &str, file_path: &Path) -> Result<Vec<core::comme
                 file_path: file_path.to_path_buf(),
                 line_number,
                 content,
+                rule_id,
                 suggestion,
                 severity: None,
                 category: None,
@@ -1516,6 +2222,7 @@ async fn smart_review_command(
     let walkthrough = build_change_walkthrough(&diffs);
     let symbol_index = build_symbol_index(&config, &repo_root);
     let pattern_repositories = resolve_pattern_repositories(&config, &repo_root);
+    let review_rules = load_review_rules(&config, &pattern_repositories, &repo_root);
 
     let model_config = adapters::llm::ModelConfig {
         model_name: config.model.clone(),
@@ -1659,6 +2366,16 @@ async fn smart_review_command(
             }
         }
 
+        let active_rules =
+            core::active_rules_for_file(&review_rules, &diff.file_path, config.max_active_rules);
+        inject_rule_context(diff, &active_rules, &mut context_chunks);
+        context_chunks = rank_and_trim_context_chunks(
+            diff,
+            context_chunks,
+            config.context_max_chunks,
+            config.context_budget_chars,
+        );
+
         let guidance = build_review_guidance(&config, path_config);
         let (system_prompt, user_prompt) =
             core::SmartReviewPromptBuilder::build_enhanced_review_prompt(
@@ -1700,6 +2417,7 @@ async fn smart_review_command(
                 }
             }
 
+            let comments = apply_rule_overrides(comments, &active_rules);
             let comments = filter_comments_for_diff(diff, comments);
             all_comments.extend(comments);
         }
@@ -1752,6 +2470,7 @@ fn parse_smart_review_response(
                 file_path: file_path.to_path_buf(),
                 line_number: 1,
                 content: title.to_string(),
+                rule_id: None,
                 suggestion: None,
                 severity: None,
                 category: None,
@@ -1771,6 +2490,15 @@ fn parse_smart_review_response(
         if let Some(value) = trimmed.strip_prefix("LINE:") {
             if let Ok(line_num) = value.trim().parse::<usize>() {
                 comment.line_number = line_num;
+            }
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("RULE:") {
+            let value = value.trim();
+            if value.is_empty() {
+                comment.rule_id = None;
+            } else {
+                comment.rule_id = Some(value.to_string());
             }
             continue;
         }
@@ -1908,6 +2636,36 @@ fn parse_smart_tags(value: &str) -> Vec<String> {
         .filter(|tag| !tag.is_empty())
         .map(|tag| tag.to_string())
         .collect()
+}
+
+fn extract_rule_id_from_text(text: &str) -> (Option<String>, String) {
+    static BRACKET_RULE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)\[\s*rule\s*:\s*([a-z0-9_.-]+)\s*\]").unwrap());
+    static PREFIX_RULE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)^rule[\s:#-]+([a-z0-9_.-]+)\s*[-:]\s*(.+)$").unwrap());
+
+    if let Some(caps) = BRACKET_RULE.captures(text) {
+        let rule_id = caps
+            .get(1)
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|value| !value.is_empty());
+        let stripped = BRACKET_RULE.replace(text, "").trim().to_string();
+        return (rule_id, stripped);
+    }
+
+    if let Some(caps) = PREFIX_RULE.captures(text) {
+        let rule_id = caps
+            .get(1)
+            .map(|m| m.as_str().trim().to_string())
+            .filter(|value| !value.is_empty());
+        let stripped = caps
+            .get(2)
+            .map(|m| m.as_str().trim().to_string())
+            .unwrap_or_else(|| text.trim().to_string());
+        return (rule_id, stripped);
+    }
+
+    (None, text.trim().to_string())
 }
 
 fn format_smart_review_output(
@@ -2742,6 +3500,311 @@ async fn inject_pattern_repository_context(
     Ok(())
 }
 
+fn load_review_rules(
+    config: &config::Config,
+    resolved_repositories: &PatternRepositoryMap,
+    repo_root: &Path,
+) -> Vec<core::ReviewRule> {
+    let mut rules = Vec::new();
+    let local_patterns = if config.rules_files.is_empty() {
+        vec![
+            ".diffscope-rules.yml".to_string(),
+            ".diffscope-rules.yaml".to_string(),
+            ".diffscope-rules.json".to_string(),
+            "rules/**/*.yml".to_string(),
+            "rules/**/*.yaml".to_string(),
+            "rules/**/*.json".to_string(),
+        ]
+    } else {
+        config.rules_files.clone()
+    };
+
+    let local_max_rules = config.max_active_rules.saturating_mul(8).max(64);
+    match core::load_rules_from_patterns(repo_root, &local_patterns, "repository", local_max_rules)
+    {
+        Ok(mut loaded) => rules.append(&mut loaded),
+        Err(err) => warn!("Failed to load repository rules: {}", err),
+    }
+
+    for repo in &config.pattern_repositories {
+        if repo.rule_patterns.is_empty() {
+            continue;
+        }
+        let Some(base_path) = resolved_repositories.get(&repo.source) else {
+            continue;
+        };
+
+        let max_rules = repo.max_rules.max(config.max_active_rules);
+        match core::load_rules_from_patterns(
+            base_path,
+            &repo.rule_patterns,
+            &repo.source,
+            max_rules,
+        ) {
+            Ok(mut loaded) => rules.append(&mut loaded),
+            Err(err) => warn!(
+                "Failed to load pattern repository rules from '{}': {}",
+                repo.source, err
+            ),
+        }
+    }
+
+    let mut unique = Vec::new();
+    let mut seen = HashSet::new();
+    for rule in rules {
+        let key = rule.id.trim().to_ascii_lowercase();
+        if key.is_empty() || !seen.insert(key) {
+            continue;
+        }
+        unique.push(rule);
+    }
+
+    if !unique.is_empty() {
+        info!("Loaded {} review rule(s)", unique.len());
+    }
+    unique
+}
+
+fn inject_rule_context(
+    diff: &core::UnifiedDiff,
+    active_rules: &[core::ReviewRule],
+    context_chunks: &mut Vec<core::LLMContextChunk>,
+) {
+    if active_rules.is_empty() {
+        return;
+    }
+
+    let mut lines = Vec::new();
+    lines.push(
+        "Active review rules. If a finding maps to a rule, include `RULE: <id>` in the issue."
+            .to_string(),
+    );
+
+    for rule in active_rules {
+        let mut attrs = Vec::new();
+        if let Some(scope) = &rule.scope {
+            attrs.push(format!("scope={}", scope));
+        }
+        if let Some(severity) = &rule.severity {
+            attrs.push(format!("severity={}", severity));
+        }
+        if let Some(category) = &rule.category {
+            attrs.push(format!("category={}", category));
+        }
+        if !rule.tags.is_empty() {
+            attrs.push(format!("tags={}", rule.tags.join("|")));
+        }
+
+        if attrs.is_empty() {
+            lines.push(format!("- {}: {}", rule.id, rule.description));
+        } else {
+            lines.push(format!(
+                "- {}: {} ({})",
+                rule.id,
+                rule.description,
+                attrs.join(", ")
+            ));
+        }
+    }
+
+    context_chunks.push(core::LLMContextChunk {
+        content: lines.join("\n"),
+        context_type: core::ContextType::Documentation,
+        file_path: diff.file_path.clone(),
+        line_range: None,
+    });
+}
+
+fn rank_and_trim_context_chunks(
+    diff: &core::UnifiedDiff,
+    chunks: Vec<core::LLMContextChunk>,
+    max_chunks: usize,
+    max_chars: usize,
+) -> Vec<core::LLMContextChunk> {
+    if chunks.is_empty() {
+        return chunks;
+    }
+
+    let mut deduped = Vec::new();
+    let mut seen = HashSet::new();
+    for chunk in chunks {
+        let key = format!(
+            "{}|{:?}|{:?}|{}",
+            chunk.file_path.display(),
+            chunk.context_type,
+            chunk.line_range,
+            chunk.content
+        );
+        if seen.insert(key) {
+            deduped.push(chunk);
+        }
+    }
+
+    let changed_ranges: Vec<(usize, usize)> = diff
+        .hunks
+        .iter()
+        .map(|hunk| {
+            (
+                hunk.new_start.max(1),
+                hunk.new_start
+                    .saturating_add(hunk.new_lines.saturating_sub(1))
+                    .max(hunk.new_start.max(1)),
+            )
+        })
+        .collect();
+
+    let mut scored: Vec<(i32, usize, core::LLMContextChunk)> = deduped
+        .into_iter()
+        .map(|chunk| {
+            let mut score = match chunk.context_type {
+                core::ContextType::FileContent => 130,
+                core::ContextType::Definition => 100,
+                core::ContextType::Reference => 80,
+                core::ContextType::Documentation => 60,
+            };
+
+            if chunk.file_path == diff.file_path {
+                score += 90;
+            }
+
+            if let Some(range) = chunk.line_range {
+                if changed_ranges
+                    .iter()
+                    .any(|candidate| ranges_overlap(*candidate, range))
+                {
+                    score += 70;
+                } else if chunk.file_path == diff.file_path {
+                    score += 20;
+                }
+            }
+
+            if chunk.content.starts_with("Active review rules.") {
+                score += 120;
+            } else if chunk
+                .content
+                .starts_with("Pattern repository context source:")
+            {
+                score += 30;
+            } else if chunk.content.starts_with("[Pattern repository:") {
+                score += 25;
+            }
+
+            if chunk.content.len() > 4000 {
+                score -= 10;
+            }
+
+            (score, chunk.content.len(), chunk)
+        })
+        .collect();
+
+    scored.sort_by_key(|(score, len, _)| (Reverse(*score), *len));
+
+    let max_chunks = if max_chunks == 0 {
+        usize::MAX
+    } else {
+        max_chunks
+    };
+    let max_chars = if max_chars == 0 {
+        usize::MAX
+    } else {
+        max_chars
+    };
+
+    let mut kept = Vec::new();
+    let mut used_chars = 0usize;
+
+    for (_, _, chunk) in scored {
+        if kept.len() >= max_chunks {
+            break;
+        }
+
+        let chunk_len = chunk.content.len();
+        if used_chars.saturating_add(chunk_len) > max_chars {
+            continue;
+        }
+
+        used_chars = used_chars.saturating_add(chunk_len);
+        kept.push(chunk);
+    }
+
+    if kept.is_empty() {
+        return Vec::new();
+    }
+
+    kept
+}
+
+fn ranges_overlap(left: (usize, usize), right: (usize, usize)) -> bool {
+    left.0 <= right.1 && right.0 <= left.1
+}
+
+fn apply_rule_overrides(
+    mut comments: Vec<core::Comment>,
+    active_rules: &[core::ReviewRule],
+) -> Vec<core::Comment> {
+    if comments.is_empty() || active_rules.is_empty() {
+        return comments;
+    }
+
+    let mut by_id = HashMap::new();
+    for rule in active_rules {
+        by_id.insert(rule.id.to_ascii_lowercase(), rule);
+    }
+
+    for comment in &mut comments {
+        let Some(rule_id) = comment.rule_id.clone() else {
+            continue;
+        };
+        let key = rule_id.trim().to_ascii_lowercase();
+        let Some(rule) = by_id.get(&key) else {
+            continue;
+        };
+
+        comment.rule_id = Some(rule.id.clone());
+        if let Some(severity) = rule
+            .severity
+            .as_deref()
+            .and_then(parse_rule_severity_override)
+        {
+            comment.severity = severity;
+        }
+        if let Some(category) = rule
+            .category
+            .as_deref()
+            .and_then(parse_rule_category_override)
+        {
+            comment.category = category;
+        }
+
+        let marker = format!("rule:{}", rule.id);
+        if !comment.tags.iter().any(|tag| tag == &marker) {
+            comment.tags.push(marker);
+        }
+        for tag in &rule.tags {
+            if !comment.tags.iter().any(|existing| existing == tag) {
+                comment.tags.push(tag.clone());
+            }
+        }
+        comment.confidence = comment.confidence.max(0.8);
+    }
+
+    comments
+}
+
+fn parse_rule_severity_override(value: &str) -> Option<core::comment::Severity> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "critical" | "error" => Some(core::comment::Severity::Error),
+        "high" | "warning" | "warn" => Some(core::comment::Severity::Warning),
+        "medium" | "info" | "informational" => Some(core::comment::Severity::Info),
+        "low" | "suggestion" => Some(core::comment::Severity::Suggestion),
+        _ => None,
+    }
+}
+
+fn parse_rule_category_override(value: &str) -> Option<core::comment::Category> {
+    parse_smart_category(value)
+}
+
 fn build_change_walkthrough(diffs: &[core::UnifiedDiff]) -> String {
     let mut entries = Vec::new();
     let mut truncated = false;
@@ -3161,6 +4224,7 @@ mod tests {
             file_path: PathBuf::from("src/lib.rs"),
             line_number: 10,
             content: "test comment".to_string(),
+            rule_id: None,
             severity,
             category,
             suggestion: None,
@@ -3176,6 +4240,7 @@ mod tests {
         let input = r#"
 ISSUE: Missing auth check
 LINE: 42
+RULE: sec.auth.guard
 SEVERITY: CRITICAL
 CATEGORY: Security
 CONFIDENCE: 85%
@@ -3195,6 +4260,7 @@ TAGS: auth, security
 
         let comment = &comments[0];
         assert_eq!(comment.line_number, 42);
+        assert_eq!(comment.rule_id.as_deref(), Some("sec.auth.guard"));
         assert_eq!(comment.severity, Some(core::comment::Severity::Error));
         assert_eq!(comment.category, Some(core::comment::Category::Security));
         assert!(comment.content.contains("Missing auth check"));

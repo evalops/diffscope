@@ -84,6 +84,9 @@ diffscope review
 
 # Get enhanced analysis with smart review
 git diff | diffscope smart-review
+
+# Evaluate reviewer quality against fixtures
+diffscope eval --fixtures eval/fixtures --output eval-report.json
 ```
 
 ### Git Integration
@@ -114,6 +117,27 @@ diffscope pr --number 123
 
 # Post review comments directly to GitHub
 diffscope pr --post-comments
+```
+
+`--post-comments` now attempts inline file/line comments first, falls back to PR-level comments when GitHub rejects an anchor, and upserts a sticky DiffScope summary comment on the PR.
+
+### Evaluation Fixtures
+```yaml
+name: auth guard regression
+repo_path: ../../
+diff_file: ./auth.patch
+expect:
+  must_find:
+    - file: src/api/auth.rs
+      line: 42
+      contains: missing auth check
+      severity: error
+      category: security
+      rule_id: sec.auth.guard
+  must_not_find:
+    - contains: style
+  min_total: 1
+  max_total: 8
 ```
 
 ### Smart Review (Enhanced Analysis)
@@ -200,6 +224,8 @@ temperature: 0.2
 max_tokens: 4000
 max_context_chars: 20000  # 0 disables context truncation
 max_diff_chars: 40000     # 0 disables diff truncation
+context_max_chunks: 24     # Max context chunks sent to the model per file
+context_budget_chars: 24000 # Hard cap for ranked context payload per file
 min_confidence: 0.0       # Drop comments below this confidence (0.0-1.0)
 strictness: 2             # 1 = high-signal only, 2 = balanced, 3 = deep scan
 comment_types:
@@ -242,6 +268,16 @@ pattern_repositories:
       - "examples/**/*.yml"
     max_files: 8
     max_lines: 200
+    rule_patterns:
+      - "policy/**/*.yml"
+      - "policy/**/*.json"
+    max_rules: 200
+
+# Repository-level rule files (YAML/JSON)
+rules_files:
+  - ".diffscope-rules.yml"
+  - "rules/**/*.yml"
+max_active_rules: 30
 
 # Built-in plugins (enabled by default)
 plugins:
