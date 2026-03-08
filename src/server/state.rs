@@ -104,6 +104,7 @@ impl AppState {
             }
             if let Err(e) = tokio::fs::rename(&tmp_path, &state.storage_path).await {
                 eprintln!("Failed to rename reviews file: {}", e);
+                let _ = tokio::fs::remove_file(&tmp_path).await;
             }
         });
     }
@@ -136,6 +137,7 @@ impl AppState {
             }
             if let Err(e) = tokio::fs::rename(&tmp_path, &state.config_path).await {
                 eprintln!("Failed to rename config file: {}", e);
+                let _ = tokio::fs::remove_file(&tmp_path).await;
             }
         });
     }
