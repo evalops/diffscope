@@ -910,7 +910,7 @@ pub fn apply_enhanced_filters(
 ) -> Vec<Comment> {
     // Apply convention-based scoring to adjust confidence
     for comment in &mut comments {
-        let category_str = format!("{:?}", comment.category);
+        let category_str = comment.category.to_string();
         let adjustment = ctx.convention_store.score_comment(&comment.content, &category_str);
         comment.confidence = (comment.confidence + adjustment).clamp(0.0, 1.0);
     }

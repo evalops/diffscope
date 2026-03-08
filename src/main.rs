@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
 
 use commands::{EvalRunOptions, GitCommands};
+use config::CliOverrides;
 use output::OutputFormat;
 
 #[derive(Parser)]
@@ -283,57 +284,25 @@ async fn main() -> Result<()> {
     let mut config = config::Config::load().unwrap_or_default();
     config.merge_with_cli(Some(cli.model.clone()), cli.prompt.clone());
 
-    // Override with CLI temperature and max_tokens if provided
-    if let Some(temp) = cli.temperature {
-        config.temperature = temp;
-    }
-    if let Some(tokens) = cli.max_tokens {
-        config.max_tokens = tokens;
-    }
-    if let Some(strictness) = cli.strictness {
-        config.strictness = strictness;
-    }
-    if let Some(comment_types) = cli.comment_types {
-        config.comment_types = comment_types;
-    }
-    if let Some(flag) = cli.openai_responses {
-        config.openai_use_responses = Some(flag);
-    }
-    if let Some(base_url) = cli.base_url {
-        config.base_url = Some(base_url);
-    }
-    if let Some(api_key) = cli.api_key {
-        config.api_key = Some(api_key);
-    }
-    if let Some(adapter) = cli.adapter {
-        config.adapter = Some(adapter);
-    }
-    if let Some(command) = cli.lsp_command {
-        config.symbol_index = true;
-        config.symbol_index_provider = "lsp".to_string();
-        config.symbol_index_lsp_command = Some(command);
-    }
-    if let Some(timeout) = cli.timeout {
-        config.adapter_timeout_secs = Some(timeout);
-    }
-    if let Some(retries) = cli.max_retries {
-        config.adapter_max_retries = Some(retries);
-    }
-    if let Some(limit) = cli.file_change_limit {
-        config.file_change_limit = Some(limit);
-    }
-    if let Some(lang) = cli.output_language {
-        config.output_language = Some(lang);
-    }
-    if let Some(vault_addr) = cli.vault_addr {
-        config.vault_addr = Some(vault_addr);
-    }
-    if let Some(vault_path) = cli.vault_path {
-        config.vault_path = Some(vault_path);
-    }
-    if let Some(vault_key) = cli.vault_key {
-        config.vault_key = Some(vault_key);
-    }
+    // Override config with CLI options
+    config.apply_cli_overrides(CliOverrides {
+        temperature: cli.temperature,
+        max_tokens: cli.max_tokens,
+        strictness: cli.strictness,
+        comment_types: cli.comment_types,
+        openai_responses: cli.openai_responses,
+        base_url: cli.base_url,
+        api_key: cli.api_key,
+        adapter: cli.adapter,
+        lsp_command: cli.lsp_command,
+        timeout: cli.timeout,
+        max_retries: cli.max_retries,
+        file_change_limit: cli.file_change_limit,
+        output_language: cli.output_language,
+        vault_addr: cli.vault_addr,
+        vault_path: cli.vault_path,
+        vault_key: cli.vault_key,
+    });
     config.normalize();
 
     // Resolve API key from Vault if configured and api_key is not already set

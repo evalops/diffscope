@@ -143,7 +143,7 @@ impl LLMAdapter for AnthropicAdapter {
         })
     }
 
-    fn _model_name(&self) -> &str {
+    fn model_name(&self) -> &str {
         &self.config.model_name
     }
 }
@@ -371,10 +371,10 @@ mod tests {
     }
 
     #[test]
-    fn test_model_name() {
+    fn testmodel_name() {
         let config = test_config("http://localhost:8080");
         let adapter = AnthropicAdapter::new(config).unwrap();
-        assert_eq!(adapter._model_name(), "claude-3-5-sonnet-20241022");
+        assert_eq!(adapter.model_name(), "claude-3-5-sonnet-20241022");
     }
 
     #[tokio::test]

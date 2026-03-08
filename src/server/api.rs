@@ -7,10 +7,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use super::state::{AppState, ReviewEvent, ReviewProgress, ReviewSession, ReviewStatus, MAX_DIFF_SIZE};
+use super::state::{
+    AppState, ReviewListItem, ReviewSession, ReviewStatus, MAX_DIFF_SIZE,
+    ReviewEventBuilder, current_timestamp, count_diff_files, count_reviewed_files,
+    emit_wide_event, build_progress_callback,
+};
 use crate::core::comment::CommentSynthesizer;
-use crate::review::ProgressCallback;
-use std::collections::HashMap;
 use tracing::{info, warn};
 
 // === Request/Response types ===
@@ -108,7 +110,7 @@ pub async fn start_review(
     };
 
     // "raw" requires diff_content
-    if diff_source == "raw" && request.diff_content.as_ref().map_or(true, |c| c.trim().is_empty()) {
+    if diff_source == "raw" && request.diff_content.as_ref().is_none_or(|c| c.trim().is_empty()) {
         return Err((StatusCode::BAD_REQUEST, "diff_content is required when diff_source is 'raw'".to_string()));
     }
 
@@ -178,13 +180,6 @@ pub async fn start_review(
     }))
 }
 
-fn current_timestamp() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-}
-
 async fn run_review_task(
     state: Arc<AppState>,
     review_id: String,
@@ -193,15 +188,17 @@ async fn run_review_task(
     raw_diff: Option<String>,
     overrides: ReviewOverrides,
 ) {
-    let task_start = std::time::Instant::now();
-
-    // Update status to Running
-    {
-        let mut reviews = state.reviews.write().await;
-        if let Some(session) = reviews.get_mut(&review_id) {
-            session.status = ReviewStatus::Running;
+    // Acquire semaphore permit to limit concurrent reviews
+    let _permit = match state.review_semaphore.clone().acquire_owned().await {
+        Ok(permit) => permit,
+        Err(_) => {
+            AppState::fail_review(&state, &review_id, "Review semaphore closed".to_string(), None).await;
+            return;
         }
-    }
+    };
+
+    let task_start = std::time::Instant::now();
+    AppState::mark_running(&state, &review_id).await;
 
     let mut config = state.config.read().await.clone();
     let repo_path = state.repo_path.clone();
@@ -217,7 +214,6 @@ async fn run_review_task(
         config.review_profile = Some(p);
     }
 
-    // --- wide event seed ---
     let model = config.model.clone();
     let provider = config.adapter.clone();
     let base_url = config.base_url.clone();
@@ -242,29 +238,22 @@ async fn run_review_task(
         Ok(diff) => diff,
         Err(e) => {
             let err_msg = format!("Failed to get diff: {}", e);
-            let event = build_review_event(
-                &review_id, "review.failed", &diff_source, None,
-                &model, provider.as_deref(), base_url.as_deref(),
-                task_start.elapsed().as_millis() as u64,
-                Some(diff_fetch_ms), None, 0, 0, 0, 0,
-                &[], None, Some(&err_msg),
-            );
+            let event = ReviewEventBuilder::new(&review_id, "review.failed", &diff_source, &model)
+                .provider(provider.as_deref())
+                .base_url(base_url.as_deref())
+                .duration_ms(task_start.elapsed().as_millis() as u64)
+                .diff_fetch_ms(diff_fetch_ms)
+                .error(&err_msg)
+                .build();
             emit_wide_event(&event);
-            let mut reviews = state.reviews.write().await;
-            if let Some(session) = reviews.get_mut(&review_id) {
-                session.status = ReviewStatus::Failed;
-                session.error = Some(err_msg);
-                session.completed_at = Some(current_timestamp());
-                session.event = Some(event);
-            }
+            AppState::fail_review(&state, &review_id, err_msg, Some(event)).await;
             AppState::save_reviews_async(&state);
             return;
         }
     };
 
     let diff_bytes = diff_content.len();
-    let diff_files_total = diff_content.matches("\ndiff --git ").count()
-        + if diff_content.starts_with("diff --git ") { 1 } else { 0 };
+    let diff_files_total = count_diff_files(&diff_content);
 
     // Store diff content for the frontend viewer
     {
@@ -275,68 +264,22 @@ async fn run_review_task(
     }
 
     if diff_content.trim().is_empty() {
-        let event = build_review_event(
-            &review_id, "review.completed", &diff_source, None,
-            &model, provider.as_deref(), base_url.as_deref(),
-            task_start.elapsed().as_millis() as u64,
-            Some(diff_fetch_ms), None, 0, 0, 0, 0,
-            &[], None, None,
-        );
+        let event = ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
+            .provider(provider.as_deref())
+            .base_url(base_url.as_deref())
+            .duration_ms(task_start.elapsed().as_millis() as u64)
+            .diff_fetch_ms(diff_fetch_ms)
+            .build();
         emit_wide_event(&event);
-        let mut reviews = state.reviews.write().await;
-        if let Some(session) = reviews.get_mut(&review_id) {
-            session.status = ReviewStatus::Complete;
-            session.comments = Vec::new();
-            session.summary = Some(CommentSynthesizer::generate_summary(&[]));
-            session.files_reviewed = 0;
-            session.completed_at = Some(current_timestamp());
-            session.event = Some(event);
-        }
+        AppState::complete_review(
+            &state, &review_id, Vec::new(),
+            CommentSynthesizer::generate_summary(&[]), 0, event,
+        ).await;
         AppState::save_reviews_async(&state);
         return;
     }
 
-    // Build progress callback that updates the session during review
-    let on_progress: Option<ProgressCallback> = {
-        let ps = state.clone();
-        let pid = review_id.clone();
-        let pstart = task_start;
-        Some(Arc::new(move |update: crate::review::ProgressUpdate| {
-            let state = ps.clone();
-            let id = pid.clone();
-            let start = pstart;
-            tokio::spawn(async move {
-                let elapsed = start.elapsed().as_millis() as u64;
-                let avg = if update.files_completed > 0 {
-                    elapsed / update.files_completed as u64
-                } else { 0 };
-                let remaining_files = update.files_total
-                    .saturating_sub(update.files_completed)
-                    .saturating_sub(update.files_skipped);
-                let est = if update.files_completed > 0 {
-                    Some(remaining_files as u64 * avg)
-                } else { None };
-
-                let mut reviews = state.reviews.write().await;
-                if let Some(session) = reviews.get_mut(&id) {
-                    session.progress = Some(ReviewProgress {
-                        current_file: Some(update.current_file),
-                        files_total: update.files_total,
-                        files_completed: update.files_completed,
-                        files_skipped: update.files_skipped,
-                        elapsed_ms: elapsed,
-                        estimated_remaining_ms: est,
-                    });
-                    // Stream partial results: update comments in place
-                    session.comments = update.comments_so_far.clone();
-                    session.files_reviewed = update.files_completed;
-                    if !session.comments.is_empty() {
-                        session.summary = Some(CommentSynthesizer::generate_summary(&session.comments));
-                    }
-                }
-            });
-        }))
-    };
+    let on_progress = Some(build_progress_callback(&state, &review_id, task_start));
 
     // Run the review with a 5-minute timeout
     let llm_start = std::time::Instant::now();
@@ -350,156 +293,51 @@ async fn run_review_task(
     match result {
         Ok(Ok(comments)) => {
             let summary = CommentSynthesizer::generate_summary(&comments);
-            let files_reviewed = {
-                let mut files = std::collections::HashSet::new();
-                for c in &comments {
-                    files.insert(c.file_path.clone());
-                }
-                files.len()
-            };
-
-            let event = build_review_event(
-                &review_id, "review.completed", &diff_source, None,
-                &model, provider.as_deref(), base_url.as_deref(),
-                task_start.elapsed().as_millis() as u64,
-                Some(diff_fetch_ms), Some(llm_ms),
-                diff_bytes, diff_files_total, files_reviewed,
-                diff_files_total.saturating_sub(files_reviewed),
-                &comments, Some(&summary), None,
-            );
+            let files_reviewed = count_reviewed_files(&comments);
+            let event = ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
+                .provider(provider.as_deref())
+                .base_url(base_url.as_deref())
+                .duration_ms(task_start.elapsed().as_millis() as u64)
+                .diff_fetch_ms(diff_fetch_ms)
+                .llm_total_ms(llm_ms)
+                .diff_stats(diff_bytes, diff_files_total, files_reviewed, diff_files_total.saturating_sub(files_reviewed))
+                .comments(&comments, Some(&summary))
+                .build();
             emit_wide_event(&event);
-
-            let mut reviews = state.reviews.write().await;
-            if let Some(session) = reviews.get_mut(&review_id) {
-                session.status = ReviewStatus::Complete;
-                session.comments = comments;
-                session.summary = Some(summary);
-                session.files_reviewed = files_reviewed;
-                session.completed_at = Some(current_timestamp());
-                session.event = Some(event);
-                session.progress = None; // clear progress on completion
-            }
+            AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event).await;
         }
         Ok(Err(e)) => {
             let err_msg = format!("Review failed: {}", e);
-            let event = build_review_event(
-                &review_id, "review.failed", &diff_source, None,
-                &model, provider.as_deref(), base_url.as_deref(),
-                task_start.elapsed().as_millis() as u64,
-                Some(diff_fetch_ms), Some(llm_ms),
-                diff_bytes, diff_files_total, 0, 0,
-                &[], None, Some(&err_msg),
-            );
+            let event = ReviewEventBuilder::new(&review_id, "review.failed", &diff_source, &model)
+                .provider(provider.as_deref())
+                .base_url(base_url.as_deref())
+                .duration_ms(task_start.elapsed().as_millis() as u64)
+                .diff_fetch_ms(diff_fetch_ms)
+                .llm_total_ms(llm_ms)
+                .diff_stats(diff_bytes, diff_files_total, 0, 0)
+                .error(&err_msg)
+                .build();
             emit_wide_event(&event);
-            let mut reviews = state.reviews.write().await;
-            if let Some(session) = reviews.get_mut(&review_id) {
-                session.status = ReviewStatus::Failed;
-                session.error = Some(err_msg);
-                session.completed_at = Some(current_timestamp());
-                session.event = Some(event);
-                session.progress = None;
-            }
+            AppState::fail_review(&state, &review_id, err_msg, Some(event)).await;
         }
         Err(_) => {
             let err_msg = "Review timed out after 5 minutes".to_string();
-            let event = build_review_event(
-                &review_id, "review.timeout", &diff_source, None,
-                &model, provider.as_deref(), base_url.as_deref(),
-                task_start.elapsed().as_millis() as u64,
-                Some(diff_fetch_ms), Some(llm_ms),
-                diff_bytes, diff_files_total, 0, 0,
-                &[], None, Some(&err_msg),
-            );
+            let event = ReviewEventBuilder::new(&review_id, "review.timeout", &diff_source, &model)
+                .provider(provider.as_deref())
+                .base_url(base_url.as_deref())
+                .duration_ms(task_start.elapsed().as_millis() as u64)
+                .diff_fetch_ms(diff_fetch_ms)
+                .llm_total_ms(llm_ms)
+                .diff_stats(diff_bytes, diff_files_total, 0, 0)
+                .error(&err_msg)
+                .build();
             emit_wide_event(&event);
-            let mut reviews = state.reviews.write().await;
-            if let Some(session) = reviews.get_mut(&review_id) {
-                session.status = ReviewStatus::Failed;
-                session.error = Some(err_msg);
-                session.completed_at = Some(current_timestamp());
-                session.event = Some(event);
-                session.progress = None;
-            }
+            AppState::fail_review(&state, &review_id, err_msg, Some(event)).await;
         }
     }
 
     AppState::save_reviews_async(&state);
     AppState::prune_old_reviews(&state).await;
-}
-
-/// Build a wide event from review results.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn build_review_event(
-    review_id: &str,
-    event_type: &str,
-    diff_source: &str,
-    title: Option<&str>,
-    model: &str,
-    provider: Option<&str>,
-    base_url: Option<&str>,
-    duration_ms: u64,
-    diff_fetch_ms: Option<u64>,
-    llm_total_ms: Option<u64>,
-    diff_bytes: usize,
-    diff_files_total: usize,
-    diff_files_reviewed: usize,
-    diff_files_skipped: usize,
-    comments: &[crate::core::Comment],
-    summary: Option<&crate::core::comment::ReviewSummary>,
-    error: Option<&str>,
-) -> ReviewEvent {
-    let mut by_severity: HashMap<String, usize> = HashMap::new();
-    let mut by_category: HashMap<String, usize> = HashMap::new();
-    for c in comments {
-        *by_severity.entry(format!("{:?}", c.severity)).or_default() += 1;
-        *by_category.entry(format!("{:?}", c.category)).or_default() += 1;
-    }
-
-    ReviewEvent {
-        review_id: review_id.to_string(),
-        event_type: event_type.to_string(),
-        diff_source: diff_source.to_string(),
-        title: title.map(str::to_string),
-        model: model.to_string(),
-        provider: provider.map(str::to_string),
-        base_url: base_url.map(str::to_string),
-        duration_ms,
-        diff_fetch_ms,
-        llm_total_ms,
-        diff_bytes,
-        diff_files_total,
-        diff_files_reviewed,
-        diff_files_skipped,
-        comments_total: comments.len(),
-        comments_by_severity: by_severity,
-        comments_by_category: by_category,
-        overall_score: summary.map(|s| s.overall_score),
-        hotspots_detected: 0,
-        high_risk_files: 0,
-        github_posted: false,
-        github_repo: None,
-        github_pr: None,
-        error: error.map(str::to_string),
-    }
-}
-
-/// Emit a review wide event via structured tracing.
-pub(super) fn emit_wide_event(event: &ReviewEvent) {
-    info!(
-        review_id = %event.review_id,
-        event_type = %event.event_type,
-        diff_source = %event.diff_source,
-        model = %event.model,
-        duration_ms = event.duration_ms,
-        llm_total_ms = ?event.llm_total_ms,
-        diff_bytes = event.diff_bytes,
-        diff_files_total = event.diff_files_total,
-        diff_files_reviewed = event.diff_files_reviewed,
-        comments_total = event.comments_total,
-        overall_score = ?event.overall_score,
-        github_posted = event.github_posted,
-        error = ?event.error,
-        "review.event"
-    );
 }
 
 fn get_diff_from_git(
@@ -550,15 +388,11 @@ pub async fn get_review(
 pub async fn list_reviews(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ListReviewsParams>,
-) -> Json<Vec<ReviewSession>> {
+) -> Json<Vec<ReviewListItem>> {
     let reviews = state.reviews.read().await;
-    let mut list: Vec<ReviewSession> = reviews
+    let mut list: Vec<ReviewListItem> = reviews
         .values()
-        .map(|r| {
-            let mut r = r.clone();
-            r.diff_content = None;
-            r
-        })
+        .map(ReviewListItem::from_session)
         .collect();
     list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
 
@@ -1650,16 +1484,17 @@ async fn run_pr_review_task(
     pr_number: u32,
     post_results: bool,
 ) {
+    let _permit = match state.review_semaphore.clone().acquire_owned().await {
+        Ok(permit) => permit,
+        Err(_) => {
+            AppState::fail_review(&state, &review_id, "Review semaphore closed".to_string(), None).await;
+            return;
+        }
+    };
+
     let task_start = std::time::Instant::now();
     let diff_source = format!("pr:{}#{}", repo, pr_number);
-
-    // Update status to Running
-    {
-        let mut reviews = state.reviews.write().await;
-        if let Some(session) = reviews.get_mut(&review_id) {
-            session.status = ReviewStatus::Running;
-        }
-    }
+    AppState::mark_running(&state, &review_id).await;
 
     let config = state.config.read().await.clone();
     let repo_path = state.repo_path.clone();
@@ -1669,28 +1504,20 @@ async fn run_pr_review_task(
     let base_url = config.base_url.clone();
 
     let diff_bytes = diff_content.len();
-    let diff_files_total = diff_content.matches("\ndiff --git ").count()
-        + if diff_content.starts_with("diff --git ") { 1 } else { 0 };
+    let diff_files_total = count_diff_files(&diff_content);
 
     if diff_content.trim().is_empty() {
-        let mut event = build_review_event(
-            &review_id, "review.completed", &diff_source, None,
-            &model, provider.as_deref(), base_url.as_deref(),
-            task_start.elapsed().as_millis() as u64,
-            None, None, 0, 0, 0, 0, &[], None, None,
-        );
-        event.github_repo = Some(repo.clone());
-        event.github_pr = Some(pr_number);
+        let event = ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
+            .provider(provider.as_deref())
+            .base_url(base_url.as_deref())
+            .duration_ms(task_start.elapsed().as_millis() as u64)
+            .github(&repo, pr_number)
+            .build();
         emit_wide_event(&event);
-        let mut reviews = state.reviews.write().await;
-        if let Some(session) = reviews.get_mut(&review_id) {
-            session.status = ReviewStatus::Complete;
-            session.comments = Vec::new();
-            session.summary = Some(CommentSynthesizer::generate_summary(&[]));
-            session.files_reviewed = 0;
-            session.completed_at = Some(current_timestamp());
-            session.event = Some(event);
-        }
+        AppState::complete_review(
+            &state, &review_id, Vec::new(),
+            CommentSynthesizer::generate_summary(&[]), 0, event,
+        ).await;
         AppState::save_reviews_async(&state);
         return;
     }
@@ -1706,15 +1533,8 @@ async fn run_pr_review_task(
     match result {
         Ok(Ok(comments)) => {
             let summary = CommentSynthesizer::generate_summary(&comments);
-            let files_reviewed = {
-                let mut files = std::collections::HashSet::new();
-                for c in &comments {
-                    files.insert(c.file_path.clone());
-                }
-                files.len()
-            };
+            let files_reviewed = count_reviewed_files(&comments);
 
-            // Post results to GitHub if requested
             let mut github_posted = false;
             if post_results && !comments.is_empty() {
                 if let Some(ref token) = github_token {
@@ -1727,71 +1547,46 @@ async fn run_pr_review_task(
                 }
             }
 
-            let mut event = build_review_event(
-                &review_id, "review.completed", &diff_source, None,
-                &model, provider.as_deref(), base_url.as_deref(),
-                task_start.elapsed().as_millis() as u64,
-                None, Some(llm_ms),
-                diff_bytes, diff_files_total, files_reviewed,
-                diff_files_total.saturating_sub(files_reviewed),
-                &comments, Some(&summary), None,
-            );
-            event.github_posted = github_posted;
-            event.github_repo = Some(repo.clone());
-            event.github_pr = Some(pr_number);
+            let event = ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
+                .provider(provider.as_deref())
+                .base_url(base_url.as_deref())
+                .duration_ms(task_start.elapsed().as_millis() as u64)
+                .llm_total_ms(llm_ms)
+                .diff_stats(diff_bytes, diff_files_total, files_reviewed, diff_files_total.saturating_sub(files_reviewed))
+                .comments(&comments, Some(&summary))
+                .github(&repo, pr_number)
+                .github_posted(github_posted)
+                .build();
             emit_wide_event(&event);
-
-            let mut reviews = state.reviews.write().await;
-            if let Some(session) = reviews.get_mut(&review_id) {
-                session.status = ReviewStatus::Complete;
-                session.comments = comments;
-                session.summary = Some(summary);
-                session.files_reviewed = files_reviewed;
-                session.completed_at = Some(current_timestamp());
-                session.event = Some(event);
-            }
+            AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event).await;
         }
         Ok(Err(e)) => {
             let err_msg = format!("Review failed: {}", e);
-            let mut event = build_review_event(
-                &review_id, "review.failed", &diff_source, None,
-                &model, provider.as_deref(), base_url.as_deref(),
-                task_start.elapsed().as_millis() as u64,
-                None, Some(llm_ms),
-                diff_bytes, diff_files_total, 0, 0,
-                &[], None, Some(&err_msg),
-            );
-            event.github_repo = Some(repo.clone());
-            event.github_pr = Some(pr_number);
+            let event = ReviewEventBuilder::new(&review_id, "review.failed", &diff_source, &model)
+                .provider(provider.as_deref())
+                .base_url(base_url.as_deref())
+                .duration_ms(task_start.elapsed().as_millis() as u64)
+                .llm_total_ms(llm_ms)
+                .diff_stats(diff_bytes, diff_files_total, 0, 0)
+                .github(&repo, pr_number)
+                .error(&err_msg)
+                .build();
             emit_wide_event(&event);
-            let mut reviews = state.reviews.write().await;
-            if let Some(session) = reviews.get_mut(&review_id) {
-                session.status = ReviewStatus::Failed;
-                session.error = Some(err_msg);
-                session.completed_at = Some(current_timestamp());
-                session.event = Some(event);
-            }
+            AppState::fail_review(&state, &review_id, err_msg, Some(event)).await;
         }
         Err(_) => {
             let err_msg = "Review timed out after 5 minutes".to_string();
-            let mut event = build_review_event(
-                &review_id, "review.timeout", &diff_source, None,
-                &model, provider.as_deref(), base_url.as_deref(),
-                task_start.elapsed().as_millis() as u64,
-                None, Some(llm_ms),
-                diff_bytes, diff_files_total, 0, 0,
-                &[], None, Some(&err_msg),
-            );
-            event.github_repo = Some(repo.clone());
-            event.github_pr = Some(pr_number);
+            let event = ReviewEventBuilder::new(&review_id, "review.timeout", &diff_source, &model)
+                .provider(provider.as_deref())
+                .base_url(base_url.as_deref())
+                .duration_ms(task_start.elapsed().as_millis() as u64)
+                .llm_total_ms(llm_ms)
+                .diff_stats(diff_bytes, diff_files_total, 0, 0)
+                .github(&repo, pr_number)
+                .error(&err_msg)
+                .build();
             emit_wide_event(&event);
-            let mut reviews = state.reviews.write().await;
-            if let Some(session) = reviews.get_mut(&review_id) {
-                session.status = ReviewStatus::Failed;
-                session.error = Some(err_msg);
-                session.completed_at = Some(current_timestamp());
-                session.event = Some(event);
-            }
+            AppState::fail_review(&state, &review_id, err_msg, Some(event)).await;
         }
     }
 
@@ -1830,16 +1625,15 @@ pub(super) async fn post_pr_review_comments(
     // Build inline review comments
     let mut inline_comments = Vec::new();
     for c in comments {
-        let severity_icon = match format!("{:?}", c.severity).as_str() {
-            "Error" => ":rotating_light:",
-            "Warning" => ":warning:",
-            "Info" => ":information_source:",
-            "Suggestion" => ":bulb:",
-            _ => ":mag:",
+        let severity_icon = match c.severity {
+            crate::core::comment::Severity::Error => ":rotating_light:",
+            crate::core::comment::Severity::Warning => ":warning:",
+            crate::core::comment::Severity::Info => ":information_source:",
+            crate::core::comment::Severity::Suggestion => ":bulb:",
         };
 
         let mut comment_body = format!(
-            "{} **{:?}** | {:?}",
+            "{} **{}** | {}",
             severity_icon, c.severity, c.category
         );
         if c.confidence > 0.0 {

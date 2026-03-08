@@ -11,7 +11,11 @@ use sha2::Sha256;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use super::state::AppState;
+use super::state::{
+    AppState, ReviewSession, ReviewStatus,
+    ReviewEventBuilder, current_timestamp, count_diff_files, count_reviewed_files,
+    emit_wide_event, build_progress_callback,
+};
 
 // ── OAuth Device Flow ──────────────────────────────────────────────────
 
@@ -202,7 +206,7 @@ pub async fn get_webhook_status(
     State(state): State<Arc<AppState>>,
 ) -> Json<WebhookStatusResponse> {
     let config = state.config.read().await;
-    let configured = config.github_webhook_secret.as_ref().map_or(false, |s| !s.is_empty());
+    let configured = config.github_webhook_secret.as_ref().is_some_and(|s| !s.is_empty());
     Json(WebhookStatusResponse {
         configured,
         url: "/api/webhooks/github".to_string(),
@@ -318,7 +322,6 @@ pub async fn handle_webhook(
                 let review_id = uuid::Uuid::new_v4().to_string();
                 let diff_source = format!("pr:{}#{}", repo, pr_number);
 
-                use super::state::{ReviewSession, ReviewStatus};
                 let session = ReviewSession {
                     id: review_id.clone(),
                     status: ReviewStatus::Pending,
@@ -342,13 +345,15 @@ pub async fn handle_webhook(
                 tokio::spawn(async move {
                     run_webhook_review(
                         state_clone,
-                        review_id_clone,
-                        diff_content,
-                        repo,
-                        pr_number,
-                        head_sha,
-                        pr_title,
-                        auth_token,
+                        WebhookReviewParams {
+                            review_id: review_id_clone,
+                            diff_content,
+                            repo,
+                            pr_number,
+                            head_sha,
+                            pr_title,
+                            auth_token,
+                        },
                     )
                     .await;
                 });
@@ -509,7 +514,7 @@ async fn create_check_run(
                 "start_line": c.line_number,
                 "end_line": c.line_number,
                 "annotation_level": level,
-                "title": format!("{:?}: {:?}", c.severity, c.category),
+                "title": format!("{}: {}", c.severity, c.category),
                 "message": c.content,
             })
         })
@@ -578,8 +583,7 @@ async fn create_check_run(
 
 // ── Webhook-triggered review task ──────────────────────────────────────
 
-async fn run_webhook_review(
-    state: Arc<AppState>,
+struct WebhookReviewParams {
     review_id: String,
     diff_content: String,
     repo: String,
@@ -587,20 +591,32 @@ async fn run_webhook_review(
     head_sha: String,
     pr_title: String,
     auth_token: String,
-) {
-    use super::state::ReviewStatus;
+}
+
+async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
+    let WebhookReviewParams {
+        review_id,
+        diff_content,
+        repo,
+        pr_number,
+        head_sha,
+        pr_title,
+        auth_token,
+    } = params;
     use crate::core::comment::CommentSynthesizer;
+
+    let _permit = match state.review_semaphore.clone().acquire_owned().await {
+        Ok(permit) => permit,
+        Err(_) => {
+            AppState::fail_review(&state, &review_id, "Review semaphore closed".to_string(), None).await;
+            return;
+        }
+    };
 
     let task_start = std::time::Instant::now();
     let diff_source = format!("pr:{}#{}", repo, pr_number);
 
-    // Mark as running
-    {
-        let mut reviews = state.reviews.write().await;
-        if let Some(session) = reviews.get_mut(&review_id) {
-            session.status = ReviewStatus::Running;
-        }
-    }
+    AppState::mark_running(&state, &review_id).await;
 
     let config = state.config.read().await.clone();
     let repo_path = state.repo_path.clone();
@@ -609,65 +625,26 @@ async fn run_webhook_review(
     let base_url = config.base_url.clone();
 
     let diff_bytes = diff_content.len();
-    let diff_files_total = diff_content.matches("\ndiff --git ").count()
-        + if diff_content.starts_with("diff --git ") { 1 } else { 0 };
+    let diff_files_total = count_diff_files(&diff_content);
 
     if diff_content.trim().is_empty() {
-        let mut reviews = state.reviews.write().await;
-        if let Some(session) = reviews.get_mut(&review_id) {
-            session.status = ReviewStatus::Complete;
-            session.summary = Some(CommentSynthesizer::generate_summary(&[]));
-            session.completed_at = Some(current_timestamp());
-        }
+        let event = ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
+            .provider(provider.as_deref())
+            .base_url(base_url.as_deref())
+            .duration_ms(task_start.elapsed().as_millis() as u64)
+            .github(&repo, pr_number)
+            .build();
+        emit_wide_event(&event);
+        AppState::complete_review(
+            &state, &review_id, Vec::new(),
+            CommentSynthesizer::generate_summary(&[]), 0, event,
+        ).await;
         AppState::save_reviews_async(&state);
         return;
     }
 
-    // Build progress callback
-    let on_progress: Option<crate::review::ProgressCallback> = {
-        let ps = state.clone();
-        let pid = review_id.clone();
-        let pstart = task_start;
-        Some(Arc::new(move |update: crate::review::ProgressUpdate| {
-            let state = ps.clone();
-            let id = pid.clone();
-            let start = pstart;
-            tokio::spawn(async move {
-                let elapsed = start.elapsed().as_millis() as u64;
-                let avg = if update.files_completed > 0 {
-                    elapsed / update.files_completed as u64
-                } else {
-                    0
-                };
-                let remaining = update
-                    .files_total
-                    .saturating_sub(update.files_completed)
-                    .saturating_sub(update.files_skipped);
-                let est = if update.files_completed > 0 {
-                    Some(remaining as u64 * avg)
-                } else {
-                    None
-                };
-                let mut reviews = state.reviews.write().await;
-                if let Some(session) = reviews.get_mut(&id) {
-                    session.progress = Some(super::state::ReviewProgress {
-                        current_file: Some(update.current_file),
-                        files_total: update.files_total,
-                        files_completed: update.files_completed,
-                        files_skipped: update.files_skipped,
-                        elapsed_ms: elapsed,
-                        estimated_remaining_ms: est,
-                    });
-                    session.comments = update.comments_so_far.clone();
-                    session.files_reviewed = update.files_completed;
-                    if !session.comments.is_empty() {
-                        session.summary =
-                            Some(CommentSynthesizer::generate_summary(&session.comments));
-                    }
-                }
-            });
-        }))
-    };
+    let on_progress: Option<crate::review::ProgressCallback> =
+        Some(build_progress_callback(&state, &review_id, task_start));
 
     let llm_start = std::time::Instant::now();
     let result = tokio::time::timeout(
@@ -685,13 +662,7 @@ async fn run_webhook_review(
     match result {
         Ok(Ok(comments)) => {
             let summary = CommentSynthesizer::generate_summary(&comments);
-            let files_reviewed = {
-                let mut files = std::collections::HashSet::new();
-                for c in &comments {
-                    files.insert(c.file_path.clone());
-                }
-                files.len()
-            };
+            let files_reviewed = count_reviewed_files(&comments);
 
             // Post inline review comments to PR
             let mut github_posted = false;
@@ -725,62 +696,48 @@ async fn run_webhook_review(
             )
             .await;
 
-            let mut event = super::api::build_review_event(
-                &review_id,
-                "review.completed",
-                &diff_source,
-                Some(&pr_title),
-                &model,
-                provider.as_deref(),
-                base_url.as_deref(),
-                task_start.elapsed().as_millis() as u64,
-                None,
-                Some(llm_ms),
-                diff_bytes,
-                diff_files_total,
-                files_reviewed,
-                diff_files_total.saturating_sub(files_reviewed),
-                &comments,
-                Some(&summary),
-                None,
-            );
-            event.github_posted = github_posted;
-            event.github_repo = Some(repo.clone());
-            event.github_pr = Some(pr_number);
-            super::api::emit_wide_event(&event);
-
-            let mut reviews = state.reviews.write().await;
-            if let Some(session) = reviews.get_mut(&review_id) {
-                session.status = ReviewStatus::Complete;
-                session.comments = comments;
-                session.summary = Some(summary);
-                session.files_reviewed = files_reviewed;
-                session.completed_at = Some(current_timestamp());
-                session.progress = None;
-                session.event = Some(event);
-            }
+            let event = ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
+                .provider(provider.as_deref())
+                .base_url(base_url.as_deref())
+                .duration_ms(task_start.elapsed().as_millis() as u64)
+                .llm_total_ms(llm_ms)
+                .diff_stats(diff_bytes, diff_files_total, files_reviewed, diff_files_total.saturating_sub(files_reviewed))
+                .comments(&comments, Some(&summary))
+                .github(&repo, pr_number)
+                .github_posted(github_posted)
+                .build();
+            emit_wide_event(&event);
+            AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event).await;
         }
         Ok(Err(e)) => {
             let err_msg = format!("Review failed: {}", e);
             warn!(review_id = %review_id, error = %err_msg, "Webhook review failed");
-            let mut reviews = state.reviews.write().await;
-            if let Some(session) = reviews.get_mut(&review_id) {
-                session.status = ReviewStatus::Failed;
-                session.error = Some(err_msg);
-                session.completed_at = Some(current_timestamp());
-                session.progress = None;
-            }
+            let event = ReviewEventBuilder::new(&review_id, "review.failed", &diff_source, &model)
+                .provider(provider.as_deref())
+                .base_url(base_url.as_deref())
+                .duration_ms(task_start.elapsed().as_millis() as u64)
+                .llm_total_ms(llm_ms)
+                .diff_stats(diff_bytes, diff_files_total, 0, 0)
+                .github(&repo, pr_number)
+                .error(&err_msg)
+                .build();
+            emit_wide_event(&event);
+            AppState::fail_review(&state, &review_id, err_msg, Some(event)).await;
         }
         Err(_) => {
             let err_msg = "Review timed out after 5 minutes".to_string();
             warn!(review_id = %review_id, "Webhook review timed out");
-            let mut reviews = state.reviews.write().await;
-            if let Some(session) = reviews.get_mut(&review_id) {
-                session.status = ReviewStatus::Failed;
-                session.error = Some(err_msg);
-                session.completed_at = Some(current_timestamp());
-                session.progress = None;
-            }
+            let event = ReviewEventBuilder::new(&review_id, "review.timeout", &diff_source, &model)
+                .provider(provider.as_deref())
+                .base_url(base_url.as_deref())
+                .duration_ms(task_start.elapsed().as_millis() as u64)
+                .llm_total_ms(llm_ms)
+                .diff_stats(diff_bytes, diff_files_total, 0, 0)
+                .github(&repo, pr_number)
+                .error(&err_msg)
+                .build();
+            emit_wide_event(&event);
+            AppState::fail_review(&state, &review_id, err_msg, Some(event)).await;
         }
     }
 
@@ -788,9 +745,73 @@ async fn run_webhook_review(
     AppState::prune_old_reviews(&state).await;
 }
 
-fn current_timestamp() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hex_encode() {
+        assert_eq!(hex::encode([]), "");
+        assert_eq!(hex::encode([0x00]), "00");
+        assert_eq!(hex::encode([0xff]), "ff");
+        assert_eq!(hex::encode([0xde, 0xad, 0xbe, 0xef]), "deadbeef");
+        assert_eq!(hex::encode([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]), "0123456789abcdef");
+    }
+
+    #[test]
+    fn test_verify_webhook_signature_valid() {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+
+        let secret = "test-webhook-secret";
+        let body = r#"{"action":"opened","pull_request":{"number":1}}"#;
+
+        // Compute the expected signature
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(body.as_bytes());
+        let expected = hex::encode(mac.finalize().into_bytes());
+        let signature = format!("sha256={}", expected);
+
+        assert!(verify_webhook_signature(secret, body, &signature).is_ok());
+    }
+
+    #[test]
+    fn test_verify_webhook_signature_invalid() {
+        let secret = "test-secret";
+        let body = "test body";
+        let bad_sig = "sha256=0000000000000000000000000000000000000000000000000000000000000000";
+        assert!(verify_webhook_signature(secret, body, bad_sig).is_err());
+    }
+
+    #[test]
+    fn test_verify_webhook_signature_missing_prefix() {
+        let secret = "test-secret";
+        let body = "test body";
+        let no_prefix = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        assert!(verify_webhook_signature(secret, body, no_prefix).is_err());
+    }
+
+    #[test]
+    fn test_verify_webhook_signature_wrong_length() {
+        let secret = "test-secret";
+        let body = "test body";
+        let short_sig = "sha256=abcdef";
+        assert!(verify_webhook_signature(secret, body, short_sig).is_err());
+    }
+
+    #[test]
+    fn test_verify_webhook_signature_empty_body() {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+
+        let secret = "my-secret";
+        let body = "";
+
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(body.as_bytes());
+        let expected = hex::encode(mac.finalize().into_bytes());
+        let signature = format!("sha256={}", expected);
+
+        assert!(verify_webhook_signature(secret, body, &signature).is_ok());
+    }
 }

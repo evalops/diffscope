@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures::StreamExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
@@ -167,7 +168,8 @@ async fn review_diff_content_raw_inner(
 
     let model_config = config.to_model_config();
 
-    let adapter = adapters::llm::create_adapter(&model_config)?;
+    let adapter: Arc<dyn adapters::llm::LLMAdapter> =
+        Arc::from(adapters::llm::create_adapter(&model_config)?);
     let base_prompt_config = core::prompt::PromptConfig {
         max_context_chars: config.max_context_chars,
         max_diff_chars: config.max_diff_chars,
@@ -177,8 +179,20 @@ async fn review_diff_content_raw_inner(
 
     let repo_path_str = repo_path.to_string_lossy().to_string();
     let context_fetcher = core::ContextFetcher::new(repo_path.to_path_buf());
+    let is_local = should_optimize_for_local(&config);
 
-    for diff in &diffs {
+    // Phase 1: Prepare LLM requests for each file (sequential context gathering)
+    struct FileReviewJob {
+        diff_index: usize,
+        request: adapters::llm::LLMRequest,
+        active_rules: Vec<crate::core::ReviewRule>,
+        path_config: Option<config::PathConfig>,
+        file_path: std::path::PathBuf,
+    }
+
+    let mut jobs: Vec<FileReviewJob> = Vec::new();
+
+    for (diff_index, diff) in diffs.iter().enumerate() {
         // Check if file should be excluded
         if config.should_exclude(&diff.file_path) {
             info!("Skipping excluded file: {}", diff.file_path.display());
@@ -196,7 +210,7 @@ async fn review_diff_content_raw_inner(
             continue;
         }
 
-        // Emit progress: about to review this file
+        // Emit progress: preparing this file
         if let Some(ref cb) = on_progress {
             cb(ProgressUpdate {
                 current_file: diff.file_path.display().to_string(),
@@ -247,10 +261,10 @@ async fn review_diff_content_raw_inner(
         }
 
         // Get path-specific configuration
-        let path_config = config.get_path_config(&diff.file_path);
+        let path_config = config.get_path_config(&diff.file_path).cloned();
 
         // Add focus areas and extra context if configured
-        if let Some(pc) = path_config {
+        if let Some(ref pc) = path_config {
             if !pc.focus.is_empty() {
                 let focus_chunk = core::LLMContextChunk {
                     content: format!("Focus areas for this file: {}", pc.focus.join(", ")),
@@ -291,12 +305,12 @@ async fn review_diff_content_raw_inner(
         if let Some(custom_prompt) = &config.system_prompt {
             local_prompt_config.system_prompt = custom_prompt.clone();
         }
-        if let Some(pc) = path_config {
+        if let Some(ref pc) = path_config {
             if let Some(ref prompt) = pc.system_prompt {
                 local_prompt_config.system_prompt = prompt.clone();
             }
         }
-        if let Some(guidance) = build_review_guidance(&config, path_config) {
+        if let Some(guidance) = build_review_guidance(&config, path_config.as_ref()) {
             local_prompt_config.system_prompt.push_str("\n\n");
             local_prompt_config.system_prompt.push_str(&guidance);
         }
@@ -317,14 +331,12 @@ async fn review_diff_content_raw_inner(
             local_prompt_builder.build_prompt(diff, &context_chunks)?;
 
         // Optimize prompt for local models with limited context windows
-        let (system_prompt, user_prompt) = if should_optimize_for_local(&config) {
+        let (system_prompt, user_prompt) = if is_local {
             let context_window = config.context_window.unwrap_or(8192);
             optimize_prompt_for_local(&system_prompt, &user_prompt, context_window)
         } else {
             (system_prompt, user_prompt)
         };
-
-        let is_local = should_optimize_for_local(&config);
 
         let request = adapters::llm::LLMRequest {
             system_prompt,
@@ -333,57 +345,115 @@ async fn review_diff_content_raw_inner(
             max_tokens: None,
         };
 
-        if is_local {
-            eprintln!("Sending to local model (this may take a while)...");
-        }
-        let request_start = Instant::now();
+        jobs.push(FileReviewJob {
+            diff_index,
+            request,
+            active_rules,
+            path_config,
+            file_path: diff.file_path.clone(),
+        });
+    }
 
-        let response = adapter.complete(request).await?;
+    // Phase 2: Send LLM requests with bounded concurrency
+    const MAX_CONCURRENT_FILES: usize = 5;
+    let concurrency = if is_local { 1 } else { MAX_CONCURRENT_FILES };
 
-        if is_local {
-            let elapsed = request_start.elapsed();
-            eprintln!("Response received ({:.1}s)", elapsed.as_secs_f64());
-        }
+    info!(
+        "Sending {} LLM requests (concurrency={})",
+        jobs.len(),
+        concurrency,
+    );
 
-        // Validate LLM response before parsing
-        if let Err(validation_err) = validate_llm_response(&response.content) {
-            eprintln!("Warning: LLM response validation failed: {}", validation_err);
-            if is_local {
-                eprintln!(
-                    "Hint: Try a larger model or reduce diff size for better results with local models."
-                );
+    let on_progress_ref = &on_progress;
+    let files_skipped_snapshot = files_skipped;
+
+    let results: Vec<_> = futures::stream::iter(jobs)
+        .map(|job| {
+            let adapter = adapter.clone();
+            async move {
+                if is_local {
+                    eprintln!("Sending {} to local model...", job.file_path.display());
+                }
+                let request_start = Instant::now();
+                let response = adapter.complete(job.request).await;
+                if is_local {
+                    let elapsed = request_start.elapsed();
+                    eprintln!(
+                        "{}: response received ({:.1}s)",
+                        job.file_path.display(),
+                        elapsed.as_secs_f64()
+                    );
+                }
+                (job.diff_index, job.active_rules, job.path_config, job.file_path, response)
             }
-            continue;
-        }
+        })
+        .buffer_unordered(concurrency)
+        .collect()
+        .await;
 
-        if let Ok(raw_comments) = parse_llm_response(&response.content, &diff.file_path) {
-            let mut comments = core::CommentSynthesizer::synthesize(raw_comments)?;
+    // Phase 3: Process results in file order
+    let mut indexed_results = results;
+    indexed_results.sort_by_key(|(idx, _, _, _, _)| *idx);
 
-            // Apply severity overrides if configured
-            if let Some(pc) = path_config {
-                for comment in &mut comments {
-                    for (category, severity) in &pc.severity_overrides {
-                        if format!("{:?}", comment.category).to_lowercase()
-                            == category.to_lowercase()
-                        {
-                            comment.severity = match severity.to_lowercase().as_str() {
-                                "error" => core::comment::Severity::Error,
-                                "warning" => core::comment::Severity::Warning,
-                                "info" => core::comment::Severity::Info,
-                                "suggestion" => core::comment::Severity::Suggestion,
-                                _ => comment.severity.clone(),
-                            };
+    for (diff_index, active_rules, path_config, file_path, response) in indexed_results {
+        let diff = &diffs[diff_index];
+
+        match response {
+            Err(e) => {
+                warn!("LLM request failed for {}: {}", file_path.display(), e);
+                continue;
+            }
+            Ok(response) => {
+                // Validate LLM response before parsing
+                if let Err(validation_err) = validate_llm_response(&response.content) {
+                    eprintln!("Warning: LLM response validation failed for {}: {}", file_path.display(), validation_err);
+                    if is_local {
+                        eprintln!(
+                            "Hint: Try a larger model or reduce diff size for better results with local models."
+                        );
+                    }
+                    continue;
+                }
+
+                if let Ok(raw_comments) = parse_llm_response(&response.content, &diff.file_path) {
+                    let mut comments = core::CommentSynthesizer::synthesize(raw_comments)?;
+
+                    // Apply severity overrides if configured
+                    if let Some(ref pc) = path_config {
+                        for comment in &mut comments {
+                            for (category, severity) in &pc.severity_overrides {
+                                if comment.category.as_str()
+                                    == category.to_lowercase()
+                                {
+                                    comment.severity = match severity.to_lowercase().as_str() {
+                                        "error" => core::comment::Severity::Error,
+                                        "warning" => core::comment::Severity::Warning,
+                                        "info" => core::comment::Severity::Info,
+                                        "suggestion" => core::comment::Severity::Suggestion,
+                                        _ => comment.severity.clone(),
+                                    };
+                                }
+                            }
                         }
                     }
+                    let comments = apply_rule_overrides(comments, &active_rules);
+
+                    let comments = filter_comments_for_diff(diff, comments);
+                    all_comments.extend(comments);
                 }
             }
-            let comments = apply_rule_overrides(comments, &active_rules);
-
-            let comments = filter_comments_for_diff(diff, comments);
-            all_comments.extend(comments);
         }
 
         files_completed += 1;
+        if let Some(ref cb) = on_progress_ref {
+            cb(ProgressUpdate {
+                current_file: file_path.display().to_string(),
+                files_total,
+                files_completed,
+                files_skipped: files_skipped_snapshot,
+                comments_so_far: all_comments.clone(),
+            });
+        }
     }
 
     // Run post-processors to filter and refine comments
@@ -400,6 +470,7 @@ async fn review_diff_content_raw_inner(
 
 pub fn extract_symbols_from_diff(diff: &core::UnifiedDiff) -> Vec<String> {
     let mut symbols = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     static SYMBOL_REGEX: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"\b([A-Z][a-zA-Z0-9_]*|[a-z][a-zA-Z0-9_]*)\s*\(").unwrap());
     static CLASS_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -416,7 +487,7 @@ pub fn extract_symbols_from_diff(diff: &core::UnifiedDiff) -> Vec<String> {
                 for capture in SYMBOL_REGEX.captures_iter(&line.content) {
                     if let Some(symbol) = capture.get(1) {
                         let symbol_str = symbol.as_str().to_string();
-                        if symbol_str.len() > 2 && !symbols.contains(&symbol_str) {
+                        if symbol_str.len() > 2 && seen.insert(symbol_str.clone()) {
                             symbols.push(symbol_str);
                         }
                     }
@@ -426,7 +497,7 @@ pub fn extract_symbols_from_diff(diff: &core::UnifiedDiff) -> Vec<String> {
                 for capture in CLASS_REGEX.captures_iter(&line.content) {
                     if let Some(class_name) = capture.get(2) {
                         let class_str = class_name.as_str().to_string();
-                        if !symbols.contains(&class_str) {
+                        if seen.insert(class_str.clone()) {
                             symbols.push(class_str);
                         }
                     }
@@ -858,6 +929,54 @@ mod tests {
         };
         let symbols = extract_symbols_from_diff(&diff);
         assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn extract_symbols_preserves_insertion_order() {
+        let diff = core::UnifiedDiff {
+            old_content: None,
+            new_content: None,
+            file_path: PathBuf::from("test.rs"),
+            is_new: false,
+            is_deleted: false,
+            is_binary: false,
+            hunks: vec![core::diff_parser::DiffHunk {
+                context: String::new(),
+                old_start: 1,
+                old_lines: 0,
+                new_start: 1,
+                new_lines: 3,
+                changes: vec![
+                    core::diff_parser::DiffLine {
+                        content: "alpha(1);".to_string(),
+                        change_type: core::diff_parser::ChangeType::Added,
+                        old_line_no: None,
+                        new_line_no: Some(1),
+                    },
+                    core::diff_parser::DiffLine {
+                        content: "beta(2);".to_string(),
+                        change_type: core::diff_parser::ChangeType::Added,
+                        old_line_no: None,
+                        new_line_no: Some(2),
+                    },
+                    core::diff_parser::DiffLine {
+                        content: "gamma(3); alpha(4);".to_string(),
+                        change_type: core::diff_parser::ChangeType::Added,
+                        old_line_no: None,
+                        new_line_no: Some(3),
+                    },
+                ],
+            }],
+        };
+        let symbols = extract_symbols_from_diff(&diff);
+        // Deduplicates alpha, preserves first-seen order
+        let positions: Vec<usize> = ["alpha", "beta", "gamma"]
+            .iter()
+            .map(|s| symbols.iter().position(|x| x == s).unwrap())
+            .collect();
+        assert!(positions[0] < positions[1]);
+        assert!(positions[1] < positions[2]);
+        assert_eq!(symbols.iter().filter(|s| *s == "alpha").count(), 1);
     }
 
     #[test]

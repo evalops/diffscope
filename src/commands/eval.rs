@@ -779,13 +779,13 @@ impl EvalPattern {
         }
 
         if let Some(severity) = &self.severity {
-            if !format!("{:?}", comment.severity).eq_ignore_ascii_case(severity.trim()) {
+            if !comment.severity.to_string().eq_ignore_ascii_case(severity.trim()) {
                 return false;
             }
         }
 
         if let Some(category) = &self.category {
-            if !format!("{:?}", comment.category).eq_ignore_ascii_case(category.trim()) {
+            if !comment.category.to_string().eq_ignore_ascii_case(category.trim()) {
                 return false;
             }
         }

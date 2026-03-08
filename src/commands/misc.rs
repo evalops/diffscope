@@ -500,7 +500,7 @@ async fn answer_discussion_question(
     let mut prompt = String::new();
     prompt.push_str("Review comment context:\n");
     prompt.push_str(&format!(
-        "- id: {}\n- file: {}\n- line: {}\n- severity: {:?}\n- category: {:?}\n- confidence: {:.0}%\n- comment: {}\n",
+        "- id: {}\n- file: {}\n- line: {}\n- severity: {}\n- category: {}\n- confidence: {:.0}%\n- comment: {}\n",
         comment.id,
         comment.file_path.display(),
         comment.line_number,

@@ -63,6 +63,61 @@ pub enum Category {
     Architecture,
 }
 
+impl std::fmt::Display for Severity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Severity::Error => write!(f, "Error"),
+            Severity::Warning => write!(f, "Warning"),
+            Severity::Info => write!(f, "Info"),
+            Severity::Suggestion => write!(f, "Suggestion"),
+        }
+    }
+}
+
+impl Severity {
+    #[allow(dead_code)]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Info => "info",
+            Severity::Suggestion => "suggestion",
+        }
+    }
+}
+
+impl std::fmt::Display for Category {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Category::Bug => write!(f, "Bug"),
+            Category::Security => write!(f, "Security"),
+            Category::Performance => write!(f, "Performance"),
+            Category::Style => write!(f, "Style"),
+            Category::Documentation => write!(f, "Documentation"),
+            Category::BestPractice => write!(f, "BestPractice"),
+            Category::Maintainability => write!(f, "Maintainability"),
+            Category::Testing => write!(f, "Testing"),
+            Category::Architecture => write!(f, "Architecture"),
+        }
+    }
+}
+
+impl Category {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Category::Bug => "bug",
+            Category::Security => "security",
+            Category::Performance => "performance",
+            Category::Style => "style",
+            Category::Documentation => "documentation",
+            Category::BestPractice => "bestpractice",
+            Category::Maintainability => "maintainability",
+            Category::Testing => "testing",
+            Category::Architecture => "architecture",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FixEffort {
     Low,    // < 5 minutes
@@ -95,10 +150,10 @@ impl CommentSynthesizer {
         let mut critical_issues = 0;
 
         for comment in comments {
-            let severity_str = format!("{:?}", comment.severity);
+            let severity_str = comment.severity.to_string();
             *by_severity.entry(severity_str).or_insert(0) += 1;
 
-            let category_str = format!("{:?}", comment.category);
+            let category_str = comment.category.to_string();
             *by_category.entry(category_str).or_insert(0) += 1;
 
             files.insert(comment.file_path.clone());
@@ -243,7 +298,7 @@ impl CommentSynthesizer {
     }
 
     fn extract_tags(content: &str, category: &Category) -> Vec<String> {
-        let mut tags = vec![format!("{:?}", category).to_lowercase()];
+        let mut tags = vec![category.as_str().to_string()];
         let lower = content.to_lowercase();
 
         // Security-specific tags
@@ -431,7 +486,7 @@ impl CommentSynthesizer {
 
 pub fn compute_comment_id(file_path: &Path, content: &str, category: &Category) -> String {
     let normalized = normalize_content(content);
-    let key = format!("{}|{:?}|{}", file_path.display(), category, normalized);
+    let key = format!("{}|{}|{}", file_path.display(), category, normalized);
     let hash = fnv1a64(key.as_bytes());
     format!("cmt_{:016x}", hash)
 }
@@ -482,4 +537,45 @@ pub struct RawComment {
     pub confidence: Option<f32>,
     pub fix_effort: Option<FixEffort>,
     pub tags: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_severity_display() {
+        assert_eq!(Severity::Error.to_string(), "Error");
+        assert_eq!(Severity::Warning.to_string(), "Warning");
+        assert_eq!(Severity::Info.to_string(), "Info");
+        assert_eq!(Severity::Suggestion.to_string(), "Suggestion");
+    }
+
+    #[test]
+    fn test_category_display() {
+        assert_eq!(Category::Bug.to_string(), "Bug");
+        assert_eq!(Category::Security.to_string(), "Security");
+        assert_eq!(Category::Performance.to_string(), "Performance");
+        assert_eq!(Category::Style.to_string(), "Style");
+        assert_eq!(Category::Documentation.to_string(), "Documentation");
+        assert_eq!(Category::BestPractice.to_string(), "BestPractice");
+        assert_eq!(Category::Maintainability.to_string(), "Maintainability");
+        assert_eq!(Category::Testing.to_string(), "Testing");
+        assert_eq!(Category::Architecture.to_string(), "Architecture");
+    }
+
+    #[test]
+    fn test_severity_as_str() {
+        assert_eq!(Severity::Error.as_str(), "error");
+        assert_eq!(Severity::Warning.as_str(), "warning");
+        assert_eq!(Severity::Info.as_str(), "info");
+        assert_eq!(Severity::Suggestion.as_str(), "suggestion");
+    }
+
+    #[test]
+    fn test_category_as_str() {
+        assert_eq!(Category::Bug.as_str(), "bug");
+        assert_eq!(Category::Security.as_str(), "security");
+        assert_eq!(Category::BestPractice.as_str(), "bestpractice");
+    }
 }

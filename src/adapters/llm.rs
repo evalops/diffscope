@@ -65,7 +65,17 @@ pub struct Usage {
 #[async_trait]
 pub trait LLMAdapter: Send + Sync {
     async fn complete(&self, request: LLMRequest) -> Result<LLMResponse>;
-    fn _model_name(&self) -> &str;
+    #[allow(dead_code)]
+    fn model_name(&self) -> &str;
+}
+
+/// Check if a base URL points to an Ollama instance by parsing the port.
+fn is_ollama_url(base_url: &Option<String>) -> bool {
+    base_url.as_ref().is_some_and(|u| {
+        url::Url::parse(u)
+            .map(|parsed| parsed.port() == Some(11434))
+            .unwrap_or(false)
+    })
 }
 
 pub fn create_adapter(config: &ModelConfig) -> Result<Box<dyn LLMAdapter>> {
@@ -118,12 +128,7 @@ pub fn create_adapter(config: &ModelConfig) -> Result<Box<dyn LLMAdapter>> {
         name if name.starts_with("ollama:") => {
             Ok(Box::new(crate::adapters::OllamaAdapter::new(config)?))
         }
-        _name
-            if config
-                .base_url
-                .as_ref()
-                .is_some_and(|u| u.contains("11434")) =>
-        {
+        _name if is_ollama_url(&config.base_url) => {
             Ok(Box::new(crate::adapters::OllamaAdapter::new(config)?))
         }
         // Default to OpenAI for unknown models
@@ -149,42 +154,42 @@ mod tests {
     fn test_create_adapter_claude_dash_prefix() {
         let config = local_config("claude-3-5-sonnet-20241022");
         let adapter = create_adapter(&config).unwrap();
-        assert_eq!(adapter._model_name(), "claude-3-5-sonnet-20241022");
+        assert_eq!(adapter.model_name(), "claude-3-5-sonnet-20241022");
     }
 
     #[test]
     fn test_create_adapter_claude_legacy_prefix() {
         let config = local_config("claude3sonnet");
         let adapter = create_adapter(&config).unwrap();
-        assert_eq!(adapter._model_name(), "claude3sonnet");
+        assert_eq!(adapter.model_name(), "claude3sonnet");
     }
 
     #[test]
     fn test_create_adapter_gpt() {
         let config = local_config("gpt-4o");
         let adapter = create_adapter(&config).unwrap();
-        assert_eq!(adapter._model_name(), "gpt-4o");
+        assert_eq!(adapter.model_name(), "gpt-4o");
     }
 
     #[test]
     fn test_create_adapter_gpt35() {
         let config = local_config("gpt-3.5-turbo");
         let adapter = create_adapter(&config).unwrap();
-        assert_eq!(adapter._model_name(), "gpt-3.5-turbo");
+        assert_eq!(adapter.model_name(), "gpt-3.5-turbo");
     }
 
     #[test]
     fn test_create_adapter_o1() {
         let config = local_config("o1-preview");
         let adapter = create_adapter(&config).unwrap();
-        assert_eq!(adapter._model_name(), "o1-preview");
+        assert_eq!(adapter.model_name(), "o1-preview");
     }
 
     #[test]
     fn test_create_adapter_ollama_prefix() {
         let config = local_config("ollama:codellama");
         let adapter = create_adapter(&config).unwrap();
-        assert_eq!(adapter._model_name(), "ollama:codellama");
+        assert_eq!(adapter.model_name(), "ollama:codellama");
     }
 
     #[test]
@@ -196,7 +201,7 @@ mod tests {
             ..Default::default()
         };
         let adapter = create_adapter(&config).unwrap();
-        assert_eq!(adapter._model_name(), "codellama");
+        assert_eq!(adapter.model_name(), "codellama");
     }
 
     #[test]
@@ -204,7 +209,7 @@ mod tests {
         // Unknown model name with a local base_url should default to OpenAI adapter
         let config = local_config("some-custom-model");
         let adapter = create_adapter(&config).unwrap();
-        assert_eq!(adapter._model_name(), "some-custom-model");
+        assert_eq!(adapter.model_name(), "some-custom-model");
     }
 
     #[test]
@@ -218,7 +223,7 @@ mod tests {
         };
         // Even though model_name says "gpt-4o", the override should pick Anthropic
         let adapter = create_adapter(&config).unwrap();
-        assert_eq!(adapter._model_name(), "gpt-4o");
+        assert_eq!(adapter.model_name(), "gpt-4o");
     }
 
     #[test]
@@ -231,7 +236,7 @@ mod tests {
             ..Default::default()
         };
         let adapter = create_adapter(&config).unwrap();
-        assert_eq!(adapter._model_name(), "my-model");
+        assert_eq!(adapter.model_name(), "my-model");
     }
 
     #[test]
@@ -245,7 +250,7 @@ mod tests {
         };
         // Even though model_name says "claude-*", the override should pick OpenAI
         let adapter = create_adapter(&config).unwrap();
-        assert_eq!(adapter._model_name(), "claude-3-5-sonnet-20241022");
+        assert_eq!(adapter.model_name(), "claude-3-5-sonnet-20241022");
     }
 
     #[test]
@@ -259,7 +264,46 @@ mod tests {
         };
         // Unknown adapter override should default to OpenAI
         let adapter = create_adapter(&config).unwrap();
-        assert_eq!(adapter._model_name(), "my-model");
+        assert_eq!(adapter.model_name(), "my-model");
+    }
+
+    #[test]
+    fn test_create_adapter_ollama_by_standard_url() {
+        // Should detect Ollama from standard localhost:11434 URL
+        let config = ModelConfig {
+            model_name: "codellama".to_string(),
+            api_key: None,
+            base_url: Some("http://localhost:11434".to_string()),
+            ..Default::default()
+        };
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter.model_name(), "codellama");
+    }
+
+    #[test]
+    fn test_create_adapter_ollama_by_url_with_path() {
+        // Should detect Ollama even with trailing path
+        let config = ModelConfig {
+            model_name: "codellama".to_string(),
+            api_key: None,
+            base_url: Some("http://my-server:11434/api".to_string()),
+            ..Default::default()
+        };
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter.model_name(), "codellama");
+    }
+
+    #[test]
+    fn test_create_adapter_port_in_path_not_detected_as_ollama() {
+        // A URL like http://proxy.example.com/service/11434 should NOT trigger Ollama
+        let config = ModelConfig {
+            model_name: "my-model".to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: Some("http://proxy.example.com/service/11434".to_string()),
+            ..Default::default()
+        };
+        // Should default to OpenAI, not Ollama
+        let _adapter = create_adapter(&config).unwrap();
     }
 
     #[test]

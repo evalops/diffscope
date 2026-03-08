@@ -138,7 +138,7 @@ impl LLMAdapter for OpenAIAdapter {
         self.complete_chat_completions(request).await
     }
 
-    fn _model_name(&self) -> &str {
+    fn model_name(&self) -> &str {
         &self.config.model_name
     }
 }
@@ -579,10 +579,10 @@ mod tests {
     }
 
     #[test]
-    fn test_model_name() {
+    fn testmodel_name() {
         let config = test_config("http://localhost:8080");
         let adapter = OpenAIAdapter::new(config).unwrap();
-        assert_eq!(adapter._model_name(), "gpt-4o");
+        assert_eq!(adapter.model_name(), "gpt-4o");
     }
 
     #[tokio::test]

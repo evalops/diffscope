@@ -388,6 +388,30 @@ impl Config {
         Ok(Config::default())
     }
 
+}
+
+/// CLI overrides collected from command-line arguments.
+#[derive(Debug, Default)]
+pub struct CliOverrides {
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<usize>,
+    pub strictness: Option<u8>,
+    pub comment_types: Option<Vec<String>>,
+    pub openai_responses: Option<bool>,
+    pub base_url: Option<String>,
+    pub api_key: Option<String>,
+    pub adapter: Option<String>,
+    pub lsp_command: Option<String>,
+    pub timeout: Option<u64>,
+    pub max_retries: Option<usize>,
+    pub file_change_limit: Option<usize>,
+    pub output_language: Option<String>,
+    pub vault_addr: Option<String>,
+    pub vault_path: Option<String>,
+    pub vault_key: Option<String>,
+}
+
+impl Config {
     pub fn merge_with_cli(&mut self, cli_model: Option<String>, cli_prompt: Option<String>) {
         if let Some(model) = cli_model {
             self.model = model;
@@ -395,6 +419,30 @@ impl Config {
         if let Some(prompt) = cli_prompt {
             self.system_prompt = Some(prompt);
         }
+    }
+
+    /// Apply CLI overrides to config. Only overrides fields that are Some/provided.
+    pub fn apply_cli_overrides(&mut self, cli: CliOverrides) {
+        if let Some(v) = cli.temperature { self.temperature = v; }
+        if let Some(v) = cli.max_tokens { self.max_tokens = v; }
+        if let Some(v) = cli.strictness { self.strictness = v; }
+        if let Some(v) = cli.comment_types { self.comment_types = v; }
+        if let Some(v) = cli.openai_responses { self.openai_use_responses = Some(v); }
+        if let Some(v) = cli.base_url { self.base_url = Some(v); }
+        if let Some(v) = cli.api_key { self.api_key = Some(v); }
+        if let Some(v) = cli.adapter { self.adapter = Some(v); }
+        if let Some(command) = cli.lsp_command {
+            self.symbol_index = true;
+            self.symbol_index_provider = "lsp".to_string();
+            self.symbol_index_lsp_command = Some(command);
+        }
+        if let Some(v) = cli.timeout { self.adapter_timeout_secs = Some(v); }
+        if let Some(v) = cli.max_retries { self.adapter_max_retries = Some(v); }
+        if let Some(v) = cli.file_change_limit { self.file_change_limit = Some(v); }
+        if let Some(v) = cli.output_language { self.output_language = Some(v); }
+        if let Some(v) = cli.vault_addr { self.vault_addr = Some(v); }
+        if let Some(v) = cli.vault_path { self.vault_path = Some(v); }
+        if let Some(v) = cli.vault_key { self.vault_key = Some(v); }
     }
 
     pub fn normalize(&mut self) {
@@ -774,6 +822,7 @@ impl Config {
     /// 1. If `adapter` is explicitly set and a matching enabled provider exists, use it.
     /// 2. If no adapter is set, infer from the model name.
     /// 3. Fall back to top-level `api_key`/`base_url`.
+    #[allow(dead_code)]
     pub fn resolve_provider(&self) -> (Option<String>, Option<String>, Option<String>) {
         // If adapter is explicitly set, look for a matching provider
         if let Some(ref adapter) = self.adapter {
@@ -806,7 +855,7 @@ impl Config {
             Some("ollama")
         } else {
             // Default: check if openrouter provider is configured
-            if self.providers.get("openrouter").map_or(false, |p| p.enabled) {
+            if self.providers.get("openrouter").is_some_and(|p| p.enabled) {
                 Some("openrouter")
             } else {
                 None
@@ -1313,5 +1362,59 @@ mod tests {
         };
         config.normalize();
         assert_eq!(config.feedback_suppression_threshold, default_feedback_suppression_threshold());
+    }
+
+    #[test]
+    fn test_apply_cli_overrides() {
+        let mut config = Config::default();
+        config.apply_cli_overrides(CliOverrides {
+            temperature: Some(0.5),
+            max_tokens: Some(8000),
+            strictness: Some(3),
+            comment_types: Some(vec!["logic".to_string()]),
+            openai_responses: Some(true),
+            base_url: Some("http://localhost:1234".to_string()),
+            api_key: Some("test-key".to_string()),
+            adapter: Some("openai".to_string()),
+            timeout: Some(60),
+            max_retries: Some(5),
+            file_change_limit: Some(10),
+            output_language: Some("ja".to_string()),
+            ..Default::default()
+        });
+        assert!((config.temperature - 0.5).abs() < f32::EPSILON);
+        assert_eq!(config.max_tokens, 8000);
+        assert_eq!(config.strictness, 3);
+        assert_eq!(config.comment_types, vec!["logic".to_string()]);
+        assert_eq!(config.openai_use_responses, Some(true));
+        assert_eq!(config.base_url.as_deref(), Some("http://localhost:1234"));
+        assert_eq!(config.api_key.as_deref(), Some("test-key"));
+        assert_eq!(config.adapter.as_deref(), Some("openai"));
+        assert_eq!(config.adapter_timeout_secs, Some(60));
+        assert_eq!(config.adapter_max_retries, Some(5));
+        assert_eq!(config.file_change_limit, Some(10));
+        assert_eq!(config.output_language.as_deref(), Some("ja"));
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_nones_dont_change() {
+        let mut config = Config::default();
+        let orig_temp = config.temperature;
+        let orig_tokens = config.max_tokens;
+        config.apply_cli_overrides(CliOverrides::default());
+        assert!((config.temperature - orig_temp).abs() < f32::EPSILON);
+        assert_eq!(config.max_tokens, orig_tokens);
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_lsp() {
+        let mut config = Config::default();
+        config.apply_cli_overrides(CliOverrides {
+            lsp_command: Some("rust-analyzer".to_string()),
+            ..Default::default()
+        });
+        assert!(config.symbol_index);
+        assert_eq!(config.symbol_index_provider, "lsp");
+        assert_eq!(config.symbol_index_lsp_command.as_deref(), Some("rust-analyzer"));
     }
 }

@@ -225,7 +225,7 @@ impl LLMAdapter for OllamaAdapter {
         })
     }
 
-    fn _model_name(&self) -> &str {
+    fn model_name(&self) -> &str {
         &self.config.model_name
     }
 }
@@ -458,17 +458,17 @@ mod tests {
     }
 
     #[test]
-    fn test_model_name_with_prefix() {
+    fn testmodel_name_with_prefix() {
         let config = test_config("http://localhost:11434", "ollama:codellama");
         let adapter = OllamaAdapter::new(config).unwrap();
-        assert_eq!(adapter._model_name(), "ollama:codellama");
+        assert_eq!(adapter.model_name(), "ollama:codellama");
     }
 
     #[test]
-    fn test_model_name_without_prefix() {
+    fn testmodel_name_without_prefix() {
         let config = test_config("http://localhost:11434", "codellama");
         let adapter = OllamaAdapter::new(config).unwrap();
-        assert_eq!(adapter._model_name(), "codellama");
+        assert_eq!(adapter.model_name(), "codellama");
     }
 
     // ---- Chat message construction tests ----
@@ -758,14 +758,14 @@ mod tests {
     // ---- model_name_bare tests ----
 
     #[test]
-    fn test_model_name_bare_with_prefix() {
+    fn testmodel_name_bare_with_prefix() {
         let config = test_config("http://localhost:11434", "ollama:deepseek-coder");
         let adapter = OllamaAdapter::new(config).unwrap();
         assert_eq!(adapter.model_name_bare(), "deepseek-coder");
     }
 
     #[test]
-    fn test_model_name_bare_without_prefix() {
+    fn testmodel_name_bare_without_prefix() {
         let config = test_config("http://localhost:11434", "deepseek-coder");
         let adapter = OllamaAdapter::new(config).unwrap();
         assert_eq!(adapter.model_name_bare(), "deepseek-coder");

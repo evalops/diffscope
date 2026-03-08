@@ -230,7 +230,7 @@ pub async fn smart_review_command(
             if let Some(pc) = path_config {
                 for comment in &mut comments {
                     for (category, severity) in &pc.severity_overrides {
-                        if format!("{:?}", comment.category).to_lowercase()
+                        if comment.category.as_str()
                             == category.to_lowercase()
                         {
                             comment.severity = match severity.to_lowercase().as_str() {
