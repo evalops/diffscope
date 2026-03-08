@@ -14,7 +14,7 @@ use crate::core::comment::CommentSynthesizer;
 
 #[derive(Deserialize)]
 pub struct StartReviewRequest {
-    pub diff_source: String, // "head", "staged", "branch"
+    pub diff_source: String,
     pub base_branch: Option<String>,
 }
 
@@ -37,7 +37,7 @@ pub struct StatusResponse {
 #[derive(Deserialize)]
 pub struct FeedbackRequest {
     pub comment_id: String,
-    pub action: String, // "accept" or "reject"
+    pub action: String,
 }
 
 #[derive(Serialize)]
@@ -57,7 +57,6 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> Json<StatusRespon
     let config = state.config.read().await;
     let reviews = state.reviews.read().await;
 
-    // Try to get current branch via git2
     let branch = git2::Repository::discover(&state.repo_path)
         .ok()
         .and_then(|repo| {
@@ -83,18 +82,28 @@ pub async fn start_review(
     State(state): State<Arc<AppState>>,
     Json(request): Json<StartReviewRequest>,
 ) -> Result<Json<StartReviewResponse>, (StatusCode, String)> {
-    let id = Uuid::new_v4().to_string();
+    // Validate diff_source
+    let diff_source = match request.diff_source.as_str() {
+        "head" | "staged" | "branch" => request.diff_source.clone(),
+        _ => return Err((StatusCode::BAD_REQUEST, "Invalid diff_source: must be head, staged, or branch".to_string())),
+    };
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    // Validate branch name if provided
+    if let Some(ref branch) = request.base_branch {
+        if branch.is_empty() || branch.len() > 200
+            || !branch.chars().all(|c| c.is_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'))
+        {
+            return Err((StatusCode::BAD_REQUEST, "Invalid branch name".to_string()));
+        }
+    }
+
+    let id = Uuid::new_v4().to_string();
 
     let session = ReviewSession {
         id: id.clone(),
         status: ReviewStatus::Pending,
-        diff_source: request.diff_source.clone(),
-        started_at: now,
+        diff_source: diff_source.clone(),
+        started_at: current_timestamp(),
         completed_at: None,
         comments: Vec::new(),
         summary: None,
@@ -105,10 +114,8 @@ pub async fn start_review(
 
     state.reviews.write().await.insert(id.clone(), session);
 
-    // Spawn the review task
     let state_clone = state.clone();
     let review_id = id.clone();
-    let diff_source = request.diff_source.clone();
     let base_branch = request.base_branch.clone();
 
     tokio::spawn(async move {
@@ -145,19 +152,6 @@ async fn run_review_task(
     let config = state.config.read().await.clone();
     let repo_path = state.repo_path.clone();
 
-    // Validate branch name to prevent injection
-    if let Some(ref branch) = base_branch {
-        if !branch.chars().all(|c| c.is_alphanumeric() || matches!(c, '/' | '-' | '_' | '.')) {
-            let mut reviews = state.reviews.write().await;
-            if let Some(session) = reviews.get_mut(&review_id) {
-                session.status = ReviewStatus::Failed;
-                session.error = Some("Invalid branch name".to_string());
-                session.completed_at = Some(current_timestamp());
-            }
-            return;
-        }
-    }
-
     // Get the diff content based on source
     let diff_result = match diff_source.as_str() {
         "staged" => get_diff_from_git(&repo_path, "staged", None),
@@ -165,10 +159,7 @@ async fn run_review_task(
             let base = base_branch.as_deref().unwrap_or("main");
             get_diff_from_git(&repo_path, "branch", Some(base))
         }
-        _ => {
-            // "head" or default
-            get_diff_from_git(&repo_path, "head", None)
-        }
+        _ => get_diff_from_git(&repo_path, "head", None),
     };
 
     let diff_content = match diff_result {
@@ -242,7 +233,6 @@ async fn run_review_task(
             }
         }
         Err(_) => {
-            // Timeout
             let mut reviews = state.reviews.write().await;
             if let Some(session) = reviews.get_mut(&review_id) {
                 session.status = ReviewStatus::Failed;
@@ -253,6 +243,7 @@ async fn run_review_task(
     }
 
     AppState::save_reviews_async(&state);
+    AppState::prune_old_reviews(&state).await;
 }
 
 fn get_diff_from_git(
@@ -274,14 +265,16 @@ fn get_diff_from_git(
                 .current_dir(repo_path)
                 .output()?
         }
-        _ => {
-            // head
-            Command::new("git")
-                .args(["diff", "HEAD~1"])
-                .current_dir(repo_path)
-                .output()?
-        }
+        _ => Command::new("git")
+            .args(["diff", "HEAD~1"])
+            .current_dir(repo_path)
+            .output()?,
     };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git diff failed: {}", stderr.trim());
+    }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -307,13 +300,12 @@ pub async fn list_reviews(
         .values()
         .map(|r| {
             let mut r = r.clone();
-            r.diff_content = None; // strip bulk data from list
+            r.diff_content = None;
             r
         })
         .collect();
     list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
 
-    // Apply pagination
     let page = params.page.unwrap_or(1).max(1).min(10_000);
     let per_page = params.per_page.unwrap_or(20).max(1).min(100);
     let start = (page - 1).saturating_mul(per_page);
@@ -332,10 +324,14 @@ pub async fn submit_feedback(
     Path(id): Path<String>,
     Json(request): Json<FeedbackRequest>,
 ) -> Result<Json<FeedbackResponse>, StatusCode> {
+    // Validate action
+    if request.action != "accept" && request.action != "reject" {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     let mut reviews = state.reviews.write().await;
     let session = reviews.get_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
 
-    // Find the comment and store the feedback action
     let comment = session
         .comments
         .iter_mut()
@@ -432,7 +428,6 @@ pub async fn get_doctor(State(state): State<Arc<AppState>>) -> Json<serde_json::
 pub async fn get_config(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let config = state.config.read().await;
     let mut value = serde_json::to_value(&*config).unwrap_or_default();
-    // Redact API key
     if let Some(obj) = value.as_object_mut() {
         if obj.contains_key("api_key") {
             obj.insert("api_key".to_string(), serde_json::json!("***"));
@@ -447,12 +442,11 @@ pub async fn update_config(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let mut config = state.config.write().await;
 
-    // Merge updates into current config
     let mut current = serde_json::to_value(&*config).unwrap_or_default();
     if let (Some(current_obj), Some(updates_obj)) = (current.as_object_mut(), updates.as_object()) {
         for (key, value) in updates_obj {
             if key == "api_key" && value.as_str() == Some("***") {
-                continue; // Don't overwrite with redacted value
+                continue;
             }
             current_obj.insert(key.clone(), value.clone());
         }
@@ -463,8 +457,13 @@ pub async fn update_config(
 
     *config = new_config;
     config.normalize();
+    drop(config);
+
+    // Persist config to disk
+    AppState::save_config_async(&state);
 
     // Return updated config (redacted)
+    let config = state.config.read().await;
     let mut result = serde_json::to_value(&*config).unwrap_or_default();
     if let Some(obj) = result.as_object_mut() {
         if obj.contains_key("api_key") {

@@ -87,7 +87,9 @@ spec:
             {{- range .Values.diffscope.extraArgs }}
             - {{ . | quote }}
             {{- end }}
+          {{- if .Values.gitRepo.enabled }}
           workingDir: {{ .Values.gitRepo.mountPath }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.diffscope.port }}
@@ -153,6 +155,8 @@ spec:
             {{- end }}
         {{- if and .Values.ollama.enabled (eq .Values.ollama.mode "sidecar") }}
         - name: ollama
+          securityContext:
+            allowPrivilegeEscalation: false
           image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
           imagePullPolicy: {{ .Values.ollama.image.pullPolicy }}
           ports:

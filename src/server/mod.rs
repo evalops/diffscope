@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     http::{StatusCode, header},
 };
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::CorsLayer;
 use rust_embed::Embed;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -61,10 +61,19 @@ async fn serve_embedded(uri: axum::http::Uri) -> Response {
 pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Result<()> {
     let state = Arc::new(state::AppState::new(config)?);
 
+    let allowed_origins: Vec<axum::http::HeaderValue> = [
+        format!("http://localhost:{}", port),
+        format!("http://127.0.0.1:{}", port),
+        "http://localhost:5173".to_string(),
+    ]
+    .iter()
+    .filter_map(|s| s.parse().ok())
+    .collect();
+
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_origin(allowed_origins)
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any);
 
     let api_routes = Router::new()
         .route("/status", get(api::get_status))
