@@ -1,0 +1,19 @@
+# DiffScope config for self-hosted Ollama
+# Usage: cp examples/selfhosted-ollama.yml .diffscope.yml
+#        ollama pull codellama
+#        git diff | diffscope review
+
+model: ollama:codellama
+base_url: http://localhost:11434
+context_window: 8192
+temperature: 0.1
+max_tokens: 4096
+strictness: 2
+
+# No API key needed for local Ollama
+
+# Reduce context to fit smaller model windows
+max_context_chars: 8000
+max_diff_chars: 16000
+context_max_chunks: 8
+context_budget_chars: 8000

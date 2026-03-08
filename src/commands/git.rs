@@ -71,14 +71,7 @@ async fn suggest_commit_message(config: config::Config) -> Result<()> {
         return Ok(());
     }
 
-    let model_config = adapters::llm::ModelConfig {
-        model_name: config.model.clone(),
-        api_key: config.api_key.clone(),
-        base_url: config.base_url.clone(),
-        temperature: config.temperature,
-        max_tokens: config.max_tokens,
-        openai_use_responses: config.openai_use_responses,
-    };
+    let model_config = config.to_model_config();
 
     let adapter = adapters::llm::create_adapter(&model_config)?;
 
@@ -120,14 +113,7 @@ async fn suggest_pr_title(config: config::Config) -> Result<()> {
         return Ok(());
     }
 
-    let model_config = adapters::llm::ModelConfig {
-        model_name: config.model.clone(),
-        api_key: config.api_key.clone(),
-        base_url: config.base_url.clone(),
-        temperature: config.temperature,
-        max_tokens: config.max_tokens,
-        openai_use_responses: config.openai_use_responses,
-    };
+    let model_config = config.to_model_config();
 
     let adapter = adapters::llm::create_adapter(&model_config)?;
 

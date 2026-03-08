@@ -26,6 +26,15 @@ struct Cli {
     #[arg(long, global = true, default_value = "gpt-4o")]
     model: String,
 
+    #[arg(long, global = true, help = "LLM API base URL (e.g. http://localhost:11434)")]
+    base_url: Option<String>,
+
+    #[arg(long, global = true, help = "API key (optional for local servers)")]
+    api_key: Option<String>,
+
+    #[arg(long, global = true, help = "Force adapter: openai, anthropic, or ollama")]
+    adapter: Option<String>,
+
     #[arg(long, global = true)]
     prompt: Option<String>,
 
@@ -190,6 +199,8 @@ enum Commands {
         #[arg(long, help = "Interactive discussion mode")]
         interactive: bool,
     },
+    #[command(about = "Check self-hosted LLM setup: endpoint reachability, models, and recommendations")]
+    Doctor,
     #[command(about = "Evaluate review quality against fixture expectations")]
     Eval {
         #[arg(long, default_value = "eval/fixtures")]
@@ -257,6 +268,15 @@ async fn main() -> Result<()> {
     }
     if let Some(flag) = cli.openai_responses {
         config.openai_use_responses = Some(flag);
+    }
+    if let Some(base_url) = cli.base_url {
+        config.base_url = Some(base_url);
+    }
+    if let Some(api_key) = cli.api_key {
+        config.api_key = Some(api_key);
+    }
+    if let Some(adapter) = cli.adapter {
+        config.adapter = Some(adapter);
     }
     if let Some(command) = cli.lsp_command {
         config.symbol_index = true;
@@ -337,6 +357,9 @@ async fn main() -> Result<()> {
                 interactive,
             )
             .await?;
+        }
+        Commands::Doctor => {
+            commands::doctor_command(config).await?;
         }
         Commands::Eval {
             fixtures,

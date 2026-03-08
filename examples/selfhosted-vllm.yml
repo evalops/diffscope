@@ -1,0 +1,20 @@
+# DiffScope config for self-hosted vLLM / LM Studio / any OpenAI-compatible server
+# Usage: cp examples/selfhosted-vllm.yml .diffscope.yml
+#        vllm serve deepseek-ai/deepseek-coder-6.7b-instruct
+#        git diff | diffscope review
+
+model: deepseek-ai/deepseek-coder-6.7b-instruct
+adapter: openai
+base_url: http://localhost:8000/v1
+context_window: 16384
+temperature: 0.1
+max_tokens: 4096
+strictness: 2
+
+# No API key needed for local servers
+
+# Adjust context for model capacity
+max_context_chars: 12000
+max_diff_chars: 24000
+context_max_chunks: 12
+context_budget_chars: 12000

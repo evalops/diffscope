@@ -287,14 +287,7 @@ pub async fn discuss_command(
     let selected = select_discussion_comment(&comments, comment_id, comment_index)?;
     let mut thread = load_discussion_thread(thread_path.as_deref(), &selected.id);
 
-    let model_config = adapters::llm::ModelConfig {
-        model_name: config.model.clone(),
-        api_key: config.api_key.clone(),
-        base_url: config.base_url.clone(),
-        temperature: config.temperature,
-        max_tokens: config.max_tokens,
-        openai_use_responses: config.openai_use_responses,
-    };
+    let model_config = config.to_model_config();
     let adapter = adapters::llm::create_adapter(&model_config)?;
 
     let mut next_question = question;

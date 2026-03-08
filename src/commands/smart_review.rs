@@ -59,14 +59,7 @@ pub async fn smart_review_command(
     let pattern_repositories = review::resolve_pattern_repositories(&config, &repo_root);
     let review_rules = review::load_review_rules(&config, &pattern_repositories, &repo_root);
 
-    let model_config = adapters::llm::ModelConfig {
-        model_name: config.model.clone(),
-        api_key: config.api_key.clone(),
-        base_url: config.base_url.clone(),
-        temperature: config.temperature,
-        max_tokens: config.max_tokens,
-        openai_use_responses: config.openai_use_responses,
-    };
+    let model_config = config.to_model_config();
 
     let adapter = adapters::llm::create_adapter(&model_config)?;
     let mut all_comments = Vec::new();

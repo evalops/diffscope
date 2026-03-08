@@ -11,25 +11,33 @@ services:
       - .:/workspace
     working_dir: /workspace
     command: review --diff /workspace/example.diff
-    
-  diffscope-ollama:
+
+  diffscope-local:
     build: .
     image: diffscope:latest
     depends_on:
-      - ollama
+      ollama:
+        condition: service_healthy
     environment:
-      - DIFFSCOPE_MODEL=ollama:codellama
+      - DIFFSCOPE_BASE_URL=http://ollama:11434
+      - DIFFSCOPE_MODEL=${DIFFSCOPE_MODEL:-ollama:codellama}
     volumes:
       - .:/workspace
     working_dir: /workspace
-    command: review --diff /workspace/example.diff --model ollama:codellama
-    
+    command: review --diff /workspace/example.diff --base-url http://ollama:11434 --model ollama:codellama
+
   ollama:
     image: ollama/ollama:latest
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
-      
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 volumes:
   ollama_data:

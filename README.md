@@ -191,6 +191,63 @@ export OPENAI_BASE_URL=https://api.custom.com/v1
 git diff | diffscope review --model custom-model
 ```
 
+### Self-Hosted / Local Models
+
+Run DiffScope against a local LLM with zero cloud dependencies. No API key required.
+
+#### Ollama (Recommended)
+```bash
+# Install Ollama and pull a code model
+ollama pull codellama
+
+# Review code with local model
+git diff | diffscope review --base-url http://localhost:11434 --model ollama:codellama
+
+# Or use a config file (see examples/selfhosted-ollama.yml)
+cp examples/selfhosted-ollama.yml .diffscope.yml
+git diff | diffscope review
+```
+
+#### vLLM / LM Studio / OpenAI-Compatible Servers
+```bash
+# Point to any OpenAI-compatible endpoint
+git diff | diffscope review \
+  --base-url http://localhost:8000/v1 \
+  --adapter openai \
+  --model deepseek-coder-6.7b
+
+# See examples/selfhosted-vllm.yml for a ready-made config
+```
+
+#### Docker Compose (Ollama + DiffScope)
+```bash
+# Start Ollama and DiffScope together
+docker compose up diffscope-local
+
+# Pull a model first
+docker compose exec ollama ollama pull codellama
+```
+
+#### Check Your Setup
+```bash
+# Verify endpoint reachability, models, and recommendations
+diffscope doctor
+diffscope doctor --base-url http://localhost:11434
+```
+
+#### Environment Variables
+| Variable | Description |
+|----------|-------------|
+| `DIFFSCOPE_BASE_URL` | LLM API base URL (also accepts `OPENAI_BASE_URL`) |
+| `DIFFSCOPE_API_KEY` | API key for the LLM endpoint |
+
+#### CLI Flags
+| Flag | Description |
+|------|-------------|
+| `--base-url` | LLM API base URL |
+| `--api-key` | API key (optional for local servers) |
+| `--adapter` | Force adapter: `openai`, `anthropic`, or `ollama` |
+
 ### Supported Models
 
 **OpenAI**: gpt-4o, gpt-4-turbo, gpt-3.5-turbo

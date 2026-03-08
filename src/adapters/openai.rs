@@ -87,17 +87,20 @@ struct OpenAIResponsesUsage {
 
 impl OpenAIAdapter {
     pub fn new(config: ModelConfig) -> Result<Self> {
-        let api_key = config.api_key.clone()
-            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-            .context("OpenAI API key not found. Set OPENAI_API_KEY environment variable or provide in config")?;
-
         let base_url = config
             .base_url
             .clone()
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
+        let is_local = is_local_endpoint(&base_url);
+
+        let api_key = config.api_key.clone()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .or_else(|| if is_local { Some(String::new()) } else { None })
+            .context("OpenAI API key not found. Set OPENAI_API_KEY environment variable or provide in config")?;
+
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs(if is_local { 300 } else { 60 }))
             .build()?;
 
         Ok(Self {
@@ -162,6 +165,12 @@ impl LLMAdapter for OpenAIAdapter {
 
 fn is_retryable_status(status: StatusCode) -> bool {
     status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+fn is_local_endpoint(url: &str) -> bool {
+    url.contains("localhost") || url.contains("127.0.0.1") || url.contains("0.0.0.0")
+        || url.contains("[::1]")
+        || (!url.contains("openai.com") && !url.contains("anthropic.com"))
 }
 
 fn should_use_responses_api(config: &ModelConfig) -> bool {

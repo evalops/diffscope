@@ -82,6 +82,12 @@ pub struct Config {
     pub base_url: Option<String>,
 
     #[serde(default)]
+    pub adapter: Option<String>,
+
+    #[serde(default)]
+    pub context_window: Option<usize>,
+
+    #[serde(default)]
     pub openai_use_responses: Option<bool>,
 
     #[serde(default)]
@@ -205,6 +211,8 @@ impl Default for Config {
             system_prompt: None,
             api_key: None,
             base_url: None,
+            adapter: None,
+            context_window: None,
             openai_use_responses: None,
             plugins: PluginConfig::default(),
             exclude_patterns: Vec::new(),
@@ -260,6 +268,29 @@ impl Config {
     }
 
     pub fn normalize(&mut self) {
+        // Env var fallbacks for base_url and api_key
+        if self.base_url.is_none() {
+            self.base_url = std::env::var("DIFFSCOPE_BASE_URL")
+                .ok()
+                .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
+                .filter(|s| !s.trim().is_empty());
+        }
+        if self.api_key.is_none() {
+            self.api_key = std::env::var("DIFFSCOPE_API_KEY")
+                .ok()
+                .filter(|s| !s.trim().is_empty());
+        }
+
+        // Normalize adapter field
+        if let Some(ref adapter) = self.adapter {
+            let normalized = adapter.trim().to_lowercase();
+            self.adapter = if matches!(normalized.as_str(), "openai" | "anthropic" | "ollama") {
+                Some(normalized)
+            } else {
+                None
+            };
+        }
+
         if self.model.trim().is_empty() {
             self.model = default_model();
         }
@@ -506,6 +537,31 @@ impl Config {
                 None => true,
             })
             .collect()
+    }
+
+    /// Build a ModelConfig from this Config.
+    pub fn to_model_config(&self) -> crate::adapters::llm::ModelConfig {
+        crate::adapters::llm::ModelConfig {
+            model_name: self.model.clone(),
+            api_key: self.api_key.clone(),
+            base_url: self.base_url.clone(),
+            temperature: self.temperature,
+            max_tokens: self.max_tokens,
+            openai_use_responses: self.openai_use_responses,
+            adapter_override: self.adapter.clone(),
+        }
+    }
+
+    /// Returns true if the configured base_url points to a local/self-hosted server.
+    pub fn is_local_endpoint(&self) -> bool {
+        match self.base_url.as_deref() {
+            Some(url) => {
+                url.contains("localhost") || url.contains("127.0.0.1") || url.contains("0.0.0.0")
+                    || url.contains("[::1]")
+                    || (!url.contains("openai.com") && !url.contains("anthropic.com"))
+            }
+            None => false,
+        }
     }
 
     fn path_matches(&self, path: &str, pattern: &str) -> bool {

@@ -10,6 +10,7 @@ use tracing::{info, warn};
 use crate::adapters;
 use crate::config;
 use crate::core;
+use crate::core::offline::optimize_prompt_for_local;
 use crate::output::OutputFormat;
 use crate::parsing::parse_llm_response;
 use crate::plugins;
@@ -71,14 +72,7 @@ pub async fn review_diff_content_raw(
     plugin_manager.load_builtin_plugins(&config.plugins).await?;
     let feedback = load_feedback_store(&config);
 
-    let model_config = adapters::llm::ModelConfig {
-        model_name: config.model.clone(),
-        api_key: config.api_key.clone(),
-        base_url: config.base_url.clone(),
-        temperature: config.temperature,
-        max_tokens: config.max_tokens,
-        openai_use_responses: config.openai_use_responses,
-    };
+    let model_config = config.to_model_config();
 
     let adapter = adapters::llm::create_adapter(&model_config)?;
     let base_prompt_config = core::prompt::PromptConfig {
@@ -207,6 +201,14 @@ pub async fn review_diff_content_raw(
         let local_prompt_builder = core::PromptBuilder::new(local_prompt_config);
         let (system_prompt, user_prompt) =
             local_prompt_builder.build_prompt(diff, &context_chunks)?;
+
+        // Optimize prompt for local models with limited context windows
+        let (system_prompt, user_prompt) = if should_optimize_for_local(&config) {
+            let context_window = config.context_window.unwrap_or(8192);
+            optimize_prompt_for_local(&system_prompt, &user_prompt, context_window)
+        } else {
+            (system_prompt, user_prompt)
+        };
 
         let request = adapters::llm::LLMRequest {
             system_prompt,
@@ -481,6 +483,23 @@ pub fn build_symbol_index(config: &config::Config, repo_root: &Path) -> Option<c
             None
         }
     }
+}
+
+fn should_optimize_for_local(config: &config::Config) -> bool {
+    // Optimize if context_window is explicitly set
+    if config.context_window.is_some() {
+        return true;
+    }
+    // Optimize for ollama: prefix models
+    if config.model.starts_with("ollama:") {
+        return true;
+    }
+    // Optimize if adapter is explicitly set to ollama
+    if config.adapter.as_deref() == Some("ollama") {
+        return true;
+    }
+    // Optimize if base_url points to localhost
+    config.is_local_endpoint()
 }
 
 #[cfg(test)]

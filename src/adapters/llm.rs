@@ -10,6 +10,8 @@ pub struct ModelConfig {
     pub temperature: f32,
     pub max_tokens: usize,
     pub openai_use_responses: Option<bool>,
+    #[serde(default)]
+    pub adapter_override: Option<String>,
 }
 
 impl Default for ModelConfig {
@@ -21,6 +23,7 @@ impl Default for ModelConfig {
             temperature: 0.2,
             max_tokens: 4000,
             openai_use_responses: None,
+            adapter_override: None,
         }
     }
 }
@@ -54,6 +57,16 @@ pub trait LLMAdapter: Send + Sync {
 }
 
 pub fn create_adapter(config: &ModelConfig) -> Result<Box<dyn LLMAdapter>> {
+    // Explicit adapter override takes priority
+    if let Some(ref adapter) = config.adapter_override {
+        return match adapter.as_str() {
+            "anthropic" => Ok(Box::new(crate::adapters::AnthropicAdapter::new(config.clone())?)),
+            "ollama" => Ok(Box::new(crate::adapters::OllamaAdapter::new(config.clone())?)),
+            _ => Ok(Box::new(crate::adapters::OpenAIAdapter::new(config.clone())?)),
+        };
+    }
+
+    // Model-name heuristic
     match config.model_name.as_str() {
         // Anthropic Claude models (all versions)
         name if name.starts_with("claude-") => Ok(Box::new(
