@@ -119,11 +119,10 @@ impl GitHistoryAnalyzer {
                     info.bug_fix_count += 1;
                 }
 
-                if info
-                    .last_modified
-                    .as_ref()
-                    .is_none_or(|d| entry.date > *d)
-                {
+                if info.last_modified.as_ref().is_none_or(|d| {
+                    parse_date_for_comparison(&entry.date)
+                        > parse_date_for_comparison(d)
+                }) {
                     info.last_modified = Some(entry.date.clone());
                 }
             }
@@ -286,6 +285,55 @@ impl GitHistoryAnalyzer {
     pub fn total_entries(&self) -> usize {
         self.entries.len()
     }
+}
+
+/// Parse a date string into a comparable tuple (year, month, day, time).
+/// Handles both git default format ("Wed Jan 1 12:00:00 2025 +0000")
+/// and ISO format ("2025-01-01 12:00:00 +0000").
+fn parse_date_for_comparison(date: &str) -> (i32, u32, u32, String) {
+    let parts: Vec<&str> = date.split_whitespace().collect();
+
+    // ISO format: "2025-01-01 ..."
+    if parts
+        .first()
+        .is_some_and(|p| p.contains('-') && p.len() == 10)
+    {
+        // ISO dates sort correctly as strings, but parse for consistency
+        let date_parts: Vec<&str> = parts[0].split('-').collect();
+        if date_parts.len() == 3 {
+            let year = date_parts[0].parse::<i32>().unwrap_or(0);
+            let month = date_parts[1].parse::<u32>().unwrap_or(0);
+            let day = date_parts[2].parse::<u32>().unwrap_or(0);
+            let time = parts.get(1).unwrap_or(&"").to_string();
+            return (year, month, day, time);
+        }
+    }
+
+    // Git default format: "Wed Jan 1 12:00:00 2025 +0000"
+    if parts.len() >= 5 {
+        let month = match parts[1] {
+            "Jan" => 1,
+            "Feb" => 2,
+            "Mar" => 3,
+            "Apr" => 4,
+            "May" => 5,
+            "Jun" => 6,
+            "Jul" => 7,
+            "Aug" => 8,
+            "Sep" => 9,
+            "Oct" => 10,
+            "Nov" => 11,
+            "Dec" => 12,
+            _ => 0,
+        };
+        let day = parts[2].parse::<u32>().unwrap_or(0);
+        let year = parts[4].parse::<i32>().unwrap_or(0);
+        let time = parts[3].to_string();
+        return (year, month, day, time);
+    }
+
+    // Fallback: use the raw string (best effort)
+    (0, 0, 0, date.to_string())
 }
 
 /// Detect if a commit message indicates a bug fix.
@@ -637,6 +685,46 @@ Date:   Tue Jan 2 12:00:00 2024 +0000
             info.distinct_authors, 2,
             "Should count authors from both ingest calls, got {}",
             info.distinct_authors
+        );
+    }
+
+    // BUG: last_modified uses string comparison which is lexicographic, not chronological.
+    // "Wed Jan 1" > "Mon Feb 1" because 'W' > 'M', but Feb 1 is newer than Jan 1.
+    #[test]
+    fn test_last_modified_chronological_order() {
+        let mut analyzer = GitHistoryAnalyzer::new();
+        analyzer.ingest_log(vec![
+            GitLogEntry {
+                hash: "newer".to_string(),
+                author: "alice".to_string(),
+                date: "Mon Feb 3 12:00:00 2025 +0000".to_string(), // NEWER
+                message: "newer commit".to_string(),
+                files_changed: vec![FileChange {
+                    file_path: PathBuf::from("f.rs"),
+                    lines_added: 1,
+                    lines_removed: 0,
+                }],
+            },
+            GitLogEntry {
+                hash: "older".to_string(),
+                author: "bob".to_string(),
+                date: "Wed Jan 1 12:00:00 2025 +0000".to_string(), // OLDER
+                message: "older commit".to_string(),
+                files_changed: vec![FileChange {
+                    file_path: PathBuf::from("f.rs"),
+                    lines_added: 1,
+                    lines_removed: 0,
+                }],
+            },
+        ]);
+
+        let info = analyzer.file_info(Path::new("f.rs")).unwrap();
+        // Feb 3 is newer than Jan 1, so last_modified should contain "Feb"
+        // Bug: string comparison "Wed Jan..." > "Mon Feb..." because 'W' > 'M'
+        assert!(
+            info.last_modified.as_ref().unwrap().contains("Feb"),
+            "last_modified should be Feb 3 (newer), got: {}",
+            info.last_modified.as_ref().unwrap()
         );
     }
 

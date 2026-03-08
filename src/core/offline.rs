@@ -305,7 +305,12 @@ fn truncate_to_tokens(text: &str, max_tokens: usize) -> String {
         return text.to_string();
     }
 
-    let mut truncated = text[..max_chars].to_string();
+    // Find a valid UTF-8 char boundary at or before max_chars
+    let mut end = max_chars;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut truncated = text[..end].to_string();
     truncated.push_str("\n[Truncated for local model context window]");
     truncated
 }
@@ -646,6 +651,21 @@ mod tests {
             config_1_5b.estimated_ram_mb(),
             config_1b.estimated_ram_mb()
         );
+    }
+
+    // BUG: truncate_to_tokens slices at byte offset without char boundary check
+    #[test]
+    fn test_truncate_to_tokens_utf8_safety() {
+        // '€' is 3 bytes (U+20AC). With context_window=504, budget=4,
+        // system_budget=1, max_chars=4. "€€" is 6 bytes.
+        // text[..4] lands inside the second '€' (bytes 3-5), panicking.
+        let system = "€€"; // 6 bytes
+        let user = "short";
+        // context_window=504 → budget=4, system_budget=1, user_budget=3
+        // system max_chars=4, which falls mid-char in "€€"
+        let (sys, _usr) = optimize_prompt_for_local(system, user, 504);
+        // Should not panic; result must be valid UTF-8
+        assert!(!sys.is_empty() || sys.contains("Truncated") || sys.is_empty());
     }
 
     // BUG: validate() doesn't check for obviously wrong base_url formats

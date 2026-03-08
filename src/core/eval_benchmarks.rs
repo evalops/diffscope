@@ -200,6 +200,7 @@ pub struct AggregateMetrics {
     pub total_tp: usize,
     pub total_fp: usize,
     pub total_fn: usize,
+    pub total_tn: usize,
     pub micro_precision: f32,
     pub micro_recall: f32,
     pub micro_f1: f32,
@@ -218,6 +219,7 @@ impl AggregateMetrics {
         let total_tp: usize = results.iter().map(|r| r.true_positives).sum();
         let total_fp: usize = results.iter().map(|r| r.false_positives).sum();
         let total_fn: usize = results.iter().map(|r| r.false_negatives).sum();
+        let total_tn: usize = results.iter().map(|r| r.true_negatives).sum();
 
         let micro_precision = if total_tp + total_fp > 0 {
             total_tp as f32 / (total_tp + total_fp) as f32
@@ -241,16 +243,22 @@ impl AggregateMetrics {
         let macro_f1: f32 = results.iter().map(|r| r.f1).sum::<f32>() / n;
 
         let weighted_score = if let Some(ws) = weights {
-            let total_weight: f32 = ws.iter().sum();
-            if total_weight > 0.0 {
-                results
-                    .iter()
-                    .zip(ws.iter())
-                    .map(|(r, w)| r.f1 * w)
-                    .sum::<f32>()
-                    / total_weight
-            } else {
+            if ws.len() != results.len() {
+                // Length mismatch: fall back to macro_f1 rather than silently
+                // dropping results via zip truncation
                 macro_f1
+            } else {
+                let total_weight: f32 = ws.iter().sum();
+                if total_weight > 0.0 {
+                    results
+                        .iter()
+                        .zip(ws.iter())
+                        .map(|(r, w)| r.f1 * w)
+                        .sum::<f32>()
+                        / total_weight
+                } else {
+                    macro_f1
+                }
             }
         } else {
             macro_f1
@@ -261,6 +269,7 @@ impl AggregateMetrics {
             total_tp,
             total_fp,
             total_fn,
+            total_tn,
             micro_precision,
             micro_recall,
             micro_f1,
@@ -304,9 +313,9 @@ pub fn evaluate_against_thresholds(
         ));
     }
 
-    let fpr = if result.aggregate.total_fp + result.aggregate.total_tp > 0 {
+    let fpr = if result.aggregate.total_fp + result.aggregate.total_tn > 0 {
         result.aggregate.total_fp as f32
-            / (result.aggregate.total_fp + result.aggregate.total_tp) as f32
+            / (result.aggregate.total_fp + result.aggregate.total_tn) as f32
     } else {
         0.0
     };
@@ -891,6 +900,70 @@ mod tests {
         assert_eq!(suite.fixture_count(), 0);
         let by_cat = suite.fixtures_by_category();
         assert!(by_cat.is_empty());
+    }
+
+    // BUG: AggregateMetrics::compute silently drops results when weights.len() < results.len()
+    #[test]
+    fn test_aggregate_weights_length_mismatch() {
+        let r1 = FixtureResult::compute("a", 2, 0, 2, 0, 0); // f1 = 1.0
+        let r2 = FixtureResult::compute("b", 2, 0, 0, 0, 2); // f1 = 0.0
+        let r3 = FixtureResult::compute("c", 2, 0, 2, 0, 0); // f1 = 1.0
+
+        // Only 2 weights for 3 results — r3 (f1=1.0) is silently dropped
+        let weights = vec![1.0, 1.0];
+        let agg = AggregateMetrics::compute(&[&r1, &r2, &r3], Some(&weights));
+
+        // macro_f1 = (1.0 + 0.0 + 1.0) / 3 = 0.667
+        // With mismatched weights, zip truncates: (1.0*1 + 0.0*1) / 2 = 0.5
+        // The third fixture is silently ignored, deflating the score!
+        // On mismatch, should fall back to macro_f1 rather than give wrong answer.
+        assert!(
+            (agg.weighted_score - agg.macro_f1).abs() < 0.05,
+            "Mismatched weights should fall back to macro_f1, got weighted={:.3} vs macro={:.3}",
+            agg.weighted_score, agg.macro_f1
+        );
+    }
+
+    // BUG: FPR formula uses FP/(FP+TP) which equals 1-precision, making it redundant.
+    // Should track total_tn and use FP/(FP+TN) for real false positive rate.
+    #[test]
+    fn test_fpr_uses_true_negatives() {
+        let r1 = FixtureResult::compute("a", 10, 10, 10, 0, 1);
+        // r1: tp=10, fp=1, fn=0, tn=10
+        let r2 = FixtureResult::compute("b", 0, 10, 0, 0, 0);
+        // r2: tp=0, fp=0, fn=0, tn=10
+
+        let agg = AggregateMetrics::compute(&[&r1, &r2], None);
+        // total_tp=10, total_fp=1, total_fn=0
+        // If total_tn were tracked: total_tn=20
+
+        let result = BenchmarkResult {
+            suite_name: "test".to_string(),
+            fixture_results: vec![r1, r2],
+            aggregate: agg,
+            by_category: HashMap::new(),
+            by_difficulty: HashMap::new(),
+            threshold_pass: true,
+            threshold_failures: vec![],
+            timestamp: "2024-01-01".to_string(),
+        };
+
+        // With real FPR = FP/(FP+TN) = 1/(1+20) = 0.048 → passes 0.06 threshold
+        // With buggy FPR = FP/(FP+TP) = 1/(1+10) = 0.091 → fails 0.06 threshold
+        let thresholds = BenchmarkThresholds {
+            max_false_positive_rate: 0.06,
+            min_precision: 0.0,
+            min_recall: 0.0,
+            min_f1: 0.0,
+            min_weighted_score: 0.0,
+        };
+
+        let (pass, failures) = evaluate_against_thresholds(&result, &thresholds);
+        assert!(
+            pass,
+            "FPR should be ~0.048 (FP/(FP+TN)), not 0.091 (FP/(FP+TP)): {:?}",
+            failures
+        );
     }
 
     // BUG: compare_results never populates improvements vector
