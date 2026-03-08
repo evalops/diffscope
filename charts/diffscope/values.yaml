@@ -1,0 +1,141 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/haasonsaas/diffscope
+  tag: ""  # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# -- DiffScope server configuration
+diffscope:
+  host: "0.0.0.0"
+  port: 3000
+  model: "anthropic/claude-sonnet-4.6"
+  # Adapter override: openai, anthropic, ollama, openrouter (auto-detected if empty)
+  adapter: ""
+  # Base URL for LLM API (auto-set to Ollama service URL when ollama.enabled)
+  baseUrl: ""
+  extraArgs: []
+
+# -- API keys (stored in a Secret)
+secrets:
+  diffscopeApiKey: ""
+  openaiApiKey: ""
+  openrouterApiKey: ""
+  anthropicApiKey: ""
+  # Use an existing secret instead of creating one
+  existingSecret: ""
+  existingSecretKeys:
+    diffscopeApiKey: "DIFFSCOPE_API_KEY"
+    openaiApiKey: "OPENAI_API_KEY"
+    openrouterApiKey: "OPENROUTER_API_KEY"
+    anthropicApiKey: "ANTHROPIC_API_KEY"
+
+# -- Non-secret environment config
+config:
+  extraEnv: {}
+  # Mount a .diffscope.yml config file into the workspace
+  configFile: ""
+  extraVolumeMounts: []
+  extraVolumes: []
+
+# -- Git repository to review
+gitRepo:
+  # Clone a repo into the container on startup
+  enabled: false
+  url: ""
+  branch: "main"
+  # Or mount an existing PVC containing a repo
+  existingPvc: ""
+  mountPath: "/workspace"
+
+# -- Persistence for review data
+persistence:
+  enabled: true
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+  annotations: {}
+  existingClaim: ""
+
+service:
+  type: ClusterIP
+  port: 3000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: diffscope.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  fsGroup: 1000
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  readOnlyRootFilesystem: false
+  allowPrivilegeEscalation: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# -- Ollama for local LLM inference
+ollama:
+  enabled: false
+  # "sidecar" (same pod) or "deployment" (separate Deployment + Service)
+  mode: "deployment"
+  image:
+    repository: ollama/ollama
+    tag: latest
+    pullPolicy: IfNotPresent
+  model: "codellama:7b"
+  port: 11434
+  resources:
+    requests:
+      cpu: "1"
+      memory: 4Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 20Gi
+    existingClaim: ""
+  gpu:
+    enabled: false
+    count: 1
+  nodeSelector: {}
+  tolerations: []

@@ -1,0 +1,83 @@
+{{- if and .Values.ollama.enabled (eq .Values.ollama.mode "deployment") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "diffscope.ollamaFullname" . }}
+  labels:
+    {{- include "diffscope.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "diffscope.name" . }}-ollama
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "diffscope.name" . }}-ollama
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      initContainers:
+        - name: model-pull
+          image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
+          imagePullPolicy: {{ .Values.ollama.image.pullPolicy }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              ollama serve &
+              sleep 5
+              ollama pull {{ .Values.ollama.model }}
+              kill %1
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+      containers:
+        - name: ollama
+          image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
+          imagePullPolicy: {{ .Values.ollama.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ollama.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/tags
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.ollama.resources | nindent 12 }}
+            {{- if .Values.ollama.gpu.enabled }}
+            limits:
+              nvidia.com/gpu: {{ .Values.ollama.gpu.count }}
+            {{- end }}
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+      volumes:
+        - name: ollama-data
+          {{- if and .Values.ollama.persistence.enabled .Values.ollama.persistence.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.ollama.persistence.existingClaim }}
+          {{- else if .Values.ollama.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "diffscope.ollamaFullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.ollama.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ollama.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

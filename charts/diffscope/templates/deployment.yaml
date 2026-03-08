@@ -1,0 +1,229 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "diffscope.fullname" . }}
+  labels:
+    {{- include "diffscope.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "diffscope.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "diffscope.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "diffscope.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if or (and .Values.gitRepo.enabled .Values.gitRepo.url) (and .Values.ollama.enabled (eq .Values.ollama.mode "sidecar")) }}
+      initContainers:
+        {{- if and .Values.gitRepo.enabled .Values.gitRepo.url }}
+        - name: git-clone
+          image: alpine/git:latest
+          command: ["sh", "-c"]
+          args:
+            - |
+              if [ ! -d /workspace/.git ]; then
+                git clone --branch {{ .Values.gitRepo.branch }} --depth 1 {{ .Values.gitRepo.url }} /workspace
+              else
+                cd /workspace && git fetch origin && git reset --hard origin/{{ .Values.gitRepo.branch }}
+              fi
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+        {{- end }}
+        {{- if and .Values.ollama.enabled (eq .Values.ollama.mode "sidecar") }}
+        - name: ollama-pull
+          image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
+          command: ["sh", "-c"]
+          args:
+            - |
+              ollama serve &
+              sleep 5
+              ollama pull {{ .Values.ollama.model }}
+              kill %1
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - --host
+            - {{ .Values.diffscope.host | quote }}
+            - --port
+            - {{ .Values.diffscope.port | quote }}
+            {{- if .Values.diffscope.model }}
+            - --model
+            - {{ .Values.diffscope.model | quote }}
+            {{- end }}
+            {{- if .Values.diffscope.adapter }}
+            - --adapter
+            - {{ .Values.diffscope.adapter | quote }}
+            {{- end }}
+            {{- range .Values.diffscope.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          workingDir: {{ .Values.gitRepo.mountPath }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.diffscope.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "diffscope.fullname" . }}
+          env:
+            - name: DIFFSCOPE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "diffscope.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.diffscopeApiKey }}
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "diffscope.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.openaiApiKey }}
+                  optional: true
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "diffscope.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.openrouterApiKey }}
+                  optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "diffscope.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretKeys.anthropicApiKey }}
+                  optional: true
+          livenessProbe:
+            httpGet:
+              path: /api/status
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: reviews-data
+              mountPath: /home/diffscope/.local/share/diffscope
+            - name: workspace
+              mountPath: {{ .Values.gitRepo.mountPath }}
+            {{- if .Values.config.configFile }}
+            - name: config-file
+              mountPath: {{ .Values.gitRepo.mountPath }}/.diffscope.yml
+              subPath: diffscope.yml
+            {{- end }}
+            {{- with .Values.config.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+        {{- if and .Values.ollama.enabled (eq .Values.ollama.mode "sidecar") }}
+        - name: ollama
+          image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
+          imagePullPolicy: {{ .Values.ollama.image.pullPolicy }}
+          ports:
+            - name: ollama
+              containerPort: {{ .Values.ollama.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/tags
+              port: ollama
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: ollama
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.ollama.resources | nindent 12 }}
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+        {{- end }}
+      volumes:
+        - name: reviews-data
+          {{- if and .Values.persistence.enabled .Values.persistence.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim }}
+          {{- else if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "diffscope.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: workspace
+          {{- if and .Values.gitRepo.enabled .Values.gitRepo.existingPvc }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.gitRepo.existingPvc }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.config.configFile }}
+        - name: config-file
+          configMap:
+            name: {{ include "diffscope.fullname" . }}
+        {{- end }}
+        {{- if and .Values.ollama.enabled (eq .Values.ollama.mode "sidecar") }}
+        - name: ollama-data
+          {{- if and .Values.ollama.persistence.enabled .Values.ollama.persistence.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.ollama.persistence.existingClaim }}
+          {{- else if .Values.ollama.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "diffscope.ollamaFullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
+        {{- with .Values.config.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: diffscope
+description: AI-powered code review engine with smart analysis and professional reporting
+type: application
+version: 0.1.0
+appVersion: "0.5.3"
+home: https://github.com/haasonsaas/diffscope
+sources:
+  - https://github.com/haasonsaas/diffscope
+maintainers:
+  - name: Jonathan Haas
+keywords:
+  - code-review
+  - diff
+  - analysis
+  - llm

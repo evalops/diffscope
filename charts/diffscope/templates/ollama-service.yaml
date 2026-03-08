@@ -1,0 +1,19 @@
+{{- if and .Values.ollama.enabled (eq .Values.ollama.mode "deployment") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "diffscope.ollamaFullname" . }}
+  labels:
+    {{- include "diffscope.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.ollama.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: {{ include "diffscope.name" . }}-ollama
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

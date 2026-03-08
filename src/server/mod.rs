@@ -53,7 +53,7 @@ async fn serve_embedded(uri: axum::http::Uri) -> Response {
     }
 }
 
-pub async fn start_server(config: Config, port: u16) -> anyhow::Result<()> {
+pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Result<()> {
     let state = Arc::new(state::AppState::new(config)?);
 
     let cors = CorsLayer::new()
@@ -77,7 +77,7 @@ pub async fn start_server(config: Config, port: u16) -> anyhow::Result<()> {
         .fallback(serve_embedded)
         .layer(cors);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
     eprintln!("DiffScope server running at http://{}", addr);
     eprintln!("Press Ctrl+C to stop");
 

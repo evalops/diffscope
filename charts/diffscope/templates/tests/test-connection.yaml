@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "diffscope.fullname" . }}-test-connection"
+  labels:
+    {{- include "diffscope.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: wget
+      image: busybox
+      command: ['wget']
+      args: ['--spider', '-T', '5', 'http://{{ include "diffscope.fullname" . }}:{{ .Values.service.port }}/api/status']
+  restartPolicy: Never

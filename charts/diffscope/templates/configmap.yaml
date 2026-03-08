@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "diffscope.fullname" . }}
+  labels:
+    {{- include "diffscope.labels" . | nindent 4 }}
+data:
+  DIFFSCOPE_MODEL: {{ .Values.diffscope.model | quote }}
+  {{- if .Values.diffscope.baseUrl }}
+  DIFFSCOPE_BASE_URL: {{ .Values.diffscope.baseUrl | quote }}
+  {{- else if .Values.ollama.enabled }}
+  DIFFSCOPE_BASE_URL: {{ include "diffscope.ollamaUrl" . | quote }}
+  {{- end }}
+  {{- range $key, $value := .Values.config.extraEnv }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- if .Values.config.configFile }}
+  diffscope.yml: |
+{{ .Values.config.configFile | indent 4 }}
+  {{- end }}

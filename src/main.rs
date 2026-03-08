@@ -204,6 +204,8 @@ enum Commands {
     Doctor,
     /// Start the web UI server
     Serve {
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
         #[arg(long, default_value = "3000")]
         port: u16,
     },
@@ -367,8 +369,8 @@ async fn main() -> Result<()> {
         Commands::Doctor => {
             commands::doctor_command(config).await?;
         }
-        Commands::Serve { port } => {
-            server::start_server(config, port).await?;
+        Commands::Serve { host, port } => {
+            server::start_server(config, &host, port).await?;
         }
         Commands::Eval {
             fixtures,
