@@ -20,7 +20,16 @@ pub struct SymbolLocation {
 #[derive(Debug, Default)]
 pub struct SymbolIndex {
     symbols: HashMap<String, Vec<SymbolLocation>>,
+    dependency_graph: HashMap<PathBuf, HashSet<PathBuf>>,
+    reverse_dependency_graph: HashMap<PathBuf, HashSet<PathBuf>>,
+    file_summaries: HashMap<PathBuf, FileSummary>,
     files_indexed: usize,
+}
+
+#[derive(Debug, Clone)]
+struct FileSummary {
+    snippet: String,
+    line_count: usize,
 }
 
 struct LspServerOption {
@@ -204,6 +213,8 @@ impl SymbolIndex {
 
             let content = String::from_utf8_lossy(&bytes);
             let lines: Vec<&str> = content.lines().collect();
+            index.register_file_summary(&relative, &lines);
+            index.register_dependency_hints(repo_root, &relative, &lines);
             let file_added =
                 add_symbols_from_lines(&mut index, &relative, &lines, patterns, max_locations);
 
@@ -344,6 +355,8 @@ impl SymbolIndex {
             }
             let content = String::from_utf8_lossy(&bytes);
             let lines: Vec<&str> = content.lines().collect();
+            index.register_file_summary(&relative, &lines);
+            index.register_dependency_hints(repo_root, &relative, &lines);
             let file_added =
                 add_symbols_from_lines(&mut index, &relative, &lines, patterns, max_locations);
             if file_added {
@@ -358,12 +371,132 @@ impl SymbolIndex {
         self.symbols.get(symbol)
     }
 
+    pub fn multi_hop_locations(
+        &self,
+        current_file: &Path,
+        symbols: &[String],
+        max_locations: usize,
+        max_hops: usize,
+        max_files: usize,
+    ) -> Vec<SymbolLocation> {
+        if symbols.is_empty() || max_files == 0 {
+            return Vec::new();
+        }
+
+        let mut direct_files = HashSet::new();
+        let mut locations = Vec::new();
+        let mut seen_locations = HashSet::new();
+
+        for symbol in symbols {
+            if let Some(entries) = self.lookup(symbol) {
+                for location in entries.iter().take(max_locations) {
+                    let location_key = format!(
+                        "{}:{}:{}",
+                        location.file_path.display(),
+                        location.line_range.0,
+                        location.line_range.1
+                    );
+                    if seen_locations.insert(location_key) {
+                        direct_files.insert(location.file_path.clone());
+                        locations.push(location.clone());
+                    }
+                }
+            }
+        }
+
+        let mut queue: std::collections::VecDeque<(PathBuf, usize)> =
+            std::collections::VecDeque::new();
+        let mut seen_files = HashSet::new();
+
+        for file in direct_files {
+            if file == current_file {
+                continue;
+            }
+            seen_files.insert(file.clone());
+            queue.push_back((file, 0));
+        }
+
+        while let Some((file, depth)) = queue.pop_front() {
+            if depth >= max_hops {
+                continue;
+            }
+
+            for neighbor in self.neighbor_files(&file) {
+                if neighbor == current_file {
+                    continue;
+                }
+                if !seen_files.insert(neighbor.clone()) {
+                    continue;
+                }
+                queue.push_back((neighbor, depth + 1));
+            }
+        }
+
+        for file in seen_files.into_iter().take(max_files) {
+            if locations.iter().any(|location| location.file_path == file) {
+                continue;
+            }
+            if let Some(summary) = self.file_summaries.get(&file) {
+                locations.push(SymbolLocation {
+                    file_path: file,
+                    line_range: (1, summary.line_count.max(1)),
+                    snippet: format!("[Dependency graph context]\n{}", summary.snippet),
+                });
+            }
+        }
+
+        locations
+    }
+
     pub fn files_indexed(&self) -> usize {
         self.files_indexed
     }
 
     pub fn symbols_indexed(&self) -> usize {
         self.symbols.len()
+    }
+
+    fn register_file_summary(&mut self, relative: &Path, lines: &[&str]) {
+        let line_count = lines.len();
+        let snippet = lines
+            .iter()
+            .take(40)
+            .copied()
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.file_summaries.insert(
+            relative.to_path_buf(),
+            FileSummary {
+                snippet,
+                line_count,
+            },
+        );
+    }
+
+    fn register_dependency_hints(&mut self, repo_root: &Path, relative: &Path, lines: &[&str]) {
+        for line in lines {
+            for dependency in extract_dependency_candidates(repo_root, relative, line) {
+                self.dependency_graph
+                    .entry(relative.to_path_buf())
+                    .or_default()
+                    .insert(dependency.clone());
+                self.reverse_dependency_graph
+                    .entry(dependency)
+                    .or_default()
+                    .insert(relative.to_path_buf());
+            }
+        }
+    }
+
+    fn neighbor_files(&self, file: &Path) -> HashSet<PathBuf> {
+        let mut neighbors = HashSet::new();
+        if let Some(deps) = self.dependency_graph.get(file) {
+            neighbors.extend(deps.iter().cloned());
+        }
+        if let Some(reverse) = self.reverse_dependency_graph.get(file) {
+            neighbors.extend(reverse.iter().cloned());
+        }
+        neighbors
     }
 }
 
@@ -628,8 +761,122 @@ static SYMBOL_PATTERNS: Lazy<HashMap<&'static str, Vec<Regex>>> = Lazy::new(|| {
     map
 });
 
+static RELATIVE_PATH_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"['"]((?:\./|\.\./)[^'"]+)['"]"#).unwrap());
+static RUST_MOD_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;").unwrap());
+static PY_RELATIVE_IMPORT_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*from\s+\.([A-Za-z0-9_\.]+)\s+import\s+").unwrap());
+static CPP_INCLUDE_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"^\s*#include\s+"([^"]+)""#).unwrap());
+
 fn patterns_for_extension(ext: &str) -> Option<&'static Vec<Regex>> {
     SYMBOL_PATTERNS.get(ext)
+}
+
+fn extract_dependency_candidates(repo_root: &Path, relative: &Path, line: &str) -> Vec<PathBuf> {
+    let mut dependencies = HashSet::new();
+
+    for captures in RELATIVE_PATH_PATTERN.captures_iter(line) {
+        if let Some(raw_path) = captures.get(1) {
+            for candidate in resolve_relative_dependency(repo_root, relative, raw_path.as_str()) {
+                dependencies.insert(candidate);
+            }
+        }
+    }
+
+    if let Some(captures) = RUST_MOD_PATTERN.captures(line) {
+        if let Some(module) = captures.get(1) {
+            let module_name = module.as_str();
+            let candidates = [
+                format!("./{}.rs", module_name),
+                format!("./{}/mod.rs", module_name),
+            ];
+            for candidate in candidates {
+                for resolved in resolve_relative_dependency(repo_root, relative, &candidate) {
+                    dependencies.insert(resolved);
+                }
+            }
+        }
+    }
+
+    if let Some(captures) = PY_RELATIVE_IMPORT_PATTERN.captures(line) {
+        if let Some(module_path) = captures.get(1) {
+            let normalized = module_path.as_str().replace('.', "/");
+            let candidates = [
+                format!("./{}.py", normalized),
+                format!("./{}/__init__.py", normalized),
+            ];
+            for candidate in candidates {
+                for resolved in resolve_relative_dependency(repo_root, relative, &candidate) {
+                    dependencies.insert(resolved);
+                }
+            }
+        }
+    }
+
+    if let Some(captures) = CPP_INCLUDE_PATTERN.captures(line) {
+        if let Some(include_path) = captures.get(1) {
+            for candidate in resolve_relative_dependency(repo_root, relative, include_path.as_str())
+            {
+                dependencies.insert(candidate);
+            }
+        }
+    }
+
+    dependencies.into_iter().collect()
+}
+
+fn resolve_relative_dependency(repo_root: &Path, relative: &Path, raw_path: &str) -> Vec<PathBuf> {
+    let mut resolved = Vec::new();
+    let base_dir = relative.parent().unwrap_or_else(|| Path::new(""));
+    let joined = normalize_relative_path(base_dir.join(raw_path));
+
+    for candidate in candidate_paths(&joined) {
+        let full_path = repo_root.join(&candidate);
+        if !full_path.is_file() {
+            continue;
+        }
+        resolved.push(candidate);
+    }
+
+    resolved
+}
+
+fn candidate_paths(path: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    candidates.push(path.to_path_buf());
+
+    if path.extension().is_none() {
+        for extension in [
+            "rs", "py", "ts", "tsx", "js", "jsx", "go", "java", "kt", "cs", "cpp", "hpp", "h",
+            "rb", "php",
+        ] {
+            candidates.push(path.with_extension(extension));
+        }
+
+        candidates.push(path.join("mod.rs"));
+        candidates.push(path.join("__init__.py"));
+        candidates.push(path.join("index.ts"));
+        candidates.push(path.join("index.tsx"));
+        candidates.push(path.join("index.js"));
+    }
+
+    candidates
+}
+
+fn normalize_relative_path(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn add_symbols_from_lines(
@@ -675,6 +922,7 @@ struct LspClient {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
+    root_path: PathBuf,
     root_uri: String,
 }
 
@@ -705,6 +953,7 @@ impl LspClient {
             stdin,
             stdout: BufReader::new(stdout),
             next_id: 1,
+            root_path: root.to_path_buf(),
             root_uri: path_to_uri(root)?,
         };
 
@@ -752,12 +1001,13 @@ impl LspClient {
             }),
         )?;
 
+        let lines: Vec<&str> = content.lines().collect();
+        index.register_file_summary(relative, &lines);
+        index.register_dependency_hints(&self.root_path, relative, &lines);
         let symbols = extract_lsp_symbols(&response);
         if symbols.is_empty() {
             return Ok(false);
         }
-
-        let lines: Vec<&str> = content.lines().collect();
         let mut file_added = false;
 
         for symbol in symbols {

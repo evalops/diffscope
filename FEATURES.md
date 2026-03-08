@@ -109,4 +109,7 @@ This enhanced system provides professional-grade code review capabilities while 
 - `strictness` levels (1-3) to control review depth and noise.
 - `comment_types` filtering (`logic`, `syntax`, `style`, `informational`) to focus output.
 - Scoped `custom_context` entries to inject path-specific notes and context files.
+- `pattern_repositories` support for shared cross-repo context packs (local or git-cloned).
 - Adaptive suppression of repeated low-value comment types based on accepted/rejected feedback history.
+- `discuss` command for threaded follow-up Q&A on generated review comments.
+- Multi-hop symbol context via dependency graph expansion (`symbol_index_graph_hops`, `symbol_index_graph_max_files`).

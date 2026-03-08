@@ -75,6 +75,17 @@ impl ContextFetcher {
         &self,
         patterns: &[String],
     ) -> Result<Vec<LLMContextChunk>> {
+        self.fetch_additional_context_from_base(&self.repo_path, patterns, 10, 200)
+            .await
+    }
+
+    pub async fn fetch_additional_context_from_base(
+        &self,
+        base_path: &Path,
+        patterns: &[String],
+        max_files: usize,
+        max_lines: usize,
+    ) -> Result<Vec<LLMContextChunk>> {
         let mut chunks = Vec::new();
         if patterns.is_empty() {
             return Ok(chunks);
@@ -85,7 +96,7 @@ impl ContextFetcher {
             let pattern_path = if Path::new(pattern).is_absolute() {
                 pattern.clone()
             } else {
-                self.repo_path.join(pattern).to_string_lossy().to_string()
+                base_path.join(pattern).to_string_lossy().to_string()
             };
 
             if let Ok(entries) = glob(&pattern_path) {
@@ -97,11 +108,8 @@ impl ContextFetcher {
             }
         }
 
-        let max_files = 10usize;
-        let max_lines = 200usize;
-
         for path in matched_paths.into_iter().take(max_files) {
-            let relative_path = path.strip_prefix(&self.repo_path).unwrap_or(&path);
+            let relative_path = path.strip_prefix(base_path).unwrap_or(&path);
             let content = read_file_lossy(&path).await?;
             let snippet = content
                 .lines()
@@ -182,6 +190,8 @@ impl ContextFetcher {
         symbols: &[String],
         index: &SymbolIndex,
         max_locations: usize,
+        graph_hops: usize,
+        graph_max_files: usize,
     ) -> Result<Vec<LLMContextChunk>> {
         let mut chunks = Vec::new();
 
@@ -204,6 +214,25 @@ impl ContextFetcher {
                     });
                 }
             }
+        }
+
+        for location in index.multi_hop_locations(
+            file_path,
+            symbols,
+            max_locations,
+            graph_hops,
+            graph_max_files,
+        ) {
+            if &location.file_path == file_path {
+                continue;
+            }
+            let snippet = truncate_with_notice(location.snippet, MAX_CONTEXT_CHARS);
+            chunks.push(LLMContextChunk {
+                file_path: location.file_path,
+                content: snippet,
+                context_type: ContextType::Reference,
+                line_range: Some(location.line_range),
+            });
         }
 
         Ok(chunks)

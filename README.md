@@ -18,6 +18,8 @@ A composable code review engine for automated diff analysis.
 - **Signal Controls**: Tune strictness and comment types (`logic`, `syntax`, `style`, `informational`)
 - **Adaptive Learning**: Suppress low-value recurring feedback based on accepted/rejected review history
 - **Scoped Custom Context**: Attach rules and reference files to path scopes for higher-precision reviews
+- **Pattern Repositories**: Pull review context from shared cross-repo rule libraries
+- **Comment Follow-Ups**: Ask threaded questions on generated review comments with `diffscope discuss`
 - **Changelog Generation**: Generate changelogs and release notes from git history
 - **Interactive Commands**: Respond to PR comments with @diffscope commands
 
@@ -165,6 +167,9 @@ git diff | diffscope review --output-format markdown > review.md
 
 # Inline patch comments
 git diff | diffscope review --output-format patch
+
+# Follow-up Q&A on generated comments
+diffscope discuss --review review.json --comment-index 1 --question "Is this still an issue if we add caching?"
 ```
 
 ## GitHub Action
@@ -215,6 +220,8 @@ symbol_index_lsp_languages:
 symbol_index_max_files: 500
 symbol_index_max_bytes: 200000
 symbol_index_max_locations: 5
+symbol_index_graph_hops: 2
+symbol_index_graph_max_files: 12
 feedback_path: ".diffscope.feedback.json"
 system_prompt: "Focus on security vulnerabilities, performance issues, and best practices"
 openai_use_responses: true  # Use OpenAI Responses API (recommended) instead of chat completions
@@ -226,6 +233,15 @@ custom_context:
     files:
       - "docs/security/*.md"
       - "src/config/**/*.yml"
+
+pattern_repositories:
+  - source: "../shared-review-patterns" # local path or git URL
+    scope: "src/**"
+    include_patterns:
+      - "rules/**/*.md"
+      - "examples/**/*.yml"
+    max_files: 8
+    max_lines: 200
 
 # Built-in plugins (enabled by default)
 plugins:

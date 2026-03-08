@@ -32,6 +32,8 @@ symbol_index_lsp_languages:
 symbol_index_max_files: 500
 symbol_index_max_bytes: 200000
 symbol_index_max_locations: 5
+symbol_index_graph_hops: 2
+symbol_index_graph_max_files: 12
 feedback_path: ".diffscope.feedback.json"
 
 # Optional Greptile-like scoped context bundles.
@@ -44,6 +46,16 @@ custom_context:
     files:
       - "docs/security/*.md"
       - "src/config/**/*.yml"
+
+# Cross-repo pattern libraries (local path or git URL).
+pattern_repositories:
+  - source: "../shared-review-patterns"
+    scope: "src/**"
+    include_patterns:
+      - "rules/**/*.md"
+      - "examples/**/*.yml"
+    max_files: 8
+    max_lines: 200
 
 # API configuration (optional - can use environment variables)
 # api_key: your-api-key-here

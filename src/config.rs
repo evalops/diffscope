@@ -56,6 +56,12 @@ pub struct Config {
     #[serde(default = "default_symbol_index_max_locations")]
     pub symbol_index_max_locations: usize,
 
+    #[serde(default = "default_symbol_index_graph_hops")]
+    pub symbol_index_graph_hops: usize,
+
+    #[serde(default = "default_symbol_index_graph_max_files")]
+    pub symbol_index_graph_max_files: usize,
+
     #[serde(default)]
     pub symbol_index_lsp_command: Option<String>,
 
@@ -83,6 +89,9 @@ pub struct Config {
 
     #[serde(default)]
     pub custom_context: Vec<CustomContextConfig>,
+
+    #[serde(default)]
+    pub pattern_repositories: Vec<PatternRepositoryConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -117,6 +126,23 @@ pub struct CustomContextConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PatternRepositoryConfig {
+    pub source: String,
+
+    #[serde(default)]
+    pub scope: Option<String>,
+
+    #[serde(default)]
+    pub include_patterns: Vec<String>,
+
+    #[serde(default = "default_pattern_repo_max_files")]
+    pub max_files: usize,
+
+    #[serde(default = "default_pattern_repo_max_lines")]
+    pub max_lines: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginConfig {
     #[serde(default = "default_true")]
     pub eslint: bool,
@@ -148,6 +174,8 @@ impl Default for Config {
             symbol_index_max_files: default_symbol_index_max_files(),
             symbol_index_max_bytes: default_symbol_index_max_bytes(),
             symbol_index_max_locations: default_symbol_index_max_locations(),
+            symbol_index_graph_hops: default_symbol_index_graph_hops(),
+            symbol_index_graph_max_files: default_symbol_index_graph_max_files(),
             symbol_index_lsp_command: None,
             symbol_index_lsp_languages: default_symbol_index_lsp_languages(),
             feedback_path: default_feedback_path(),
@@ -159,6 +187,7 @@ impl Default for Config {
             exclude_patterns: Vec::new(),
             paths: HashMap::new(),
             custom_context: Vec::new(),
+            pattern_repositories: Vec::new(),
         }
     }
 }
@@ -225,6 +254,12 @@ impl Config {
         }
         if self.symbol_index_max_locations == 0 {
             self.symbol_index_max_locations = default_symbol_index_max_locations();
+        }
+        if self.symbol_index_graph_hops == 0 {
+            self.symbol_index_graph_hops = default_symbol_index_graph_hops();
+        }
+        if self.symbol_index_graph_max_files == 0 {
+            self.symbol_index_graph_max_files = default_symbol_index_graph_max_files();
         }
 
         let provider = self.symbol_index_provider.trim().to_lowercase();
@@ -304,6 +339,40 @@ impl Config {
             normalized_custom_context.push(entry);
         }
         self.custom_context = normalized_custom_context;
+
+        let mut normalized_pattern_repositories = Vec::new();
+        for mut repo in std::mem::take(&mut self.pattern_repositories) {
+            repo.source = repo.source.trim().to_string();
+            if repo.source.is_empty() {
+                continue;
+            }
+            repo.scope = repo.scope.and_then(|scope| {
+                let trimmed = scope.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            });
+            repo.include_patterns = repo
+                .include_patterns
+                .into_iter()
+                .map(|pattern| pattern.trim().to_string())
+                .filter(|pattern| !pattern.is_empty())
+                .collect();
+            if repo.include_patterns.is_empty() {
+                repo.include_patterns.push("**/*".to_string());
+            }
+            if repo.max_files == 0 {
+                repo.max_files = default_pattern_repo_max_files();
+            }
+            if repo.max_lines == 0 {
+                repo.max_lines = default_pattern_repo_max_lines();
+            }
+
+            normalized_pattern_repositories.push(repo);
+        }
+        self.pattern_repositories = normalized_pattern_repositories;
     }
 
     pub fn get_path_config(&self, file_path: &Path) -> Option<&PathConfig> {
@@ -364,6 +433,17 @@ impl Config {
             _ => 0.45,
         };
         self.min_confidence.max(strictness_floor).clamp(0.0, 1.0)
+    }
+
+    pub fn matching_pattern_repositories(&self, file_path: &Path) -> Vec<&PatternRepositoryConfig> {
+        let file_path_str = file_path.to_string_lossy();
+        self.pattern_repositories
+            .iter()
+            .filter(|repo| match repo.scope.as_deref() {
+                Some(scope) => self.path_matches(&file_path_str, scope),
+                None => true,
+            })
+            .collect()
     }
 
     fn path_matches(&self, path: &str, pattern: &str) -> bool {
@@ -470,6 +550,14 @@ fn default_symbol_index_max_locations() -> usize {
     5
 }
 
+fn default_symbol_index_graph_hops() -> usize {
+    2
+}
+
+fn default_symbol_index_graph_max_files() -> usize {
+    12
+}
+
 fn default_symbol_index_provider() -> String {
     "regex".to_string()
 }
@@ -482,6 +570,14 @@ fn default_symbol_index_lsp_languages() -> HashMap<String, String> {
 
 fn default_feedback_path() -> PathBuf {
     PathBuf::from(".diffscope.feedback.json")
+}
+
+fn default_pattern_repo_max_files() -> usize {
+    8
+}
+
+fn default_pattern_repo_max_lines() -> usize {
+    200
 }
 
 fn default_true() -> bool {
