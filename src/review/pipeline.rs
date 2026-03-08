@@ -1,6 +1,7 @@
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::collections::HashMap;
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
@@ -46,6 +47,21 @@ pub async fn review_diff_content_raw(
 ) -> Result<Vec<core::Comment>> {
     let diffs = core::DiffParser::parse_unified_diff(diff_content)?;
     info!("Parsed {} file diffs", diffs.len());
+
+    // Build enhanced review context from the new modules
+    let mut enhanced_ctx = core::build_enhanced_context(
+        &diffs,
+        &HashMap::new(),
+        None,
+        None,
+        None,
+        None,
+    );
+    let enhanced_guidance = core::generate_enhanced_guidance(&enhanced_ctx, "rs");
+    if !enhanced_guidance.is_empty() {
+        info!("Enhanced guidance generated ({} chars)", enhanced_guidance.len());
+    }
+
     let symbol_index = build_symbol_index(&config, repo_path);
     let pattern_repositories = resolve_pattern_repositories(&config, repo_path);
     let review_rules = load_review_rules(&config, &pattern_repositories, repo_path);
@@ -183,6 +199,11 @@ pub async fn review_diff_content_raw(
             local_prompt_config.system_prompt.push_str("\n\n");
             local_prompt_config.system_prompt.push_str(&guidance);
         }
+        // Inject enhanced guidance from the new modules
+        if !enhanced_guidance.is_empty() {
+            local_prompt_config.system_prompt.push_str("\n\n");
+            local_prompt_config.system_prompt.push_str(&enhanced_guidance);
+        }
         let local_prompt_builder = core::PromptBuilder::new(local_prompt_config);
         let (system_prompt, user_prompt) =
             local_prompt_builder.build_prompt(diff, &context_chunks)?;
@@ -229,6 +250,9 @@ pub async fn review_diff_content_raw(
         .run_post_processors(all_comments, &repo_path_str)
         .await?;
     let processed_comments = apply_review_filters(processed_comments, &config, &feedback);
+
+    // Apply enhanced filters from convention learning and composable pipeline
+    let processed_comments = core::apply_enhanced_filters(&mut enhanced_ctx, processed_comments);
 
     Ok(processed_comments)
 }
