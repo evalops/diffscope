@@ -21,6 +21,11 @@ struct WebAssets;
 async fn serve_embedded(uri: axum::http::Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
 
+    // Don't serve SPA for unmatched /api/ routes
+    if path.starts_with("api/") {
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
+    }
+
     // Try exact path first, then fall back to index.html (SPA routing)
     let (file, serve_path) = if path.is_empty() {
         (WebAssets::get("index.html"), "index.html")

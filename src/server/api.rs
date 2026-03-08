@@ -145,6 +145,19 @@ async fn run_review_task(
     let config = state.config.read().await.clone();
     let repo_path = state.repo_path.clone();
 
+    // Validate branch name to prevent injection
+    if let Some(ref branch) = base_branch {
+        if !branch.chars().all(|c| c.is_alphanumeric() || matches!(c, '/' | '-' | '_' | '.')) {
+            let mut reviews = state.reviews.write().await;
+            if let Some(session) = reviews.get_mut(&review_id) {
+                session.status = ReviewStatus::Failed;
+                session.error = Some("Invalid branch name".to_string());
+                session.completed_at = Some(current_timestamp());
+            }
+            return;
+        }
+    }
+
     // Get the diff content based on source
     let diff_result = match diff_source.as_str() {
         "staged" => get_diff_from_git(&repo_path, "staged", None),
@@ -301,11 +314,12 @@ pub async fn list_reviews(
     list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
 
     // Apply pagination
-    let page = params.page.unwrap_or(1).max(1);
-    let per_page = params.per_page.unwrap_or(20).max(1);
-    let start = (page - 1) * per_page;
+    let page = params.page.unwrap_or(1).max(1).min(10_000);
+    let per_page = params.per_page.unwrap_or(20).max(1).min(100);
+    let start = (page - 1).saturating_mul(per_page);
     let list = if start < list.len() {
-        list[start..list.len().min(start + per_page)].to_vec()
+        let end = list.len().min(start.saturating_add(per_page));
+        list[start..end].to_vec()
     } else {
         Vec::new()
     };
@@ -344,11 +358,6 @@ pub async fn get_doctor(State(state): State<Arc<AppState>>) -> Json<serde_json::
         .clone()
         .unwrap_or_else(|| "http://localhost:11434".to_string());
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .unwrap();
-
     let mut result = serde_json::json!({
         "config": {
             "model": config.model,
@@ -362,6 +371,14 @@ pub async fn get_doctor(State(state): State<Arc<AppState>>) -> Json<serde_json::
         "models": [],
         "recommended_model": null,
     });
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return Json(result),
+    };
 
     // Check Ollama
     let ollama_url = format!("{}/api/tags", base_url);

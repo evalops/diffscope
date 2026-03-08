@@ -93,10 +93,18 @@ impl AppState {
             drop(reviews);
 
             if let Some(parent) = state.storage_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+                if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                    eprintln!("Failed to create storage directory: {}", e);
+                    return;
+                }
             }
-            if let Ok(json) = serde_json::to_string_pretty(&stripped) {
-                let _ = std::fs::write(&state.storage_path, json);
+            match serde_json::to_string_pretty(&stripped) {
+                Ok(json) => {
+                    if let Err(e) = tokio::fs::write(&state.storage_path, json).await {
+                        eprintln!("Failed to persist reviews: {}", e);
+                    }
+                }
+                Err(e) => eprintln!("Failed to serialize reviews: {}", e),
             }
         });
     }

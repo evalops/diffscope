@@ -52,12 +52,17 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
+          {{- if .Values.ollama.gpu.enabled }}
+          resources:
+            requests:
+              {{- toYaml .Values.ollama.resources.requests | nindent 14 }}
+            limits:
+              {{- toYaml .Values.ollama.resources.limits | nindent 14 }}
+              nvidia.com/gpu: {{ .Values.ollama.gpu.count }}
+          {{- else }}
           resources:
             {{- toYaml .Values.ollama.resources | nindent 12 }}
-            {{- if .Values.ollama.gpu.enabled }}
-            limits:
-              nvidia.com/gpu: {{ .Values.ollama.gpu.count }}
-            {{- end }}
+          {{- end }}
           volumeMounts:
             - name: ollama-data
               mountPath: /root/.ollama

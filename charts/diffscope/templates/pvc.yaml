@@ -19,8 +19,8 @@ spec:
     requests:
       storage: {{ .Values.persistence.size }}
 {{- end }}
----
 {{- if and .Values.ollama.enabled .Values.ollama.persistence.enabled (not .Values.ollama.persistence.existingClaim) }}
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
