@@ -146,6 +146,18 @@ expect:
 Starter fixtures live in `eval/fixtures/repo_regressions`.
 Markdown and smart-review reports now include rule-level issue breakdown tables when rule ids are available.
 
+Threshold flags for CI gates:
+```bash
+diffscope eval \
+  --fixtures eval/fixtures \
+  --output eval-report.json \
+  --baseline eval-baseline.json \
+  --max-micro-f1-drop 0.15 \
+  --min-micro-f1 0.30 \
+  --min-rule-f1 sec.shell.injection=0.20 \
+  --max-rule-f1-drop sec.shell.injection=0.15
+```
+
 ### Smart Review (Enhanced Analysis)
 ```bash
 # Get professional-grade analysis with confidence scoring
@@ -284,6 +296,10 @@ rules_files:
   - ".diffscope-rules.yml"
   - "rules/**/*.yml"
 max_active_rules: 30
+rule_priority:
+  - "sec.shell.injection"
+  - "sec.auth.guard"
+  - "reliability.unwrap_panic"
 
 # Built-in plugins (enabled by default)
 plugins:
@@ -516,6 +532,8 @@ feat(auth): add JWT-based authentication system
 Jonathan Haas <jonathan@haas.holdings>
 
 ## Advanced CI/CD Integration
+
+See `.github/workflows/eval.yml` for a ready-to-run quality gate that compares PR eval metrics against `origin/main` and fails on micro-F1 or rule-level regressions.
 
 ### Enterprise GitHub Actions Workflow
 

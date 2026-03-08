@@ -69,6 +69,10 @@ rules_files:
   - ".diffscope-rules.yml"
   - "rules/**/*.yml"
 max_active_rules: 30
+rule_priority:
+  - "sec.shell.injection"
+  - "sec.auth.guard"
+  - "reliability.unwrap_panic"
 
 # API configuration (optional - can use environment variables)
 # api_key: your-api-key-here

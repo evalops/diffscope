@@ -198,6 +198,32 @@ enum Commands {
 
         #[arg(short, long)]
         output: Option<PathBuf>,
+
+        #[arg(long, help = "Baseline eval JSON report to compare against")]
+        baseline: Option<PathBuf>,
+
+        #[arg(long, help = "Maximum allowed drop in micro-F1 vs baseline (0.0-1.0)")]
+        max_micro_f1_drop: Option<f32>,
+
+        #[arg(long, help = "Minimum required micro-F1 for current run (0.0-1.0)")]
+        min_micro_f1: Option<f32>,
+
+        #[arg(long, help = "Minimum required macro-F1 for current run (0.0-1.0)")]
+        min_macro_f1: Option<f32>,
+
+        #[arg(
+            long,
+            value_delimiter = ',',
+            help = "Per-rule minimum F1 thresholds as rule_id=value (repeatable)"
+        )]
+        min_rule_f1: Vec<String>,
+
+        #[arg(
+            long,
+            value_delimiter = ',',
+            help = "Per-rule maximum allowed F1 drop vs baseline as rule_id=value (repeatable)"
+        )]
+        max_rule_f1_drop: Vec<String>,
     },
 }
 
@@ -332,8 +358,25 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Commands::Eval { fixtures, output } => {
-            eval_command(config, fixtures, output).await?;
+        Commands::Eval {
+            fixtures,
+            output,
+            baseline,
+            max_micro_f1_drop,
+            min_micro_f1,
+            min_macro_f1,
+            min_rule_f1,
+            max_rule_f1_drop,
+        } => {
+            let eval_options = EvalRunOptions {
+                baseline_report: baseline,
+                max_micro_f1_drop,
+                min_micro_f1,
+                min_macro_f1,
+                min_rule_f1,
+                max_rule_f1_drop,
+            };
+            eval_command(config, fixtures, output, eval_options).await?;
         }
     }
 
@@ -559,7 +602,13 @@ async fn review_command(
     let processed_comments = apply_review_filters(processed_comments, &config, &feedback);
 
     let effective_format = if patch { OutputFormat::Patch } else { format };
-    output_comments(&processed_comments, output_path, effective_format).await?;
+    output_comments(
+        &processed_comments,
+        output_path,
+        effective_format,
+        &config.rule_priority,
+    )
+    .await?;
 
     Ok(())
 }
@@ -876,7 +925,13 @@ async fn pr_command(
             post_pr_comment(&pr_number, repo.as_ref(), &body)?;
             fallback_posted += 1;
         }
-        upsert_pr_summary_comment(&pr_number, repo.as_ref(), &metadata, &comments)?;
+        upsert_pr_summary_comment(
+            &pr_number,
+            repo.as_ref(),
+            &metadata,
+            &comments,
+            &config.rule_priority,
+        )?;
 
         println!(
             "Posted {} comments to PR #{} (inline: {}, fallback: {}, summary: updated)",
@@ -886,7 +941,7 @@ async fn pr_command(
             fallback_posted
         );
     } else {
-        output_comments(&comments, None, format).await?;
+        output_comments(&comments, None, format, &config.rule_priority).await?;
     }
 
     Ok(())
@@ -1031,11 +1086,12 @@ fn upsert_pr_summary_comment(
     repo: Option<&String>,
     metadata: &GhPrMetadata,
     comments: &[core::Comment],
+    rule_priority: &[String],
 ) -> Result<()> {
     use std::process::Command;
 
     const SUMMARY_MARKER: &str = "<!-- diffscope:summary -->";
-    let summary_body = build_pr_summary_comment_body(comments);
+    let summary_body = build_pr_summary_comment_body(comments, rule_priority);
     let full_body = format!("{}\n\n{}", SUMMARY_MARKER, summary_body);
 
     let comments_endpoint = format!(
@@ -1087,7 +1143,7 @@ fn upsert_pr_summary_comment(
     post_pr_comment(pr_number, repo, &full_body)
 }
 
-fn build_pr_summary_comment_body(comments: &[core::Comment]) -> String {
+fn build_pr_summary_comment_body(comments: &[core::Comment], rule_priority: &[String]) -> String {
     let summary = core::CommentSynthesizer::generate_summary(comments);
     let mut body = String::new();
     body.push_str("## DiffScope Review Summary\n\n");
@@ -1110,7 +1166,7 @@ fn build_pr_summary_comment_body(comments: &[core::Comment]) -> String {
         body.push_str(&format!("- {}: {}\n", severity, count));
     }
 
-    let rule_hits = summarize_rule_hits(comments, 8);
+    let rule_hits = summarize_rule_hits(comments, 8, rule_priority);
     if !rule_hits.is_empty() {
         body.push_str("\n### Rule Hits\n");
         for (rule_id, hit) in rule_hits {
@@ -1121,25 +1177,8 @@ fn build_pr_summary_comment_body(comments: &[core::Comment]) -> String {
         }
     }
 
-    body.push_str("\n### Top Findings\n");
-    for (shown, comment) in comments.iter().enumerate() {
-        if shown >= 5 {
-            break;
-        }
-        let rule_suffix = comment
-            .rule_id
-            .as_deref()
-            .map(|rule_id| format!(" rule:{}", rule_id))
-            .unwrap_or_default();
-        body.push_str(&format!(
-            "- `{}:{}` [{:?}{}] {}\n",
-            comment.file_path.display(),
-            comment.line_number,
-            comment.severity,
-            rule_suffix,
-            comment.content
-        ));
-    }
+    body.push_str("\n### Top Findings by File\n");
+    body.push_str(&format_top_findings_by_file(comments, 5, 2));
 
     body
 }
@@ -1156,6 +1195,7 @@ struct RuleHitBreakdown {
 fn summarize_rule_hits(
     comments: &[core::Comment],
     max_rules: usize,
+    rule_priority: &[String],
 ) -> Vec<(String, RuleHitBreakdown)> {
     let mut by_rule: HashMap<String, RuleHitBreakdown> = HashMap::new();
     for comment in comments {
@@ -1174,17 +1214,97 @@ fn summarize_rule_hits(
         }
     }
 
+    let priority_rank = build_rule_priority_rank(rule_priority);
     let mut rows = by_rule.into_iter().collect::<Vec<_>>();
     rows.sort_by(|left, right| {
-        right
-            .1
-            .total
-            .cmp(&left.1.total)
+        let left_rank = priority_rank.get(&left.0).copied().unwrap_or(usize::MAX);
+        let right_rank = priority_rank.get(&right.0).copied().unwrap_or(usize::MAX);
+        left_rank
+            .cmp(&right_rank)
+            .then_with(|| right.1.total.cmp(&left.1.total))
             .then_with(|| right.1.errors.cmp(&left.1.errors))
             .then_with(|| left.0.cmp(&right.0))
     });
     rows.truncate(max_rules);
     rows
+}
+
+fn build_rule_priority_rank(rule_priority: &[String]) -> HashMap<String, usize> {
+    let mut by_rule = HashMap::new();
+    for (idx, rule_id) in rule_priority.iter().enumerate() {
+        let normalized = rule_id.trim().to_ascii_lowercase();
+        if normalized.is_empty() {
+            continue;
+        }
+        by_rule.entry(normalized).or_insert(idx);
+    }
+    by_rule
+}
+
+fn format_top_findings_by_file(
+    comments: &[core::Comment],
+    max_files: usize,
+    per_file: usize,
+) -> String {
+    if comments.is_empty() || max_files == 0 || per_file == 0 {
+        return "- None\n".to_string();
+    }
+
+    let mut grouped: HashMap<String, Vec<&core::Comment>> = HashMap::new();
+    for comment in comments {
+        grouped
+            .entry(comment.file_path.display().to_string())
+            .or_default()
+            .push(comment);
+    }
+
+    for file_comments in grouped.values_mut() {
+        file_comments.sort_by(|left, right| {
+            severity_rank(&left.severity)
+                .cmp(&severity_rank(&right.severity))
+                .then_with(|| left.line_number.cmp(&right.line_number))
+        });
+    }
+
+    let mut rows = grouped.into_iter().collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        right
+            .1
+            .len()
+            .cmp(&left.1.len())
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    rows.truncate(max_files);
+
+    let mut out = String::new();
+    for (path, file_comments) in rows {
+        out.push_str(&format!(
+            "- `{}` ({} issue(s))\n",
+            path,
+            file_comments.len()
+        ));
+        for comment in file_comments.into_iter().take(per_file) {
+            let rule = comment
+                .rule_id
+                .as_deref()
+                .map(|rule_id| format!(" rule:{}", rule_id))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "  - `L{}` [{:?}{}] {}\n",
+                comment.line_number, comment.severity, rule, comment.content
+            ));
+        }
+    }
+    out
+}
+
+fn severity_rank(severity: &core::comment::Severity) -> usize {
+    match severity {
+        core::comment::Severity::Error => 0,
+        core::comment::Severity::Warning => 1,
+        core::comment::Severity::Info => 2,
+        core::comment::Severity::Suggestion => 3,
+    }
 }
 
 async fn suggest_commit_message(config: config::Config) -> Result<()> {
@@ -1372,55 +1492,106 @@ struct EvalPattern {
     require_rule_id: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct EvalRuleMetrics {
+    #[serde(default)]
     rule_id: String,
+    #[serde(default)]
     expected: usize,
+    #[serde(default)]
     predicted: usize,
+    #[serde(default)]
     true_positives: usize,
+    #[serde(default)]
     false_positives: usize,
+    #[serde(default)]
     false_negatives: usize,
+    #[serde(default)]
     precision: f32,
+    #[serde(default)]
     recall: f32,
+    #[serde(default)]
     f1: f32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 struct EvalRuleScoreSummary {
+    #[serde(default)]
     micro_precision: f32,
+    #[serde(default)]
     micro_recall: f32,
+    #[serde(default)]
     micro_f1: f32,
+    #[serde(default)]
     macro_precision: f32,
+    #[serde(default)]
     macro_recall: f32,
+    #[serde(default)]
     macro_f1: f32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct EvalFixtureResult {
+    #[serde(default)]
     fixture: String,
+    #[serde(default)]
     passed: bool,
+    #[serde(default)]
     total_comments: usize,
+    #[serde(default)]
     required_matches: usize,
+    #[serde(default)]
     required_total: usize,
+    #[serde(default)]
     rule_metrics: Vec<EvalRuleMetrics>,
+    #[serde(default)]
     rule_summary: Option<EvalRuleScoreSummary>,
+    #[serde(default)]
     failures: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct EvalReport {
+    #[serde(default)]
     fixtures_total: usize,
+    #[serde(default)]
     fixtures_passed: usize,
+    #[serde(default)]
     fixtures_failed: usize,
+    #[serde(default)]
     rule_metrics: Vec<EvalRuleMetrics>,
+    #[serde(default)]
     rule_summary: Option<EvalRuleScoreSummary>,
+    #[serde(default)]
+    threshold_failures: Vec<String>,
+    #[serde(default)]
     results: Vec<EvalFixtureResult>,
+}
+
+#[derive(Debug, Clone)]
+struct EvalRunOptions {
+    baseline_report: Option<PathBuf>,
+    max_micro_f1_drop: Option<f32>,
+    min_micro_f1: Option<f32>,
+    min_macro_f1: Option<f32>,
+    min_rule_f1: Vec<String>,
+    max_rule_f1_drop: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct EvalThresholdOptions {
+    max_micro_f1_drop: Option<f32>,
+    min_micro_f1: Option<f32>,
+    min_macro_f1: Option<f32>,
+    min_rule_f1: Vec<EvalRuleThreshold>,
+    max_rule_f1_drop: Vec<EvalRuleThreshold>,
 }
 
 async fn eval_command(
     config: config::Config,
     fixtures_dir: PathBuf,
     output_path: Option<PathBuf>,
+    options: EvalRunOptions,
 ) -> Result<()> {
     let fixture_paths = collect_fixture_paths(&fixtures_dir)?;
     if fixture_paths.is_empty() {
@@ -1442,14 +1613,33 @@ async fn eval_command(
     let fixtures_failed = fixtures_total.saturating_sub(fixtures_passed);
     let rule_metrics = aggregate_rule_metrics(&results);
     let rule_summary = summarize_rule_metrics(&rule_metrics);
-    let report = EvalReport {
+    let baseline = match options.baseline_report.as_deref() {
+        Some(path) => Some(load_eval_report(path)?),
+        None => None,
+    };
+    let min_rule_thresholds = parse_rule_threshold_args(&options.min_rule_f1, "min-rule-f1")?;
+    let max_rule_drop_thresholds =
+        parse_rule_threshold_args(&options.max_rule_f1_drop, "max-rule-f1-drop")?;
+    let threshold_options = EvalThresholdOptions {
+        max_micro_f1_drop: options.max_micro_f1_drop,
+        min_micro_f1: options.min_micro_f1,
+        min_macro_f1: options.min_macro_f1,
+        min_rule_f1: min_rule_thresholds,
+        max_rule_f1_drop: max_rule_drop_thresholds,
+    };
+
+    let mut report = EvalReport {
         fixtures_total,
         fixtures_passed,
         fixtures_failed,
         rule_metrics,
         rule_summary,
+        threshold_failures: Vec::new(),
         results,
     };
+    let threshold_failures =
+        evaluate_eval_thresholds(&report, baseline.as_ref(), &threshold_options);
+    report.threshold_failures = threshold_failures.clone();
 
     println!(
         "Eval summary: {}/{} fixture(s) passed",
@@ -1512,17 +1702,30 @@ async fn eval_command(
             );
         }
     }
+    for failure in &threshold_failures {
+        println!("Threshold failure: {}", failure);
+    }
 
     if let Some(path) = output_path {
         let serialized = serde_json::to_string_pretty(&report)?;
         tokio::fs::write(path, serialized).await?;
     }
 
-    if report.fixtures_failed > 0 {
-        anyhow::bail!(
-            "Evaluation failed: {} fixture(s) did not meet expectations",
-            report.fixtures_failed
-        );
+    if report.fixtures_failed > 0 || !threshold_failures.is_empty() {
+        let mut failure_parts = Vec::new();
+        if report.fixtures_failed > 0 {
+            failure_parts.push(format!(
+                "{} fixture(s) did not meet expectations",
+                report.fixtures_failed
+            ));
+        }
+        if !threshold_failures.is_empty() {
+            failure_parts.push(format!(
+                "{} threshold check(s) failed",
+                threshold_failures.len()
+            ));
+        }
+        anyhow::bail!("Evaluation failed: {}", failure_parts.join("; "));
     }
 
     Ok(())
@@ -1578,6 +1781,146 @@ fn load_eval_fixture(path: &Path) -> Result<EvalFixture> {
             Err(_) => Ok(serde_json::from_str(&content)?),
         },
     }
+}
+
+fn load_eval_report(path: &Path) -> Result<EvalReport> {
+    let content = std::fs::read_to_string(path)?;
+    let report: EvalReport = serde_json::from_str(&content)?;
+    Ok(report)
+}
+
+#[derive(Debug, Clone)]
+struct EvalRuleThreshold {
+    rule_id: String,
+    value: f32,
+}
+
+fn parse_rule_threshold_args(values: &[String], label: &str) -> Result<Vec<EvalRuleThreshold>> {
+    let mut parsed = Vec::new();
+    for raw in values {
+        let Some((rule_id, value)) = raw.split_once('=') else {
+            anyhow::bail!("Invalid {} entry '{}': expected rule_id=value", label, raw);
+        };
+        let rule_id = rule_id.trim().to_ascii_lowercase();
+        if rule_id.is_empty() {
+            anyhow::bail!("Invalid {} entry '{}': empty rule id", label, raw);
+        }
+        let value: f32 = value
+            .trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid {} entry '{}': invalid float", label, raw))?;
+        if !(0.0..=1.0).contains(&value) {
+            anyhow::bail!(
+                "Invalid {} entry '{}': value must be between 0.0 and 1.0",
+                label,
+                raw
+            );
+        }
+        parsed.push(EvalRuleThreshold { rule_id, value });
+    }
+    Ok(parsed)
+}
+
+fn evaluate_eval_thresholds(
+    current: &EvalReport,
+    baseline: Option<&EvalReport>,
+    options: &EvalThresholdOptions,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    let current_micro_f1 = current
+        .rule_summary
+        .map(|summary| summary.micro_f1)
+        .unwrap_or(0.0);
+    let current_macro_f1 = current
+        .rule_summary
+        .map(|summary| summary.macro_f1)
+        .unwrap_or(0.0);
+
+    if let Some(threshold) = options.min_micro_f1 {
+        let threshold = threshold.clamp(0.0, 1.0);
+        if current_micro_f1 < threshold {
+            failures.push(format!(
+                "micro-F1 {:.3} is below minimum {:.3}",
+                current_micro_f1, threshold
+            ));
+        }
+    }
+
+    if let Some(threshold) = options.min_macro_f1 {
+        let threshold = threshold.clamp(0.0, 1.0);
+        if current_macro_f1 < threshold {
+            failures.push(format!(
+                "macro-F1 {:.3} is below minimum {:.3}",
+                current_macro_f1, threshold
+            ));
+        }
+    }
+
+    let current_by_rule = build_rule_f1_map(&current.rule_metrics);
+    for threshold in &options.min_rule_f1 {
+        let current = current_by_rule
+            .get(&threshold.rule_id)
+            .copied()
+            .unwrap_or(0.0);
+        if current < threshold.value {
+            failures.push(format!(
+                "rule '{}' F1 {:.3} is below minimum {:.3}",
+                threshold.rule_id, current, threshold.value
+            ));
+        }
+    }
+
+    if options.max_micro_f1_drop.is_some() || !options.max_rule_f1_drop.is_empty() {
+        let Some(baseline) = baseline else {
+            failures.push(
+                "baseline report is required for drop-based thresholds (--baseline)".to_string(),
+            );
+            return failures;
+        };
+
+        let baseline_summary = baseline.rule_summary.unwrap_or_default();
+        if let Some(max_drop) = options.max_micro_f1_drop {
+            let max_drop = max_drop.clamp(0.0, 1.0);
+            let drop = (baseline_summary.micro_f1 - current_micro_f1).max(0.0);
+            if drop > max_drop {
+                failures.push(format!(
+                    "micro-F1 drop {:.3} exceeded max {:.3} (baseline {:.3} -> current {:.3})",
+                    drop, max_drop, baseline_summary.micro_f1, current_micro_f1
+                ));
+            }
+        }
+
+        if !options.max_rule_f1_drop.is_empty() {
+            let baseline_by_rule = build_rule_f1_map(&baseline.rule_metrics);
+            for threshold in &options.max_rule_f1_drop {
+                let baseline_f1 = baseline_by_rule
+                    .get(&threshold.rule_id)
+                    .copied()
+                    .unwrap_or(0.0);
+                let current_f1 = current_by_rule
+                    .get(&threshold.rule_id)
+                    .copied()
+                    .unwrap_or(0.0);
+                let drop = (baseline_f1 - current_f1).max(0.0);
+                if drop > threshold.value {
+                    failures.push(format!(
+                        "rule '{}' F1 drop {:.3} exceeded max {:.3} (baseline {:.3} -> current {:.3})",
+                        threshold.rule_id, drop, threshold.value, baseline_f1, current_f1
+                    ));
+                }
+            }
+        }
+    }
+
+    failures
+}
+
+fn build_rule_f1_map(metrics: &[EvalRuleMetrics]) -> HashMap<String, f32> {
+    let mut by_rule = HashMap::new();
+    for metric in metrics {
+        by_rule.insert(metric.rule_id.to_ascii_lowercase(), metric.f1);
+    }
+    by_rule
 }
 
 async fn run_eval_fixture(
@@ -2039,8 +2382,9 @@ async fn review_diff_content_with_repo(
     format: OutputFormat,
     repo_path: &Path,
 ) -> Result<()> {
+    let rule_priority = config.rule_priority.clone();
     let comments = review_diff_content_raw(diff_content, config, repo_path).await?;
-    output_comments(&comments, None, format).await
+    output_comments(&comments, None, format, &rule_priority).await
 }
 
 async fn review_diff_content_raw(
@@ -2311,11 +2655,12 @@ async fn output_comments(
     comments: &[core::Comment],
     output_path: Option<PathBuf>,
     format: OutputFormat,
+    rule_priority: &[String],
 ) -> Result<()> {
     let output = match format {
         OutputFormat::Json => serde_json::to_string_pretty(comments)?,
         OutputFormat::Patch => format_as_patch(comments),
-        OutputFormat::Markdown => format_as_markdown(comments),
+        OutputFormat::Markdown => format_as_markdown(comments, rule_priority),
     };
 
     if let Some(path) = output_path {
@@ -2347,7 +2692,7 @@ fn format_as_patch(comments: &[core::Comment]) -> String {
     output
 }
 
-fn format_as_markdown(comments: &[core::Comment]) -> String {
+fn format_as_markdown(comments: &[core::Comment], rule_priority: &[String]) -> String {
     let mut output = String::new();
 
     // Generate summary
@@ -2424,7 +2769,7 @@ fn format_as_markdown(comments: &[core::Comment]) -> String {
     }
     output.push('\n');
 
-    let rule_hits = summarize_rule_hits(comments, 12);
+    let rule_hits = summarize_rule_hits(comments, 12, rule_priority);
     if !rule_hits.is_empty() {
         output.push_str("### Issues by Rule\n\n");
         output.push_str("| Rule | Count | Error | Warning | Info | Suggestion |\n");
@@ -2780,6 +3125,7 @@ async fn smart_review_command(
         &summary,
         pr_summary.as_ref(),
         &walkthrough,
+        &config.rule_priority,
     );
 
     if let Some(path) = output_path {
@@ -3031,6 +3377,7 @@ fn format_smart_review_output(
     summary: &core::comment::ReviewSummary,
     pr_summary: Option<&core::pr_summary::PRSummary>,
     walkthrough: &str,
+    rule_priority: &[String],
 ) -> String {
     let mut output = String::new();
 
@@ -3105,7 +3452,7 @@ fn format_smart_review_output(
     }
     output.push('\n');
 
-    let rule_hits = summarize_rule_hits(comments, 12);
+    let rule_hits = summarize_rule_hits(comments, 12, rule_priority);
     if !rule_hits.is_empty() {
         output.push_str("#### By Rule\n\n");
         output.push_str("| Rule | Count | Error | Warning | Info | Suggestion |\n");
@@ -4893,10 +5240,153 @@ TAGS: auth, security
         );
         c3.rule_id = Some("rule.beta".to_string());
 
-        let hits = summarize_rule_hits(&[c1, c2, c3], 8);
+        let hits = summarize_rule_hits(&[c1, c2, c3], 8, &[]);
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].0, "rule.alpha");
         assert_eq!(hits[0].1.total, 2);
         assert_eq!(hits[1].0, "rule.beta");
+    }
+
+    #[test]
+    fn summarize_rule_hits_respects_priority_order() {
+        let mut c1 = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+        c1.rule_id = Some("rule.alpha".to_string());
+        let mut c2 = build_comment(
+            "c2",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+        c2.rule_id = Some("rule.alpha".to_string());
+        let mut c3 = build_comment(
+            "c3",
+            core::comment::Category::Security,
+            core::comment::Severity::Error,
+            0.9,
+        );
+        c3.rule_id = Some("rule.beta".to_string());
+
+        let hits = summarize_rule_hits(
+            &[c1, c2, c3],
+            8,
+            &["rule.beta".to_string(), "rule.alpha".to_string()],
+        );
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].0, "rule.beta");
+    }
+
+    #[test]
+    fn top_findings_summary_groups_by_file() {
+        let mut c1 = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.9,
+        );
+        c1.file_path = PathBuf::from("src/a.rs");
+        c1.line_number = 11;
+        c1.rule_id = Some("rule.alpha".to_string());
+
+        let mut c2 = build_comment(
+            "c2",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+        c2.file_path = PathBuf::from("src/a.rs");
+        c2.line_number = 20;
+
+        let mut c3 = build_comment(
+            "c3",
+            core::comment::Category::Security,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+        c3.file_path = PathBuf::from("src/b.rs");
+        c3.line_number = 5;
+
+        let text = format_top_findings_by_file(&[c1, c2, c3], 5, 2);
+        assert!(text.contains("`src/a.rs` (2 issue(s))"));
+        assert!(text.contains("`L11` [Error rule:rule.alpha]"));
+        assert!(text.contains("`src/b.rs` (1 issue(s))"));
+    }
+
+    #[test]
+    fn eval_thresholds_detect_micro_f1_drop() {
+        let current = EvalReport {
+            fixtures_total: 0,
+            fixtures_passed: 0,
+            fixtures_failed: 0,
+            rule_metrics: vec![EvalRuleMetrics {
+                rule_id: "rule.alpha".to_string(),
+                expected: 1,
+                predicted: 1,
+                true_positives: 0,
+                false_positives: 1,
+                false_negatives: 1,
+                precision: 0.0,
+                recall: 0.0,
+                f1: 0.0,
+            }],
+            rule_summary: Some(EvalRuleScoreSummary {
+                micro_precision: 0.0,
+                micro_recall: 0.0,
+                micro_f1: 0.0,
+                macro_precision: 0.0,
+                macro_recall: 0.0,
+                macro_f1: 0.0,
+            }),
+            threshold_failures: Vec::new(),
+            results: Vec::new(),
+        };
+        let baseline = EvalReport {
+            fixtures_total: 0,
+            fixtures_passed: 0,
+            fixtures_failed: 0,
+            rule_metrics: vec![EvalRuleMetrics {
+                rule_id: "rule.alpha".to_string(),
+                expected: 1,
+                predicted: 1,
+                true_positives: 1,
+                false_positives: 0,
+                false_negatives: 0,
+                precision: 1.0,
+                recall: 1.0,
+                f1: 1.0,
+            }],
+            rule_summary: Some(EvalRuleScoreSummary {
+                micro_precision: 1.0,
+                micro_recall: 1.0,
+                micro_f1: 1.0,
+                macro_precision: 1.0,
+                macro_recall: 1.0,
+                macro_f1: 1.0,
+            }),
+            threshold_failures: Vec::new(),
+            results: Vec::new(),
+        };
+        let options = EvalThresholdOptions {
+            max_micro_f1_drop: Some(0.1),
+            min_micro_f1: None,
+            min_macro_f1: None,
+            min_rule_f1: Vec::new(),
+            max_rule_f1_drop: vec![EvalRuleThreshold {
+                rule_id: "rule.alpha".to_string(),
+                value: 0.1,
+            }],
+        };
+
+        let failures = evaluate_eval_thresholds(&current, Some(&baseline), &options);
+        assert!(failures
+            .iter()
+            .any(|failure| failure.contains("micro-F1 drop")));
+        assert!(failures
+            .iter()
+            .any(|failure| failure.contains("rule 'rule.alpha'")));
     }
 }

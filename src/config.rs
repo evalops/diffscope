@@ -104,6 +104,9 @@ pub struct Config {
 
     #[serde(default = "default_max_active_rules")]
     pub max_active_rules: usize,
+
+    #[serde(default)]
+    pub rule_priority: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -210,6 +213,7 @@ impl Default for Config {
             pattern_repositories: Vec::new(),
             rules_files: Vec::new(),
             max_active_rules: default_max_active_rules(),
+            rule_priority: Vec::new(),
         }
     }
 }
@@ -420,6 +424,17 @@ impl Config {
         if self.max_active_rules == 0 {
             self.max_active_rules = default_max_active_rules();
         }
+        self.rule_priority = self
+            .rule_priority
+            .iter()
+            .map(|rule| rule.trim().to_ascii_lowercase())
+            .filter(|rule| !rule.is_empty())
+            .fold(Vec::new(), |mut acc, rule| {
+                if !acc.contains(&rule) {
+                    acc.push(rule);
+                }
+                acc
+            });
     }
 
     pub fn get_path_config(&self, file_path: &Path) -> Option<&PathConfig> {

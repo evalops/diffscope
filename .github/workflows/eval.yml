@@ -1,0 +1,80 @@
+name: Eval Quality
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'eval/**'
+      - '.github/workflows/eval.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  eval:
+    if: ${{ secrets.OPENAI_API_KEY != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build current branch binary
+        run: cargo build --release
+
+      - name: Build baseline report from origin/main
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          git fetch origin main --depth=1
+          git worktree add /tmp/diffscope-main origin/main
+          cd /tmp/diffscope-main
+          cargo build --release
+          ./target/release/diffscope eval \
+            --model gpt-4o-mini \
+            --temperature 0 \
+            --fixtures eval/fixtures \
+            --output /tmp/eval-baseline.json
+
+      - name: Run eval thresholds on current branch
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          ./target/release/diffscope eval \
+            --model gpt-4o-mini \
+            --temperature 0 \
+            --fixtures eval/fixtures \
+            --output eval-current.json \
+            --baseline /tmp/eval-baseline.json \
+            --max-micro-f1-drop 0.20 \
+            --min-micro-f1 0.20 \
+            --min-rule-f1 sec.shell.injection=0.10 \
+            --min-rule-f1 reliability.unwrap_panic=0.10 \
+            --max-rule-f1-drop sec.shell.injection=0.25 \
+            --max-rule-f1-drop reliability.unwrap_panic=0.25
+
+      - name: Upload eval reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-reports
+          path: |
+            eval-current.json
+            /tmp/eval-baseline.json
+
+  eval-skipped:
+    if: ${{ secrets.OPENAI_API_KEY == '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip message
+        run: echo "Skipping eval workflow because OPENAI_API_KEY secret is not configured."
