@@ -829,4 +829,50 @@ mod tests {
         assert!(t.min_precision > 0.0);
         assert!(t.max_false_positive_rate > 0.0);
     }
+
+    #[test]
+    fn test_fixture_result_all_zeros() {
+        let result = FixtureResult::compute("zero", 0, 0, 0, 0, 0);
+        // No TPs, no FPs, no FNs — precision and recall default to 1.0
+        assert!((result.precision - 1.0).abs() < f32::EPSILON);
+        assert!((result.recall - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_fixture_result_perfect_score() {
+        let result = FixtureResult::compute("perfect", 5, 0, 5, 0, 0);
+        assert!((result.precision - 1.0).abs() < f32::EPSILON);
+        assert!((result.recall - 1.0).abs() < f32::EPSILON);
+        assert!((result.f1 - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_fixture_result_no_true_positives() {
+        let result = FixtureResult::compute("bad", 5, 0, 0, 0, 5);
+        assert!((result.precision).abs() < f32::EPSILON);
+        assert!((result.recall).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_aggregate_metrics_empty() {
+        let agg = AggregateMetrics::compute(&[], None);
+        assert_eq!(agg.fixture_count, 0);
+    }
+
+    #[test]
+    fn test_aggregate_metrics_single_fixture() {
+        let result = FixtureResult::compute("single", 10, 0, 8, 0, 2);
+        let agg = AggregateMetrics::compute(&[&result], None);
+        assert_eq!(agg.fixture_count, 1);
+        assert!(agg.micro_precision > 0.0);
+        assert!(agg.micro_recall > 0.0);
+    }
+
+    #[test]
+    fn test_empty_suite_evaluation() {
+        let suite = BenchmarkSuite::new("empty", "No fixtures");
+        assert_eq!(suite.fixture_count(), 0);
+        let by_cat = suite.fixtures_by_category();
+        assert!(by_cat.is_empty());
+    }
 }

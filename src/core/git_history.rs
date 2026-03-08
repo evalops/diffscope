@@ -575,4 +575,42 @@ Date:   Tue Jan 2 12:00:00 2024 +0000
         assert!(score <= 1.0);
         assert!(score >= 0.0);
     }
+
+    #[test]
+    fn test_risk_score_zero_commits() {
+        let info = FileChurnInfo {
+            file_path: PathBuf::from("new.rs"),
+            commit_count: 0,
+            bug_fix_count: 0,
+            distinct_authors: 0,
+            last_modified: None,
+            lines_added_total: 0,
+            lines_removed_total: 0,
+            age_days: None,
+        };
+        // Zero commits => no risk factors, score should be 0
+        assert!(info.risk_score() < 0.01);
+    }
+
+    #[test]
+    fn test_empty_log_parsing() {
+        let entries = GitHistoryAnalyzer::parse_git_log_numstat("");
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_malformed_log_lines() {
+        let entries = GitHistoryAnalyzer::parse_git_log_numstat("garbage data\nnot a real log\n\n");
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_bug_fix_detection() {
+        assert!(is_bug_fix_commit("Fix null pointer crash"));
+        assert!(is_bug_fix_commit("bugfix: handle edge case"));
+        assert!(is_bug_fix_commit("Hotfix for production issue"));
+        assert!(is_bug_fix_commit("closes #123"));
+        assert!(!is_bug_fix_commit("Add new feature"));
+        assert!(!is_bug_fix_commit("Refactor module structure"));
+    }
 }

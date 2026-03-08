@@ -397,13 +397,18 @@ fn extract_code_blocks(content: &str, language: &str) -> Vec<(String, String, us
         }
     }
 
+    if lines.is_empty() {
+        return blocks;
+    }
+
     for (i, (name, start)) in matches.iter().enumerate() {
         let end = if i + 1 < matches.len() {
             matches[i + 1].1.saturating_sub(1)
         } else {
-            lines.len().saturating_sub(1)
+            lines.len() - 1
         };
-        let code = lines[*start..=end.min(lines.len() - 1)].join("\n");
+        let end = end.min(lines.len() - 1);
+        let code = lines[*start..=end].join("\n");
         blocks.push((name.clone(), code, start + 1, end + 1));
     }
 
@@ -648,5 +653,57 @@ mod tests {
         let removed = cache.remove(Path::new("test.rs"), "foo");
         assert!(removed.is_some());
         assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn test_summarize_empty_code() {
+        let summary = summarize_code_heuristic("empty_func", "", Path::new("test.rs"), (1, 1));
+        assert!(summary.summary.contains("empty_func"));
+    }
+
+    #[test]
+    fn test_extract_code_blocks_empty_content() {
+        let blocks = extract_code_blocks("", "rs");
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn test_extract_code_blocks_no_functions() {
+        let blocks = extract_code_blocks("let x = 1;\nlet y = 2;\n", "rs");
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn test_summarize_file_symbols_empty_content() {
+        let mut cache = SummaryCache::new();
+        let results = summarize_file_symbols(Path::new("empty.rs"), "", &mut cache);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_build_embedding_text_truncation() {
+        let long_code = "x".repeat(1000);
+        let embedding = build_embedding_text("long_func", "A function", &long_code);
+        assert!(embedding.len() <= 600); // summary + truncated code
+    }
+
+    #[test]
+    fn test_detect_symbol_kind_unknown_language() {
+        let kind = detect_symbol_kind("something()", "");
+        assert_eq!(kind, "Symbol");
+    }
+
+    #[test]
+    fn test_cache_remove_nonexistent() {
+        let mut cache = SummaryCache::new();
+        let removed = cache.remove(Path::new("nope.rs"), "missing");
+        assert!(removed.is_none());
+    }
+
+    #[test]
+    fn test_summarize_single_line_function() {
+        let code = "fn one_liner() -> bool { true }";
+        let summary = summarize_code_heuristic("one_liner", code, Path::new("test.rs"), (1, 1));
+        assert!(summary.summary.contains("one_liner"));
     }
 }

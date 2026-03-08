@@ -166,8 +166,8 @@ impl SymbolGraph {
         }
 
         // Add colocation edges
-        for symbol_names in graph.file_symbols.clone().values() {
-            let names: Vec<String> = symbol_names.iter().cloned().collect();
+        let file_symbols_snapshot: Vec<Vec<String>> = graph.file_symbols.values().map(|v| v.iter().cloned().collect()).collect();
+        for names in &file_symbols_snapshot {
             for i in 0..names.len() {
                 for j in (i + 1)..names.len() {
                     graph.add_edge(&names[i], &names[j], SymbolRelation::ColocatedWith);
@@ -796,5 +796,152 @@ impl Authenticator for AdminAuth {
         let bar_edges = &graph.lookup("Bar").unwrap()[0].edges;
         assert_eq!(bar_edges.len(), 1);
         assert_eq!(bar_edges[0].relation, SymbolRelation::Inherits); // inverse
+    }
+
+    #[test]
+    fn test_empty_graph_traversal() {
+        let graph = SymbolGraph::new();
+        let results = graph.related_symbols(&["nonexistent".to_string()], 2, 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_empty_seed_symbols() {
+        let mut graph = SymbolGraph::new();
+        graph.add_node(SymbolNode {
+            name: "Foo".to_string(),
+            file_path: PathBuf::from("a.rs"),
+            line_range: (1, 10),
+            kind: SymbolKind::Function,
+            edges: Vec::new(),
+        });
+        let results = graph.related_symbols(&[], 2, 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_nonexistent_seed_symbols() {
+        let mut graph = SymbolGraph::new();
+        graph.add_node(SymbolNode {
+            name: "Foo".to_string(),
+            file_path: PathBuf::from("a.rs"),
+            line_range: (1, 10),
+            kind: SymbolKind::Function,
+            edges: Vec::new(),
+        });
+        let results = graph.related_symbols(&["DoesNotExist".to_string()], 2, 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_duplicate_edges() {
+        let mut graph = SymbolGraph::new();
+        graph.add_node(SymbolNode {
+            name: "A".to_string(),
+            file_path: PathBuf::from("a.rs"),
+            line_range: (1, 10),
+            kind: SymbolKind::Function,
+            edges: Vec::new(),
+        });
+        graph.add_node(SymbolNode {
+            name: "B".to_string(),
+            file_path: PathBuf::from("a.rs"),
+            line_range: (11, 20),
+            kind: SymbolKind::Function,
+            edges: Vec::new(),
+        });
+        graph.add_edge("A", "B", SymbolRelation::Calls);
+        graph.add_edge("A", "B", SymbolRelation::Calls);
+        // Duplicate edges are added (no deduplication)
+        let a_edges = &graph.lookup("A").unwrap()[0].edges;
+        assert_eq!(a_edges.len(), 2);
+    }
+
+    #[test]
+    fn test_max_results_zero() {
+        let mut graph = SymbolGraph::new();
+        graph.add_node(SymbolNode {
+            name: "A".to_string(),
+            file_path: PathBuf::from("a.rs"),
+            line_range: (1, 10),
+            kind: SymbolKind::Function,
+            edges: Vec::new(),
+        });
+        graph.add_node(SymbolNode {
+            name: "B".to_string(),
+            file_path: PathBuf::from("a.rs"),
+            line_range: (11, 20),
+            kind: SymbolKind::Function,
+            edges: Vec::new(),
+        });
+        graph.add_edge("A", "B", SymbolRelation::Calls);
+        let results = graph.related_symbols(&["A".to_string()], 2, 0);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_cyclic_graph() {
+        let mut graph = SymbolGraph::new();
+        for name in &["A", "B", "C"] {
+            graph.add_node(SymbolNode {
+                name: name.to_string(),
+                file_path: PathBuf::from("cycle.rs"),
+                line_range: (1, 10),
+                kind: SymbolKind::Function,
+                edges: Vec::new(),
+            });
+        }
+        graph.add_edge("A", "B", SymbolRelation::Calls);
+        graph.add_edge("B", "C", SymbolRelation::Calls);
+        graph.add_edge("C", "A", SymbolRelation::Calls);
+
+        // BFS should not infinite-loop; visited set prevents revisiting
+        let results = graph.related_symbols(&["A".to_string()], 5, 10);
+        assert!(!results.is_empty());
+        // Should find B and C (but not A again since it's the seed)
+        let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"B"));
+        assert!(names.contains(&"C"));
+    }
+
+    #[test]
+    fn test_ranked_to_locations_simple() {
+        let mut graph = SymbolGraph::new();
+        graph.add_node(SymbolNode {
+            name: "target".to_string(),
+            file_path: PathBuf::from("t.rs"),
+            line_range: (5, 15),
+            kind: SymbolKind::Function,
+            edges: Vec::new(),
+        });
+        graph.add_node(SymbolNode {
+            name: "caller".to_string(),
+            file_path: PathBuf::from("c.rs"),
+            line_range: (1, 10),
+            kind: SymbolKind::Function,
+            edges: Vec::new(),
+        });
+        graph.add_edge("caller", "target", SymbolRelation::Calls);
+
+        let ranked = graph.related_symbols(&["caller".to_string()], 1, 10);
+        let locations = graph.ranked_to_locations(&ranked);
+        assert_eq!(locations.len(), 1);
+        assert_eq!(locations[0].file_path, PathBuf::from("t.rs"));
+    }
+
+    #[test]
+    fn test_add_edge_nonexistent_target() {
+        let mut graph = SymbolGraph::new();
+        graph.add_node(SymbolNode {
+            name: "A".to_string(),
+            file_path: PathBuf::from("a.rs"),
+            line_range: (1, 10),
+            kind: SymbolKind::Function,
+            edges: Vec::new(),
+        });
+        // Edge to nonexistent node should silently do nothing
+        graph.add_edge("A", "MISSING", SymbolRelation::Calls);
+        let a_edges = &graph.lookup("A").unwrap()[0].edges;
+        assert!(a_edges.is_empty());
     }
 }

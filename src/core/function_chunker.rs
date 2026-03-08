@@ -62,7 +62,7 @@ pub fn chunk_diff_by_functions(diff: &UnifiedDiff, file_content: Option<&str>) -
                     function_name: "<top-level>".to_string(),
                     file_path: diff.file_path.clone(),
                     start_line: hunk.new_start,
-                    end_line: hunk.new_start + hunk.new_lines,
+                    end_line: hunk.new_start + hunk.new_lines.saturating_sub(1),
                     language: language.clone(),
                     changes: hunk.changes.clone(),
                     added_lines: added,
@@ -201,7 +201,7 @@ fn detect_boundaries_from_hunks(hunks: &[DiffHunk], language: &str) -> Vec<Funct
                 boundaries.push(FunctionBoundary {
                     name: name.as_str().to_string(),
                     start_line: hunk.new_start,
-                    end_line: hunk.new_start + hunk.new_lines,
+                    end_line: hunk.new_start + hunk.new_lines.saturating_sub(1),
                 });
             }
         }
@@ -312,7 +312,7 @@ fn update_chunk_counts(chunk: &mut FunctionChunk, change_type: &ChangeType) {
 }
 
 static RUST_FN_BOUNDARY: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)").unwrap()
+    Regex::new(r#"^\s*(?:pub(?:\(crate\))?\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+(?:"[^"]*"\s+)?)?fn\s+([A-Za-z_]\w*)"#).unwrap()
 });
 static PY_FN_BOUNDARY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)").unwrap()
@@ -641,5 +641,121 @@ pub fn beta() {
 
         let chunks = chunk_diff_by_functions(&diff, Some("some text\n"));
         assert_eq!(chunks[0].function_name, "<top-level>");
+    }
+
+    #[test]
+    fn test_empty_diff_no_hunks() {
+        let diff = UnifiedDiff {
+            file_path: PathBuf::from("empty.rs"),
+            old_content: None,
+            new_content: None,
+            hunks: vec![],
+            is_binary: false,
+            is_deleted: false,
+            is_new: false,
+        };
+        let chunks = chunk_diff_by_functions(&diff, None);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_change_density_single_line() {
+        let chunk = FunctionChunk {
+            function_name: "f".to_string(),
+            file_path: PathBuf::from("t.rs"),
+            start_line: 5,
+            end_line: 5,
+            language: "rs".to_string(),
+            changes: vec![],
+            added_lines: 1,
+            removed_lines: 0,
+            context_lines: 0,
+        };
+        // span = 1, total_changes = 1
+        assert!((chunk.change_density() - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_rust_const_fn_detection() {
+        let content = "pub const fn max_value() -> u32 {\n    u32::MAX\n}\n";
+        let boundaries = detect_function_boundaries(content, "rs");
+        assert_eq!(boundaries.len(), 1);
+        assert_eq!(boundaries[0].name, "max_value");
+    }
+
+    #[test]
+    fn test_rust_unsafe_fn_detection() {
+        let content = "pub unsafe fn dangerous() {\n    // ptr stuff\n}\n";
+        let boundaries = detect_function_boundaries(content, "rs");
+        assert_eq!(boundaries.len(), 1);
+        assert_eq!(boundaries[0].name, "dangerous");
+    }
+
+    #[test]
+    fn test_rust_async_fn_detection() {
+        let content = "pub async fn fetch_data() -> Result<()> {\n    Ok(())\n}\n";
+        let boundaries = detect_function_boundaries(content, "rs");
+        assert_eq!(boundaries.len(), 1);
+        assert_eq!(boundaries[0].name, "fetch_data");
+    }
+
+    #[test]
+    fn test_rust_pub_crate_fn_detection() {
+        let content = "pub(crate) fn internal_helper() {\n    // ...\n}\n";
+        let boundaries = detect_function_boundaries(content, "rs");
+        assert_eq!(boundaries.len(), 1);
+        assert_eq!(boundaries[0].name, "internal_helper");
+    }
+
+    #[test]
+    fn test_chunk_diff_end_line_correctness() {
+        // A hunk starting at line 10 with 3 lines should end at line 12, not 13
+        let diff = UnifiedDiff {
+            file_path: PathBuf::from("test.txt"),
+            old_content: None,
+            new_content: None,
+            hunks: vec![DiffHunk {
+                old_start: 10,
+                old_lines: 3,
+                new_start: 10,
+                new_lines: 3,
+                context: "@@ -10,3 +10,3 @@".to_string(),
+                changes: vec![
+                    make_diff_line(10, ChangeType::Context, "line 10"),
+                    make_diff_line(11, ChangeType::Added, "line 11"),
+                    make_diff_line(12, ChangeType::Context, "line 12"),
+                ],
+            }],
+            is_binary: false,
+            is_deleted: false,
+            is_new: false,
+        };
+        let chunks = chunk_diff_by_functions(&diff, None);
+        assert_eq!(chunks[0].start_line, 10);
+        assert_eq!(chunks[0].end_line, 12); // not 13
+    }
+
+    #[test]
+    fn test_multiple_functions_in_diff() {
+        let content = r#"fn first() {
+    println!("a");
+}
+
+fn second() {
+    println!("b");
+}
+"#;
+        let boundaries = detect_function_boundaries(content, "rs");
+        assert_eq!(boundaries.len(), 2);
+        assert_eq!(boundaries[0].name, "first");
+        assert_eq!(boundaries[1].name, "second");
+    }
+
+    #[test]
+    fn test_go_method_detection() {
+        let content = "func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {\n}\n";
+        let boundaries = detect_function_boundaries(content, "go");
+        assert_eq!(boundaries.len(), 1);
+        assert_eq!(boundaries[0].name, "handleRequest");
     }
 }

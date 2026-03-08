@@ -495,4 +495,74 @@ mod tests {
         let guidance = analyzer.generate_review_guidance("rs");
         assert!(guidance.is_empty());
     }
+
+    #[test]
+    fn test_single_comment_no_recurring_patterns() {
+        let mut analyzer = PRHistoryAnalyzer::new();
+        analyzer.ingest_comments(vec![PRReviewComment {
+            body: "Fix this bug".to_string(),
+            author: "alice".to_string(),
+            file_path: Some("src/main.rs".to_string()),
+            created_at: "2024-01-01".to_string(),
+            state: None,
+        }]);
+        // Single comment shouldn't create recurring patterns
+        let patterns = analyzer.extract_patterns();
+        for p in patterns {
+            assert!(!p.is_recurring(), "Single comment shouldn't be recurring");
+        }
+    }
+
+    #[test]
+    fn test_relevance_for_unknown_extension() {
+        let pattern = PRCommentPattern {
+            pattern_text: "test".to_string(),
+            frequency: 5,
+            authors: vec!["alice".to_string()],
+            categories: vec!["bug".to_string()],
+            file_extensions: vec!["rs".to_string()],
+            avg_sentiment: 0.0,
+        };
+        // Non-matching extension should get low relevance
+        assert!(pattern.relevance_for_file("py") < 0.5);
+        // Matching extension should get high relevance
+        assert!(pattern.relevance_for_file("rs") > 0.5);
+    }
+
+    #[test]
+    fn test_team_consensus_requires_multiple_authors() {
+        let single_author = PRCommentPattern {
+            pattern_text: "test".to_string(),
+            frequency: 5,
+            authors: vec!["alice".to_string()],
+            categories: vec![],
+            file_extensions: vec![],
+            avg_sentiment: 0.0,
+        };
+        assert!(!single_author.is_team_consensus());
+
+        let multi_author = PRCommentPattern {
+            pattern_text: "test".to_string(),
+            frequency: 5,
+            authors: vec!["alice".to_string(), "bob".to_string()],
+            categories: vec![],
+            file_extensions: vec![],
+            avg_sentiment: 0.0,
+        };
+        assert!(multi_author.is_team_consensus());
+    }
+
+    #[test]
+    fn test_empty_body_comments() {
+        let mut analyzer = PRHistoryAnalyzer::new();
+        analyzer.ingest_comments(vec![PRReviewComment {
+            body: "".to_string(),
+            author: "alice".to_string(),
+            file_path: None,
+            created_at: "2024-01-01".to_string(),
+            state: None,
+        }]);
+        // Should handle empty bodies gracefully
+        assert_eq!(analyzer.comment_count(), 1);
+    }
 }

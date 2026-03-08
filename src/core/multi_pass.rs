@@ -312,9 +312,6 @@ fn content_similarity(a: &str, b: &str) -> f32 {
     let words_a: std::collections::HashSet<&str> = a.split_whitespace().collect();
     let words_b: std::collections::HashSet<&str> = b.split_whitespace().collect();
 
-    if words_a.is_empty() && words_b.is_empty() {
-        return 1.0;
-    }
     if words_a.is_empty() || words_b.is_empty() {
         return 0.0;
     }
@@ -322,11 +319,7 @@ fn content_similarity(a: &str, b: &str) -> f32 {
     let intersection = words_a.intersection(&words_b).count();
     let union = words_a.union(&words_b).count();
 
-    if union == 0 {
-        0.0
-    } else {
-        intersection as f32 / union as f32
-    }
+    intersection as f32 / union as f32
 }
 
 #[cfg(test)]
@@ -535,7 +528,7 @@ mod tests {
     fn test_content_similarity() {
         assert!(content_similarity("the cat sat on mat", "the cat sat on mat") > 0.99);
         assert!(content_similarity("the cat sat", "completely different words") < 0.2);
-        assert!(content_similarity("", "") > 0.99);
+        assert!(content_similarity("", "") < 0.01);
         assert!(content_similarity("hello", "") < 0.01);
     }
 
@@ -578,6 +571,96 @@ mod tests {
         };
         assert!(h.is_high_risk(0.5));
         assert!(!h.is_high_risk(0.7));
+    }
+
+    #[test]
+    fn test_content_similarity_single_word() {
+        assert!(content_similarity("hello", "hello") > 0.99);
+        assert!(content_similarity("hello", "world") < 0.01);
+    }
+
+    #[test]
+    fn test_detect_hotspots_empty_diffs() {
+        let review = MultiPassReview::with_defaults();
+        let hotspots = review.detect_hotspots(&[]);
+        assert!(hotspots.is_empty());
+    }
+
+    fn make_removed_line(line: usize, content: &str) -> DiffLine {
+        DiffLine {
+            old_line_no: Some(line),
+            new_line_no: None,
+            change_type: ChangeType::Removed,
+            content: content.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_select_for_deep_analysis_max_zero() {
+        let review = MultiPassReview::new(MultiPassConfig {
+            max_deep_files: 0,
+            hotspot_threshold: 0.0,
+            ..MultiPassConfig::default()
+        });
+        let hotspots = vec![HotspotResult {
+            file_path: PathBuf::from("test.rs"),
+            line_range: (1, 10),
+            risk_score: 0.9,
+            reasons: vec![],
+            suggested_focus: vec![],
+        }];
+        let selected = review.select_for_deep_analysis(&hotspots);
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn test_merge_empty_comments() {
+        let review = MultiPassReview::with_defaults();
+        let existing = vec![make_comment("test.rs", 1, "")];
+        let deep = vec![make_comment("test.rs", 1, "")];
+        // Empty comments have similarity 0.0, so both should be kept
+        let merged = review.merge_results(existing, deep);
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn test_hotspot_threshold_boundary() {
+        let review = MultiPassReview::new(MultiPassConfig {
+            hotspot_threshold: 0.5,
+            max_deep_files: 10,
+            ..MultiPassConfig::default()
+        });
+        let hotspots = vec![
+            HotspotResult {
+                file_path: PathBuf::from("exact.rs"),
+                line_range: (1, 10),
+                risk_score: 0.5,
+                reasons: vec![],
+                suggested_focus: vec![],
+            },
+            HotspotResult {
+                file_path: PathBuf::from("below.rs"),
+                line_range: (1, 10),
+                risk_score: 0.49,
+                reasons: vec![],
+                suggested_focus: vec![],
+            },
+        ];
+        let selected = review.select_for_deep_analysis(&hotspots);
+        // 0.5 >= 0.5 should pass, 0.49 < 0.5 should not
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].file_path, PathBuf::from("exact.rs"));
+    }
+
+    #[test]
+    fn test_file_deletion_risk() {
+        let review = MultiPassReview::with_defaults();
+        let diffs = vec![make_diff(
+            "src/deleted.rs",
+            (0..15).map(|i| make_removed_line(i + 1, "deleted line")).collect(),
+        )];
+        let hotspots = review.detect_hotspots(&diffs);
+        assert!(!hotspots.is_empty());
     }
 
     #[test]

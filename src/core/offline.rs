@@ -567,4 +567,60 @@ mod tests {
         let models = OfflineModelManager::parse_model_list("{}").unwrap();
         assert!(models.is_empty());
     }
+
+    #[test]
+    fn test_optimize_prompt_truncation() {
+        let long_system = "system ".repeat(1000);
+        let long_user = "user ".repeat(1000);
+        let (sys, usr) = optimize_prompt_for_local(&long_system, &long_user, 1000);
+        // Both should be truncated to fit within context_window
+        assert!(sys.len() < long_system.len());
+        assert!(usr.len() < long_user.len());
+    }
+
+    #[test]
+    fn test_optimize_prompt_zero_budget() {
+        // context_window < 500 makes budget = 0, but shouldn't panic
+        let (sys, _usr) = optimize_prompt_for_local("system prompt", "user prompt", 100);
+        // With zero budget, text is truncated to 0 chars but still returns a string
+        assert!(sys.contains("Truncated") || sys.is_empty());
+    }
+
+    #[test]
+    fn test_ram_estimation_quantization_reduction() {
+        let base = OfflineConfig {
+            model_name: "llama3:7b".to_string(),
+            quantization: None,
+            ..Default::default()
+        };
+        let quantized = OfflineConfig {
+            model_name: "llama3:7b".to_string(),
+            quantization: Some("q4_0".to_string()),
+            ..Default::default()
+        };
+        // Quantized should use less RAM
+        assert!(quantized.estimated_ram_mb() < base.estimated_ram_mb());
+    }
+
+    #[test]
+    fn test_readiness_check() {
+        let config = OfflineConfig::default();
+        let manager = OfflineModelManager::new("http://localhost:11434");
+        let readiness = check_readiness(&config, &manager);
+        assert!(!readiness.model_name.is_empty());
+    }
+
+    #[test]
+    fn test_build_request_payload_with_system() {
+        let config = OfflineConfig::default();
+        let manager = OfflineModelManager::new("http://localhost:11434");
+        let payload = manager.build_request_payload(
+            &config.model_name,
+            "user prompt",
+            Some("system prompt"),
+            &config,
+        );
+        assert!(payload.to_string().contains(&config.model_name));
+        assert!(payload.to_string().contains("system"));
+    }
 }

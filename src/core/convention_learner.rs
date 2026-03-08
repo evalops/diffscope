@@ -36,7 +36,7 @@ impl ConventionPattern {
         let z = 1.96; // 95% confidence
         let denominator = 1.0 + z * z / n;
         let center = p + z * z / (2.0 * n);
-        let spread = z * ((p * (1.0 - p) + z * z / (4.0 * n)) / n).sqrt();
+        let spread = z * ((p * (1.0 - p) / n) + (z * z / (4.0 * n * n))).sqrt();
         ((center - spread) / denominator).clamp(0.0, 1.0)
     }
 
@@ -259,9 +259,10 @@ impl ConventionStore {
 /// Normalize comment text into a pattern key (lowercased, stopwords removed).
 fn normalize_pattern(text: &str) -> String {
     let lower = text.to_lowercase();
-    let tokens: Vec<&str> = lower
-        .split_whitespace()
+    let tokens: Vec<String> = lower
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
         .filter(|w| w.len() > 2 && !STOPWORDS.contains(w))
+        .map(|w| w.to_string())
         .collect();
     tokens.join(" ")
 }
@@ -524,5 +525,110 @@ mod tests {
         }
         let suppressed = store.suppression_patterns();
         assert_eq!(suppressed.len(), 1);
+    }
+
+    #[test]
+    fn test_normalize_all_stopwords_returns_empty() {
+        let result = normalize_pattern("the and for are but not");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_normalize_short_words_filtered() {
+        let result = normalize_pattern("a b c do be");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_normalize_strips_punctuation() {
+        let a = normalize_pattern("Missing error-handling for API calls");
+        let b = normalize_pattern("Missing error handling for API calls");
+        // Hyphen should be treated as separator, matching split behavior of extract_tokens
+        assert!(a.contains("missing"));
+        assert!(a.contains("error"));
+        assert!(a.contains("handling"));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_confidence_single_observation() {
+        let pattern = ConventionPattern {
+            pattern_text: "test".to_string(),
+            category: "Bug".to_string(),
+            accepted_count: 1,
+            rejected_count: 0,
+            file_patterns: Vec::new(),
+            first_seen: "2024-01-01".to_string(),
+            last_seen: "2024-01-01".to_string(),
+        };
+        // Single observation should return 0 confidence (not enough data)
+        assert_eq!(pattern.confidence(), 0.0);
+    }
+
+    #[test]
+    fn test_confidence_all_accepted() {
+        let pattern = ConventionPattern {
+            pattern_text: "test".to_string(),
+            category: "Bug".to_string(),
+            accepted_count: 10,
+            rejected_count: 0,
+            file_patterns: Vec::new(),
+            first_seen: "2024-01-01".to_string(),
+            last_seen: "2024-01-01".to_string(),
+        };
+        let conf = pattern.confidence();
+        assert!(conf > 0.5, "High acceptance should yield high confidence: {conf}");
+    }
+
+    #[test]
+    fn test_confidence_all_rejected() {
+        let pattern = ConventionPattern {
+            pattern_text: "test".to_string(),
+            category: "Bug".to_string(),
+            accepted_count: 0,
+            rejected_count: 10,
+            file_patterns: Vec::new(),
+            first_seen: "2024-01-01".to_string(),
+            last_seen: "2024-01-01".to_string(),
+        };
+        let conf = pattern.confidence();
+        assert!(conf < 0.1, "All rejected should yield low confidence: {conf}");
+    }
+
+    #[test]
+    fn test_score_comment_pattern_fallthrough() {
+        // Pattern exists, category matches, but neither suppress nor boost threshold met
+        let mut store = ConventionStore::new();
+        // 2 accepted, 1 rejected = 66% acceptance (below boost 75%, above suppress 25%)
+        store.record_feedback("borderline pattern", "Bug", true, None, "2024-01-01");
+        store.record_feedback("borderline pattern", "Bug", true, None, "2024-01-02");
+        store.record_feedback("borderline pattern", "Bug", false, None, "2024-01-03");
+
+        let score = store.score_comment("borderline pattern", "Bug");
+        // Should fall through to token-based scoring, not hit suppress/boost early returns
+        assert!(score.abs() <= 0.3);
+    }
+
+    #[test]
+    fn test_record_feedback_empty_comment() {
+        let mut store = ConventionStore::new();
+        store.record_feedback("", "Bug", true, None, "2024-01-01");
+        // Empty comment normalizes to empty key, should be rejected
+        assert!(store.patterns.is_empty());
+    }
+
+    #[test]
+    fn test_extract_tokens_consistency() {
+        // Verify extract_tokens and normalize_pattern produce compatible results
+        let text = "Missing error handling for API call";
+        let normalized = normalize_pattern(text);
+        let tokens = extract_tokens(text);
+        // Every token should appear in the normalized pattern
+        for token in &tokens {
+            assert!(
+                normalized.contains(token.as_str()),
+                "Token '{token}' not found in normalized '{normalized}'"
+            );
+        }
     }
 }

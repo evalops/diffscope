@@ -619,4 +619,59 @@ mod tests {
         assert_eq!(ctx.diffs.len(), 1);
         assert!(ctx.comments.is_empty());
     }
+
+    #[test]
+    fn test_empty_pipeline_no_stages() {
+        let pipeline = Pipeline::new();
+        let mut ctx = PipelineContext::new();
+        let result = pipeline.execute(&mut ctx);
+        assert!(result.is_ok());
+        assert!(ctx.stage_results.is_empty());
+    }
+
+    #[test]
+    fn test_pipeline_abort_stops_later_stages() {
+        let pipeline = PipelineBuilder::new()
+            .add(Box::new(FnStage::new(
+                "aborter",
+                StageType::Custom("test".to_string()),
+                |ctx| {
+                    ctx.abort("test abort");
+                    Ok(())
+                },
+            )))
+            .add(Box::new(TaggingStage))
+            .build();
+
+        let mut ctx = PipelineContext::new();
+        let result = pipeline.execute(&mut ctx);
+        assert!(result.is_ok());
+        assert!(ctx.aborted);
+        assert_eq!(ctx.abort_reason.as_deref(), Some("test abort"));
+        // Tagging stage should not have run
+        assert_eq!(ctx.stage_results.len(), 1);
+    }
+
+    #[test]
+    fn test_max_comments_truncates() {
+        let mut ctx = PipelineContext::new();
+        for i in 0..10 {
+            ctx.comments.push(make_comment("test.rs", i + 1, &format!("comment {i}"), 0.8));
+        }
+
+        let stage = MaxCommentsStage::new(5);
+        stage.execute(&mut ctx).unwrap();
+        assert_eq!(ctx.comments.len(), 5);
+    }
+
+    #[test]
+    fn test_confidence_filter_removes_low() {
+        let mut ctx = PipelineContext::new();
+        ctx.comments.push(make_comment("test.rs", 1, "low confidence", 0.3));
+        ctx.comments.push(make_comment("test.rs", 2, "high confidence", 0.9));
+
+        let stage = ConfidenceFilterStage::new(0.5);
+        stage.execute(&mut ctx).unwrap();
+        assert_eq!(ctx.comments.len(), 1);
+    }
 }
