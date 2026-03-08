@@ -186,6 +186,25 @@ fn path_matches(path: &str, pattern: &str) -> bool {
             .map(|pattern| pattern.matches(path))
             .unwrap_or(false)
     } else {
-        path.starts_with(pattern)
+        path == pattern
+            || path.starts_with(&format!("{}/", pattern.trim_end_matches('/')))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rules_path_matches_respects_component_boundary() {
+        // "src" should match "src/file.rs" (path starts with component "src")
+        assert!(path_matches("src/file.rs", "src"));
+        assert!(path_matches("src/file.rs", "src/"));
+
+        // "src" should NOT match "srcfoo/file.rs" (different component)
+        assert!(
+            !path_matches("srcfoo/file.rs", "src"),
+            "pattern 'src' should not match 'srcfoo/file.rs'"
+        );
     }
 }

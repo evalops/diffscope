@@ -517,8 +517,9 @@ impl Config {
                 false
             }
         } else {
-            // Direct path prefix matching
-            path.starts_with(pattern)
+            // Path prefix matching with component boundary check
+            path == pattern
+                || path.starts_with(&format!("{}/", pattern.trim_end_matches('/')))
         }
     }
 }
@@ -689,5 +690,31 @@ mod tests {
         config.normalize();
 
         assert_eq!(config.comment_types, vec!["logic", "style"]);
+    }
+
+    #[test]
+    fn path_matches_respects_component_boundary() {
+        let config = Config::default();
+
+        // Exact prefix with separator should match
+        assert!(config.path_matches("src/file.rs", "src/"));
+        assert!(config.path_matches("src/sub/file.rs", "src"));
+
+        // Glob patterns should still work
+        assert!(config.path_matches("src/file.rs", "src/*.rs"));
+
+        // Non-glob pattern must NOT match a different path component
+        // "src" should not match "srcfoo/file.rs" or "src-backup/file.rs"
+        assert!(
+            !config.path_matches("srcfoo/file.rs", "src"),
+            "pattern 'src' should not match 'srcfoo/file.rs' (different path component)"
+        );
+        assert!(
+            !config.path_matches("src-backup/file.rs", "src"),
+            "pattern 'src' should not match 'src-backup/file.rs'"
+        );
+
+        // Exact match should work
+        assert!(config.path_matches("src/file.rs", "src/file.rs"));
     }
 }

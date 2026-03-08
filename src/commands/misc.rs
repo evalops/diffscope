@@ -193,29 +193,12 @@ pub async fn feedback_command(
     }
 
     let mut store = review::load_feedback_store_from_path(&feedback_path);
-    let mut updated = 0usize;
 
-    if action == "accept" {
-        for comment in &comments {
-            if store.accept.insert(comment.id.clone()) {
-                updated += 1;
-            }
-            store.suppress.remove(&comment.id);
-            let key = review::classify_comment_type(comment).as_str().to_string();
-            let stats = store.by_comment_type.entry(key).or_default();
-            stats.accepted = stats.accepted.saturating_add(1);
-        }
+    let updated = if action == "accept" {
+        apply_feedback_accept(&mut store, &comments)
     } else {
-        for comment in &comments {
-            if store.suppress.insert(comment.id.clone()) {
-                updated += 1;
-            }
-            store.accept.remove(&comment.id);
-            let key = review::classify_comment_type(comment).as_str().to_string();
-            let stats = store.by_comment_type.entry(key).or_default();
-            stats.rejected = stats.rejected.saturating_add(1);
-        }
-    }
+        apply_feedback_reject(&mut store, &comments)
+    };
 
     review::save_feedback_store(&feedback_path, &store)?;
     println!(
@@ -226,6 +209,42 @@ pub async fn feedback_command(
     );
 
     Ok(())
+}
+
+fn apply_feedback_accept(
+    store: &mut review::FeedbackStore,
+    comments: &[core::Comment],
+) -> usize {
+    let mut updated = 0;
+    for comment in comments {
+        let is_new = store.accept.insert(comment.id.clone());
+        if is_new {
+            updated += 1;
+            let key = review::classify_comment_type(comment).as_str().to_string();
+            let stats = store.by_comment_type.entry(key).or_default();
+            stats.accepted = stats.accepted.saturating_add(1);
+        }
+        store.suppress.remove(&comment.id);
+    }
+    updated
+}
+
+fn apply_feedback_reject(
+    store: &mut review::FeedbackStore,
+    comments: &[core::Comment],
+) -> usize {
+    let mut updated = 0;
+    for comment in comments {
+        let is_new = store.suppress.insert(comment.id.clone());
+        if is_new {
+            updated += 1;
+            let key = review::classify_comment_type(comment).as_str().to_string();
+            let stats = store.by_comment_type.entry(key).or_default();
+            stats.rejected = stats.rejected.saturating_add(1);
+        }
+        store.accept.remove(&comment.id);
+    }
+    updated
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -386,6 +405,40 @@ mod tests {
         };
         let result = select_discussion_comment(&[comment.clone()], None, None).unwrap();
         assert_eq!(result.id, "cmt_1");
+    }
+
+    #[test]
+    fn test_feedback_stats_not_double_counted() {
+        // Simulate accepting the same comment twice — stats should only increment once
+        let mut store = review::FeedbackStore::default();
+        let comment = core::Comment {
+            id: "cmt_dup".to_string(),
+            file_path: PathBuf::from("test.rs"),
+            line_number: 1,
+            content: "test".to_string(),
+            rule_id: None,
+            severity: core::comment::Severity::Warning,
+            category: core::comment::Category::Bug,
+            suggestion: None,
+            confidence: 0.8,
+            code_suggestion: None,
+            tags: vec![],
+            fix_effort: core::comment::FixEffort::Low,
+        };
+
+        let comments = vec![comment];
+
+        // Accept the same batch of comments twice
+        for _ in 0..2 {
+            apply_feedback_accept(&mut store, &comments);
+        }
+
+        let key = review::classify_comment_type(&comments[0]).as_str().to_string();
+        let stats = &store.by_comment_type[&key];
+        assert_eq!(
+            stats.accepted, 1,
+            "Stats should only count 1 acceptance, not 2 (double-counting bug)"
+        );
     }
 }
 
