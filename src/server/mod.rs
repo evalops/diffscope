@@ -1,9 +1,10 @@
 pub mod api;
+pub mod github;
 pub mod state;
 
 use axum::{
     Router,
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     response::{IntoResponse, Response},
     http::{StatusCode, header},
 };
@@ -96,6 +97,11 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .route("/gh/repos", get(api::get_gh_repos))
         .route("/gh/prs", get(api::get_gh_prs))
         .route("/gh/review", post(api::start_pr_review))
+        .route("/gh/auth/device", post(github::start_device_flow))
+        .route("/gh/auth/poll", post(github::poll_device_flow))
+        .route("/gh/auth", delete(github::disconnect_github))
+        .route("/gh/webhook/status", get(github::get_webhook_status))
+        .route("/webhooks/github", post(github::handle_webhook))
         .with_state(state.clone());
 
     let app = Router::new()

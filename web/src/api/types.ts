@@ -174,6 +174,26 @@ export interface GhStatusResponse {
   scopes: string[]
 }
 
+export interface DeviceFlowResponse {
+  device_code: string
+  user_code: string
+  verification_uri: string
+  expires_in: number
+  interval: number
+}
+
+export interface PollDeviceFlowResponse {
+  authenticated: boolean
+  username?: string
+  avatar_url?: string
+  error?: string
+}
+
+export interface WebhookStatusResponse {
+  configured: boolean
+  url: string
+}
+
 export interface GhRepo {
   full_name: string
   description: string | null

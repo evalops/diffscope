@@ -201,6 +201,26 @@ pub struct Config {
 
     #[serde(default)]
     pub github_token: Option<String>,
+
+    /// GitHub App ID (from app settings page).
+    #[serde(default)]
+    pub github_app_id: Option<u64>,
+
+    /// GitHub App OAuth client ID (for device flow auth).
+    #[serde(default)]
+    pub github_client_id: Option<String>,
+
+    /// GitHub App OAuth client secret.
+    #[serde(default)]
+    pub github_client_secret: Option<String>,
+
+    /// GitHub App private key (PEM content).
+    #[serde(default)]
+    pub github_private_key: Option<String>,
+
+    /// Webhook secret for verifying GitHub webhook signatures.
+    #[serde(default)]
+    pub github_webhook_secret: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -327,6 +347,11 @@ impl Default for Config {
             rule_priority: Vec::new(),
             providers: HashMap::new(),
             github_token: None,
+            github_app_id: None,
+            github_client_id: None,
+            github_client_secret: None,
+            github_private_key: None,
+            github_webhook_secret: None,
         }
     }
 }

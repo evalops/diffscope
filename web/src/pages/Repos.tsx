@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Search, Lock, Star, GitPullRequest, Loader2, ChevronRight, RefreshCw, X, Eye, EyeOff } from 'lucide-react'
+import { ArrowLeft, Search, Lock, Star, GitPullRequest, Loader2, ChevronRight, RefreshCw, X, ExternalLink, Copy, Check, Webhook, Eye, EyeOff } from 'lucide-react'
 import { useGhStatus, useGhRepos, useGhPrs, useStartPrReview, useUpdateConfig, useConfig } from '../api/hooks'
-import type { GhRepo, GhPullRequest } from '../api/types'
+import { api } from '../api/client'
+import type { GhRepo, GhPullRequest, DeviceFlowResponse } from '../api/types'
 
 const LANG_COLORS: Record<string, string> = {
   TypeScript: '#3178c6',
@@ -52,12 +53,6 @@ type View = 'repos' | 'prs' | 'pr-detail'
 export function Repos() {
   const navigate = useNavigate()
 
-  // Auth state
-  const [tokenInput, setTokenInput] = useState('')
-  const [showToken, setShowToken] = useState(false)
-  const [tokenError, setTokenError] = useState<string | null>(null)
-  const [savingToken, setSavingToken] = useState(false)
-
   // View state
   const [view, setView] = useState<View>('repos')
   const [searchQuery, setSearchQuery] = useState('')
@@ -75,6 +70,11 @@ export function Repos() {
   const connected = ghStatus?.authenticated ?? false
   const username = ghStatus?.username
   const avatarUrl = ghStatus?.avatar_url
+
+  // Check if GitHub App is configured (has client_id)
+  const hasAppConfig = config && typeof config === 'object' &&
+    !!(config as Record<string, unknown>).github_client_id &&
+    (config as Record<string, unknown>).github_client_id !== ''
 
   const reposParams = debouncedSearch
     ? { search: debouncedSearch }
@@ -95,25 +95,9 @@ export function Repos() {
     return () => clearTimeout(timeout)
   }, [searchQuery])
 
-  const handleConnect = async () => {
-    if (!tokenInput.trim()) return
-    setSavingToken(true)
-    setTokenError(null)
-    try {
-      await updateConfig.mutateAsync({ github_token: tokenInput.trim() })
-      await refetchGhStatus()
-      // Check if it actually authenticated
-      setTokenInput('')
-    } catch (err) {
-      setTokenError(err instanceof Error ? err.message : 'Failed to save token')
-    } finally {
-      setSavingToken(false)
-    }
-  }
-
   const handleDisconnect = async () => {
     try {
-      await updateConfig.mutateAsync({ github_token: '' })
+      await api.disconnectGitHub()
       await refetchGhStatus()
       setSelectedRepo(null)
       setSelectedPr(null)
@@ -157,64 +141,21 @@ export function Repos() {
     setSelectedPr(null)
   }
 
-  // Not connected - show token input
+  // Not connected — show auth options
   if (!connected) {
-    // Check if token is configured but invalid vs not set at all
-    const hasToken = config && typeof config === 'object' && (config as Record<string, unknown>).github_token === '***'
     return (
       <div className="p-6 max-w-2xl mx-auto">
         <h1 className="text-xl font-semibold text-text-primary mb-4">GitHub Repos</h1>
-        <div className="bg-surface-1 border border-border rounded-lg p-4">
-          <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">CONNECT GITHUB</div>
-          {hasToken ? (
-            <div className="flex items-center gap-2 mb-3 text-[12px] text-sev-warning bg-sev-warning/5 border border-sev-warning/20 rounded px-3 py-2">
-              A GitHub token is configured but authentication failed. Update it below.
-            </div>
-          ) : null}
-          <p className="text-[12px] text-text-secondary mb-3">
-            Enter a Personal Access Token to browse your repositories and review pull requests.
-          </p>
-          <p className="text-[11px] text-text-muted mb-4">
-            Generate at{' '}
-            <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
-              github.com/settings/tokens
-            </a>
-            {' '}&mdash; needs <code className="font-code text-accent bg-surface px-1 py-0.5 rounded text-[10px]">repo</code> scope.
-            The token is stored securely on the DiffScope backend.
-          </p>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <input
-                type={showToken ? 'text' : 'password'}
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
-                placeholder="ghp_..."
-                className="w-full bg-surface border border-border rounded px-3 py-1.5 pr-9 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code"
-              />
-              <button
-                type="button"
-                onClick={() => setShowToken(s => !s)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary"
-              >
-                {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            </div>
-            <button
-              onClick={handleConnect}
-              disabled={!tokenInput.trim() || savingToken}
-              className="px-4 py-1.5 rounded text-[12px] font-medium bg-accent text-surface hover:bg-accent-dim disabled:opacity-50 transition-colors"
-            >
-              {savingToken ? <Loader2 size={14} className="animate-spin" /> : 'Connect'}
-            </button>
-          </div>
-          {tokenError && (
-            <div className="mt-3 flex items-center gap-2 text-[12px] text-sev-error">
-              <span className="inline-block w-2 h-2 rounded-full bg-sev-error" />
-              {tokenError}
-            </div>
-          )}
-        </div>
+
+        {hasAppConfig ? (
+          <DeviceFlowAuth onSuccess={() => refetchGhStatus()} />
+        ) : (
+          <GitHubSetup
+            config={config as Record<string, unknown> | undefined}
+            updateConfig={updateConfig}
+            refetchGhStatus={refetchGhStatus}
+          />
+        )}
       </div>
     )
   }
@@ -222,7 +163,6 @@ export function Repos() {
   // Render repo list
   const renderRepoList = () => (
     <>
-      {/* Search bar */}
       <div className="relative mb-4">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
         <input
@@ -233,23 +173,18 @@ export function Repos() {
           className="w-full bg-surface-1 border border-border rounded-lg pl-9 pr-9 py-2 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent"
         />
         {searchQuery && (
-          <button
-            onClick={() => setSearchQuery('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary"
-          >
+          <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary">
             <X size={14} />
           </button>
         )}
       </div>
 
-      {/* Error */}
       {reposError && (
         <div className="bg-surface-1 border border-sev-error/30 rounded-lg p-4 mb-4">
           <p className="text-[12px] text-sev-error">{reposError instanceof Error ? reposError.message : 'Failed to load repos'}</p>
         </div>
       )}
 
-      {/* Repo grid */}
       <div className="grid grid-cols-2 gap-3">
         {(repos ?? []).map(repo => (
           <button
@@ -270,18 +205,12 @@ export function Repos() {
             <div className="flex items-center gap-3 text-[10px] text-text-muted">
               {repo.language && (
                 <span className="flex items-center gap-1">
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{ backgroundColor: LANG_COLORS[repo.language] ?? '#8b949e' }}
-                  />
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: LANG_COLORS[repo.language] ?? '#8b949e' }} />
                   {repo.language}
                 </span>
               )}
               {repo.stargazers_count > 0 && (
-                <span className="flex items-center gap-0.5">
-                  <Star size={10} />
-                  {repo.stargazers_count}
-                </span>
+                <span className="flex items-center gap-0.5"><Star size={10} />{repo.stargazers_count}</span>
               )}
               <span>{timeAgo(repo.updated_at)}</span>
             </div>
@@ -289,20 +218,13 @@ export function Repos() {
         ))}
       </div>
 
-      {/* Loading */}
       {reposLoading && (
-        <div className="flex justify-center py-6">
-          <Loader2 size={20} className="animate-spin text-text-muted" />
-        </div>
+        <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-text-muted" /></div>
       )}
 
-      {/* Load more */}
       {!reposLoading && !debouncedSearch && (repos ?? []).length >= 20 && (
         <div className="flex justify-center pt-4">
-          <button
-            onClick={() => setReposPage(p => p + 1)}
-            className="px-4 py-1.5 rounded text-[12px] font-medium bg-surface-2 border border-border text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors"
-          >
+          <button onClick={() => setReposPage(p => p + 1)} className="px-4 py-1.5 rounded text-[12px] font-medium bg-surface-2 border border-border text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors">
             Load more
           </button>
         </div>
@@ -319,12 +241,8 @@ export function Repos() {
   // Render PR list
   const renderPrList = () => (
     <>
-      <button
-        onClick={handleBackToRepos}
-        className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-secondary transition-colors mb-3"
-      >
-        <ArrowLeft size={14} />
-        repos
+      <button onClick={handleBackToRepos} className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-secondary transition-colors mb-3">
+        <ArrowLeft size={14} />repos
       </button>
 
       <div className="flex items-center justify-between mb-4">
@@ -353,9 +271,7 @@ export function Repos() {
       )}
 
       {prsLoading ? (
-        <div className="flex justify-center py-8">
-          <Loader2 size={20} className="animate-spin text-text-muted" />
-        </div>
+        <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-text-muted" /></div>
       ) : (prs ?? []).length === 0 ? (
         <div className="text-center py-8 text-[13px] text-text-muted">
           No {prFilter === 'all' ? '' : prFilter} pull requests.
@@ -374,29 +290,19 @@ export function Repos() {
                 }`} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[13px] font-medium text-text-primary group-hover:text-accent transition-colors truncate">
-                      {pr.title}
-                    </span>
+                    <span className="text-[13px] font-medium text-text-primary group-hover:text-accent transition-colors truncate">{pr.title}</span>
                     <span className="text-[11px] text-text-muted shrink-0">#{pr.number}</span>
                   </div>
                   <div className="flex items-center gap-3 text-[10px] text-text-muted">
                     <span>{pr.author}</span>
                     <span>{timeAgo(pr.created_at)}</span>
-                    <span className="font-code">
-                      {pr.head_branch} <span className="text-text-muted/50">&rarr;</span> {pr.base_branch}
-                    </span>
+                    <span className="font-code">{pr.head_branch} <span className="text-text-muted/50">&rarr;</span> {pr.base_branch}</span>
                   </div>
                   {(pr.draft || pr.labels.length > 0) && (
                     <div className="flex items-center gap-1.5 mt-1.5">
-                      {pr.draft && (
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-surface-2 text-text-muted border border-border">
-                          Draft
-                        </span>
-                      )}
+                      {pr.draft && <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-surface-2 text-text-muted border border-border">Draft</span>}
                       {pr.labels.map(label => (
-                        <span key={label} className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-accent/10 text-accent border border-accent/20">
-                          {label}
-                        </span>
+                        <span key={label} className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-accent/10 text-accent border border-accent/20">{label}</span>
                       ))}
                     </div>
                   )}
@@ -415,12 +321,8 @@ export function Repos() {
     if (!selectedPr || !selectedRepo) return null
     return (
       <>
-        <button
-          onClick={handleBackToPrs}
-          className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-secondary transition-colors mb-3"
-        >
-          <ArrowLeft size={14} />
-          PRs
+        <button onClick={handleBackToPrs} className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text-secondary transition-colors mb-3">
+          <ArrowLeft size={14} />PRs
         </button>
 
         <div className="bg-surface-1 border border-border rounded-lg p-4 mb-4">
@@ -430,8 +332,7 @@ export function Repos() {
             }`} />
             <div>
               <h2 className="text-[15px] font-semibold text-text-primary">
-                {selectedPr.title}
-                <span className="text-text-muted font-normal ml-2">#{selectedPr.number}</span>
+                {selectedPr.title}<span className="text-text-muted font-normal ml-2">#{selectedPr.number}</span>
               </h2>
               <p className="text-[11px] text-text-muted mt-1">{selectedRepo.full_name}</p>
             </div>
@@ -446,10 +347,8 @@ export function Repos() {
               <span className="text-text-muted">State</span>
               <div className="mt-0.5">
                 <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
-                  selectedPr.state === 'open'
-                    ? 'bg-accent/15 text-accent border border-accent/30'
-                    : selectedPr.state === 'merged'
-                    ? 'bg-purple-400/15 text-purple-400 border border-purple-400/30'
+                  selectedPr.state === 'open' ? 'bg-accent/15 text-accent border border-accent/30'
+                    : selectedPr.state === 'merged' ? 'bg-purple-400/15 text-purple-400 border border-purple-400/30'
                     : 'bg-sev-error/15 text-sev-error border border-sev-error/30'
                 }`}>
                   {selectedPr.draft ? 'Draft' : selectedPr.state}
@@ -458,9 +357,7 @@ export function Repos() {
             </div>
             <div>
               <span className="text-text-muted">Branches</span>
-              <div className="text-text-primary font-code mt-0.5 text-[11px]">
-                {selectedPr.head_branch} &rarr; {selectedPr.base_branch}
-              </div>
+              <div className="text-text-primary font-code mt-0.5 text-[11px]">{selectedPr.head_branch} &rarr; {selectedPr.base_branch}</div>
             </div>
             <div>
               <span className="text-text-muted">Updated</span>
@@ -471,15 +368,12 @@ export function Repos() {
           {selectedPr.labels.length > 0 && (
             <div className="flex items-center gap-1.5 mb-4">
               {selectedPr.labels.map(label => (
-                <span key={label} className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-accent/10 text-accent border border-accent/20">
-                  {label}
-                </span>
+                <span key={label} className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-accent/10 text-accent border border-accent/20">{label}</span>
               ))}
             </div>
           )}
 
           <div className="border-t border-border-subtle pt-4">
-            {/* Post results toggle */}
             <div className="flex items-center justify-between mb-4">
               <div>
                 <div className="text-[13px] text-text-primary">Post results to GitHub</div>
@@ -487,32 +381,21 @@ export function Repos() {
               </div>
               <button
                 onClick={() => setPostResults(!postResults)}
-                className={`relative w-10 h-[22px] rounded-full transition-colors ${
-                  postResults ? 'bg-toggle-on' : 'bg-toggle-off'
-                }`}
+                className={`relative w-10 h-[22px] rounded-full transition-colors ${postResults ? 'bg-toggle-on' : 'bg-toggle-off'}`}
               >
-                <span className={`absolute top-[3px] w-4 h-4 rounded-full bg-white shadow transition-transform ${
-                  postResults ? 'left-[22px]' : 'left-[3px]'
-                }`} />
+                <span className={`absolute top-[3px] w-4 h-4 rounded-full bg-white shadow transition-transform ${postResults ? 'left-[22px]' : 'left-[3px]'}`} />
               </button>
             </div>
 
-            {/* Review button */}
             <button
               onClick={handleReview}
               disabled={startPrReview.isPending}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-[13px] font-medium bg-accent text-surface hover:bg-accent-dim disabled:opacity-50 transition-colors"
             >
               {startPrReview.isPending ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" />
-                  Starting review...
-                </>
+                <><Loader2 size={16} className="animate-spin" />Starting review...</>
               ) : (
-                <>
-                  <RefreshCw size={14} />
-                  Review this PR
-                </>
+                <><RefreshCw size={14} />Review this PR</>
               )}
             </button>
 
@@ -530,36 +413,324 @@ export function Repos() {
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
-      {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-semibold text-text-primary">GitHub Repos</h1>
         {username && (
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              {avatarUrl && (
-                <img
-                  src={avatarUrl}
-                  alt={username}
-                  className="w-6 h-6 rounded-full"
-                />
-              )}
+              {avatarUrl && <img src={avatarUrl} alt={username} className="w-6 h-6 rounded-full" />}
               <span className="text-[12px] text-text-secondary font-code">{username}</span>
               <span className="inline-block w-2 h-2 rounded-full bg-accent" />
             </div>
-            <button
-              onClick={handleDisconnect}
-              className="text-[11px] text-text-muted hover:text-sev-error transition-colors"
-            >
+            <button onClick={handleDisconnect} className="text-[11px] text-text-muted hover:text-sev-error transition-colors">
               Disconnect
             </button>
           </div>
         )}
       </div>
 
-      {/* View content */}
       {view === 'repos' && renderRepoList()}
       {view === 'prs' && renderPrList()}
       {view === 'pr-detail' && renderPrDetail()}
+    </div>
+  )
+}
+
+// ── Device Flow Auth Component ─────────────────────────────────────────
+
+function DeviceFlowAuth({ onSuccess }: { onSuccess: () => void }) {
+  const [flow, setFlow] = useState<DeviceFlowResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const startFlow = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const resp = await api.startDeviceFlow()
+      setFlow(resp)
+      // Start polling
+      startPolling(resp.device_code, resp.interval)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start auth flow')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const startPolling = (deviceCode: string, interval: number) => {
+    if (pollRef.current) clearInterval(pollRef.current)
+    pollRef.current = setInterval(async () => {
+      try {
+        const resp = await api.pollDeviceFlow(deviceCode)
+        if (resp.authenticated) {
+          if (pollRef.current) clearInterval(pollRef.current)
+          setFlow(null)
+          onSuccess()
+        } else if (resp.error && resp.error !== 'authorization_pending' && resp.error !== 'slow_down') {
+          if (pollRef.current) clearInterval(pollRef.current)
+          setError(resp.error === 'expired_token' ? 'Authorization expired. Please try again.' : resp.error)
+          setFlow(null)
+        }
+      } catch {
+        // Network error, keep polling
+      }
+    }, (interval || 5) * 1000)
+  }
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  }, [])
+
+  const handleCopy = () => {
+    if (flow?.user_code) {
+      navigator.clipboard.writeText(flow.user_code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  return (
+    <div className="bg-surface-1 border border-border rounded-lg p-4">
+      <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">CONNECT GITHUB</div>
+
+      {!flow ? (
+        <>
+          <p className="text-[12px] text-text-secondary mb-4">
+            Connect your GitHub account to browse repositories, review pull requests, and post inline comments.
+          </p>
+          <button
+            onClick={startFlow}
+            disabled={loading}
+            className="flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-lg text-[13px] font-medium bg-accent text-surface hover:bg-accent-dim disabled:opacity-50 transition-colors"
+          >
+            {loading ? (
+              <><Loader2 size={16} className="animate-spin" />Connecting...</>
+            ) : (
+              <>Connect with GitHub</>
+            )}
+          </button>
+        </>
+      ) : (
+        <div className="text-center">
+          <p className="text-[12px] text-text-secondary mb-4">
+            Enter this code on GitHub to authorize DiffScope:
+          </p>
+
+          <div className="flex items-center justify-center gap-2 mb-4">
+            <code className="text-2xl font-bold font-code text-accent tracking-[0.15em] bg-surface px-6 py-3 rounded-lg border border-accent/30">
+              {flow.user_code}
+            </code>
+            <button
+              onClick={handleCopy}
+              className="p-2 rounded text-text-muted hover:text-accent transition-colors"
+              title="Copy code"
+            >
+              {copied ? <Check size={16} className="text-accent" /> : <Copy size={16} />}
+            </button>
+          </div>
+
+          <a
+            href={flow.verification_uri}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-[13px] font-medium bg-surface-2 border border-border text-text-primary hover:border-accent/30 hover:text-accent transition-colors mb-4"
+          >
+            Open GitHub <ExternalLink size={13} />
+          </a>
+
+          <div className="flex items-center justify-center gap-2 text-[11px] text-text-muted">
+            <Loader2 size={12} className="animate-spin" />
+            Waiting for authorization...
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-3 flex items-center gap-2 text-[12px] text-sev-error">
+          <span className="inline-block w-2 h-2 rounded-full bg-sev-error" />
+          {error}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── GitHub App Setup Component (first-time setup) ──────────────────────
+
+function GitHubSetup({
+  config,
+  updateConfig,
+  refetchGhStatus,
+}: {
+  config: Record<string, unknown> | undefined
+  updateConfig: ReturnType<typeof useUpdateConfig>
+  refetchGhStatus: () => void
+}) {
+  const [mode, setMode] = useState<'app' | 'pat'>('app')
+  const [clientId, setClientId] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [tokenInput, setTokenInput] = useState('')
+  const [showToken, setShowToken] = useState(false)
+
+  // Check if there's already a token configured
+  const hasToken = config?.github_token === '***'
+
+  const handleSaveApp = async () => {
+    if (!clientId.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      await updateConfig.mutateAsync({ github_client_id: clientId.trim() })
+      // Trigger re-render to show device flow
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleSavePat = async () => {
+    if (!tokenInput.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      await updateConfig.mutateAsync({ github_token: tokenInput.trim() })
+      await refetchGhStatus()
+      setTokenInput('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save token')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {hasToken && (
+        <div className="flex items-center gap-2 text-[12px] text-sev-warning bg-sev-warning/5 border border-sev-warning/20 rounded px-3 py-2">
+          A GitHub token is configured but authentication failed. Update it below.
+        </div>
+      )}
+
+      {/* Mode tabs */}
+      <div className="flex gap-1 bg-surface-1 border border-border rounded-lg p-1">
+        <button
+          onClick={() => setMode('app')}
+          className={`flex-1 px-3 py-1.5 rounded text-[12px] font-medium transition-colors ${
+            mode === 'app' ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-secondary'
+          }`}
+        >
+          GitHub App (recommended)
+        </button>
+        <button
+          onClick={() => setMode('pat')}
+          className={`flex-1 px-3 py-1.5 rounded text-[12px] font-medium transition-colors ${
+            mode === 'pat' ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-secondary'
+          }`}
+        >
+          Personal Access Token
+        </button>
+      </div>
+
+      {mode === 'app' ? (
+        <div className="bg-surface-1 border border-border rounded-lg p-4">
+          <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">GITHUB APP SETUP</div>
+
+          <div className="space-y-3 text-[12px] text-text-secondary mb-4">
+            <p>Create a GitHub App for DiffScope to enable OAuth login, webhooks, and check runs.</p>
+            <ol className="list-decimal list-inside space-y-1.5 text-[11px]">
+              <li>Go to <a href="https://github.com/settings/apps/new" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">github.com/settings/apps/new</a></li>
+              <li>Set <strong>Homepage URL</strong> to your DiffScope server URL</li>
+              <li>Enable <strong>Device flow</strong> under OAuth settings</li>
+              <li>Set <strong>Webhook URL</strong> to <code className="font-code text-accent bg-surface px-1 py-0.5 rounded text-[10px]">&lt;your-url&gt;/api/webhooks/github</code></li>
+              <li>Add permissions: <code className="font-code text-accent bg-surface px-1 py-0.5 rounded text-[10px]">Pull requests: Read & Write</code>, <code className="font-code text-accent bg-surface px-1 py-0.5 rounded text-[10px]">Checks: Read & Write</code>, <code className="font-code text-accent bg-surface px-1 py-0.5 rounded text-[10px]">Contents: Read</code></li>
+              <li>Subscribe to events: <code className="font-code text-accent bg-surface px-1 py-0.5 rounded text-[10px]">Pull request</code></li>
+              <li>Copy the <strong>Client ID</strong> and paste below</li>
+            </ol>
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSaveApp()}
+              placeholder="Iv1.abc123..."
+              className="flex-1 bg-surface border border-border rounded px-3 py-1.5 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code"
+            />
+            <button
+              onClick={handleSaveApp}
+              disabled={!clientId.trim() || saving}
+              className="px-4 py-1.5 rounded text-[12px] font-medium bg-accent text-surface hover:bg-accent-dim disabled:opacity-50 transition-colors"
+            >
+              {saving ? <Loader2 size={14} className="animate-spin" /> : 'Save'}
+            </button>
+          </div>
+
+          <div className="mt-3 flex items-center gap-3 text-[10px] text-text-muted">
+            <span className="flex items-center gap-1"><Webhook size={10} /> Webhooks</span>
+            <span>Auto-review on PR open</span>
+            <span className="text-text-muted/50">|</span>
+            <span>Check Runs on commits</span>
+            <span className="text-text-muted/50">|</span>
+            <span>Bot identity</span>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-surface-1 border border-border rounded-lg p-4">
+          <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">PERSONAL ACCESS TOKEN</div>
+          <p className="text-[12px] text-text-secondary mb-3">
+            Quick setup with a PAT. For webhooks and check runs, use the GitHub App setup instead.
+          </p>
+          <p className="text-[11px] text-text-muted mb-4">
+            Generate at{' '}
+            <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
+              github.com/settings/tokens
+            </a>
+            {' '}&mdash; needs <code className="font-code text-accent bg-surface px-1 py-0.5 rounded text-[10px]">repo</code> scope.
+          </p>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <input
+                type={showToken ? 'text' : 'password'}
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSavePat()}
+                placeholder="ghp_..."
+                className="w-full bg-surface border border-border rounded px-3 py-1.5 pr-9 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code"
+              />
+              <button
+                type="button"
+                onClick={() => setShowToken(s => !s)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary"
+              >
+                {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+            <button
+              onClick={handleSavePat}
+              disabled={!tokenInput.trim() || saving}
+              className="px-4 py-1.5 rounded text-[12px] font-medium bg-accent text-surface hover:bg-accent-dim disabled:opacity-50 transition-colors"
+            >
+              {saving ? <Loader2 size={14} className="animate-spin" /> : 'Connect'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-center gap-2 text-[12px] text-sev-error">
+          <span className="inline-block w-2 h-2 rounded-full bg-sev-error" />
+          {error}
+        </div>
+      )}
     </div>
   )
 }

@@ -428,7 +428,7 @@ async fn run_review_task(
 
 /// Build a wide event from review results.
 #[allow(clippy::too_many_arguments)]
-fn build_review_event(
+pub(super) fn build_review_event(
     review_id: &str,
     event_type: &str,
     diff_source: &str,
@@ -483,7 +483,7 @@ fn build_review_event(
 }
 
 /// Emit a review wide event via structured tracing.
-fn emit_wide_event(event: &ReviewEvent) {
+pub(super) fn emit_wide_event(event: &ReviewEvent) {
     info!(
         review_id = %event.review_id,
         event_type = %event.event_type,
@@ -685,13 +685,7 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> Json<serde_json::
     let config = state.config.read().await;
     let mut value = serde_json::to_value(&*config).unwrap_or_default();
     if let Some(obj) = value.as_object_mut() {
-        if obj.contains_key("api_key") {
-            obj.insert("api_key".to_string(), serde_json::json!("***"));
-        }
-        if obj.contains_key("github_token") {
-            obj.insert("github_token".to_string(), serde_json::json!("***"));
-        }
-        mask_provider_api_keys(obj);
+        mask_config_secrets(obj);
     }
     Json(value)
 }
@@ -705,10 +699,8 @@ pub async fn update_config(
     let mut current = serde_json::to_value(&*config).unwrap_or_default();
     if let (Some(current_obj), Some(updates_obj)) = (current.as_object_mut(), updates.as_object()) {
         for (key, value) in updates_obj {
-            if key == "api_key" && value.as_str() == Some("***") {
-                continue;
-            }
-            if key == "github_token" && value.as_str() == Some("***") {
+            // Skip masked secret fields (don't overwrite with "***")
+            if value.as_str() == Some("***") {
                 continue;
             }
             current_obj.insert(key.clone(), value.clone());
@@ -724,13 +716,7 @@ pub async fn update_config(
     // Build response while still holding the write lock
     let mut result = serde_json::to_value(&*config).unwrap_or_default();
     if let Some(obj) = result.as_object_mut() {
-        if obj.contains_key("api_key") {
-            obj.insert("api_key".to_string(), serde_json::json!("***"));
-        }
-        if obj.contains_key("github_token") {
-            obj.insert("github_token".to_string(), serde_json::json!("***"));
-        }
-        mask_provider_api_keys(obj);
+        mask_config_secrets(obj);
     }
 
     drop(config);
@@ -739,6 +725,16 @@ pub async fn update_config(
     AppState::save_config_async(&state);
 
     Ok(Json(result))
+}
+
+/// Mask all secret fields in a config object for safe serialization.
+fn mask_config_secrets(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    for key in &["api_key", "github_token", "github_client_secret", "github_private_key", "github_webhook_secret"] {
+        if obj.get(*key).and_then(|v| v.as_str()).is_some() {
+            obj.insert(key.to_string(), serde_json::json!("***"));
+        }
+    }
+    mask_provider_api_keys(obj);
 }
 
 /// Mask api_key fields inside the providers map for safe serialization.
@@ -1803,7 +1799,7 @@ async fn run_pr_review_task(
     AppState::prune_old_reviews(&state).await;
 }
 
-async fn post_pr_review_comments(
+pub(super) async fn post_pr_review_comments(
     client: &reqwest::Client,
     token: &str,
     repo: &str,

@@ -49,6 +49,21 @@ export const api = {
 
   getGhStatus: () => request<import('./types').GhStatusResponse>('/gh/status'),
 
+  startDeviceFlow: () =>
+    request<import('./types').DeviceFlowResponse>('/gh/auth/device', { method: 'POST' }),
+
+  pollDeviceFlow: (deviceCode: string) =>
+    request<import('./types').PollDeviceFlowResponse>('/gh/auth/poll', {
+      method: 'POST',
+      body: JSON.stringify({ device_code: deviceCode }),
+    }),
+
+  disconnectGitHub: () =>
+    request<{ ok: boolean }>('/gh/auth', { method: 'DELETE' }),
+
+  getWebhookStatus: () =>
+    request<import('./types').WebhookStatusResponse>('/gh/webhook/status'),
+
   getGhRepos: (params?: { page?: number; per_page?: number; search?: string }) => {
     const qs = new URLSearchParams()
     if (params?.page) qs.set('page', String(params.page))

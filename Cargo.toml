@@ -36,6 +36,10 @@ tower-http = { version = "0.6", features = ["cors", "fs"] }
 rust-embed = "8"
 uuid = { version = "1", features = ["v4"] }
 mime_guess = "2"
+hmac = "0.12"
+sha2 = "0.10"
+jsonwebtoken = "9"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3.8"
