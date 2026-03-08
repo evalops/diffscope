@@ -892,8 +892,52 @@ impl EvalPattern {
 fn summarize_for_eval(content: &str) -> String {
     let mut summary = content.trim().replace('\n', " ");
     if summary.len() > 120 {
-        summary.truncate(117);
+        let mut end = 117;
+        while end > 0 && !summary.is_char_boundary(end) {
+            end -= 1;
+        }
+        summary.truncate(end);
         summary.push_str("...");
     }
     summary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_summarize_for_eval_short() {
+        let result = summarize_for_eval("hello world");
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_summarize_for_eval_utf8_safety() {
+        // Create a string with multi-byte UTF-8 chars that will land truncation mid-char
+        // '€' is 3 bytes. 39 euros = 117 bytes exactly, but 38 euros = 114 bytes.
+        // We need byte 117 to land mid-character.
+        // 38 euros (114 bytes) + "abcd" (4 bytes) = 118 bytes > 120? No.
+        // Let's use: 37 euros (111 bytes) + "abcdefghij" (10 bytes) = 121 bytes > 120
+        // truncate(117): byte 117 = 111 + 6 = within "abcdefghij", which is ASCII. Safe.
+        // Better: 39 euros (117 bytes) + "abcd" (4 bytes) = 121 bytes > 120
+        // truncate(117): byte 117 is the end of the 39th euro. Safe boundary.
+        // Better still: 38 euros (114 bytes) + "abc" (3 bytes) = 117. Not > 120.
+        // We need: content where byte 117 is mid-char.
+        // 39 euros = 117 bytes. Add "a" = 118 bytes. Not > 120.
+        // 40 euros = 120 bytes. Add "a" = 121 bytes > 120.
+        // truncate(117): byte 117 = end of 39th euro. 40th euro starts at 117.
+        // Euro at bytes 117, 118, 119. truncate(117) is AT the start of the 40th euro.
+        // is_char_boundary(117) — 117 is the start of a 3-byte char, so it IS a boundary!
+        // Need byte 118: 40 euros (120 bytes) + "ab" = 122 bytes > 120.
+        // Still truncate(117), which is start of 40th euro = valid boundary.
+        // Use a mix: "a" + 39 euros = 1 + 117 = 118 bytes. Add "abc" = 121 > 120.
+        // truncate(117): byte 117 = 1 + 38*3 = 115 is start of 39th euro.
+        // byte 117 = 115 + 2 = mid-euro! This will panic!
+        let content = format!("a{}{}", "€".repeat(39), "abc");
+        // length = 1 + 117 + 3 = 121 bytes
+        // truncate(117) = byte 117 = 1 + 38*3 + 2 = inside 39th euro
+        let result = summarize_for_eval(&content);
+        assert!(result.len() <= 120);
+    }
 }
