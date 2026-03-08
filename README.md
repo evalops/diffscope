@@ -120,6 +120,7 @@ diffscope pr --post-comments
 ```
 
 `--post-comments` now attempts inline file/line comments first, falls back to PR-level comments when GitHub rejects an anchor, and upserts a sticky DiffScope summary comment on the PR.
+When rule matching is active, DiffScope also includes detected `rule_id` values in PR comments and summaries.
 
 ### Evaluation Fixtures
 ```yaml

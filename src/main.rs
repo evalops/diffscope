@@ -936,6 +936,9 @@ fn build_github_comment_body(comment: &core::Comment) -> String {
         "**{:?} ({:?})**\n\n{}",
         comment.severity, comment.category, comment.content
     );
+    if let Some(rule_id) = &comment.rule_id {
+        body.push_str(&format!("\n\n**Rule:** `{}`", rule_id));
+    }
     if let Some(suggestion) = &comment.suggestion {
         body.push_str("\n\n**Suggested fix:** ");
         body.push_str(suggestion);
@@ -1123,11 +1126,17 @@ fn build_pr_summary_comment_body(comments: &[core::Comment]) -> String {
         if shown >= 5 {
             break;
         }
+        let rule_suffix = comment
+            .rule_id
+            .as_deref()
+            .map(|rule_id| format!(" rule:{}", rule_id))
+            .unwrap_or_default();
         body.push_str(&format!(
-            "- `{}:{}` [{:?}] {}\n",
+            "- `{}:{}` [{:?}{}] {}\n",
             comment.file_path.display(),
             comment.line_number,
             comment.severity,
+            rule_suffix,
             comment.content
         ));
     }
@@ -2230,8 +2239,9 @@ async fn review_diff_content_raw(
 
 fn parse_llm_response(content: &str, file_path: &Path) -> Result<Vec<core::comment::RawComment>> {
     let mut comments = Vec::new();
-    static LINE_PATTERN: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"(?i)line\s+(\d+):\s*(.+)").unwrap());
+    static LINE_PATTERN: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)line\s+(\d+)((?:\s*(?:\[[^\]]+\]|\([^)]+\)))*)\s*:\s*(.+)").unwrap()
+    });
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -2250,8 +2260,11 @@ fn parse_llm_response(content: &str, file_path: &Path) -> Result<Vec<core::comme
 
         if let Some(caps) = LINE_PATTERN.captures(line) {
             let line_number: usize = caps.get(1).unwrap().as_str().parse()?;
-            let comment_text = caps.get(2).unwrap().as_str().trim();
-            let (rule_id, comment_text) = extract_rule_id_from_text(comment_text);
+            let metadata = caps.get(2).map(|value| value.as_str()).unwrap_or("");
+            let comment_text = caps.get(3).unwrap().as_str().trim();
+            let (inline_rule_id, comment_text) = extract_rule_id_from_text(comment_text);
+            let metadata_rule_id = extract_rule_id_from_metadata(metadata);
+            let rule_id = inline_rule_id.or(metadata_rule_id);
 
             // Extract suggestion if present
             let (content, suggestion) = if let Some(sugg_idx) = comment_text.rfind(". Consider ") {
@@ -2324,6 +2337,9 @@ fn format_as_patch(comments: &[core::Comment]) -> String {
             comment.severity,
             comment.content
         ));
+        if let Some(rule_id) = &comment.rule_id {
+            output.push_str(&format!("# Rule: {}\n", rule_id));
+        }
         if let Some(suggestion) = &comment.suggestion {
             output.push_str(&format!("# Suggestion: {}\n", suggestion));
         }
@@ -2454,6 +2470,9 @@ fn format_as_markdown(comments: &[core::Comment]) -> String {
                 "**Confidence:** {:.0}%\n",
                 comment.confidence * 100.0
             ));
+            if let Some(rule_id) = &comment.rule_id {
+                output.push_str(&format!("**Rule:** `{}`\n", rule_id));
+            }
             output.push_str(&format!("**Fix Effort:** {}\n\n", effort_badge));
 
             output.push_str(&format!("{}\n\n", comment.content));
@@ -2979,6 +2998,20 @@ fn extract_rule_id_from_text(text: &str) -> (Option<String>, String) {
     (None, text.trim().to_string())
 }
 
+fn extract_rule_id_from_metadata(metadata: &str) -> Option<String> {
+    static META_RULE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)rule\s*[:=]\s*([a-z0-9_.-]+)").unwrap());
+
+    META_RULE
+        .captures(metadata)
+        .and_then(|captures| {
+            captures
+                .get(1)
+                .map(|value| value.as_str().trim().to_string())
+        })
+        .filter(|value| !value.is_empty())
+}
+
 fn format_smart_review_output(
     comments: &[core::Comment],
     summary: &core::comment::ReviewSummary,
@@ -3168,6 +3201,9 @@ fn format_detailed_comment(comment: &core::Comment) -> String {
             output.push_str(&format!("`{}`", tag));
         }
         output.push_str("\n\n");
+    }
+    if let Some(rule_id) = &comment.rule_id {
+        output.push_str(&format!("**Rule:** `{}`\n\n", rule_id));
     }
 
     output.push_str(&format!("{}\n\n", comment.content));
@@ -4585,6 +4621,29 @@ TAGS: auth, security
         let confidence = comment.confidence.unwrap_or(0.0);
         assert!((confidence - 0.85).abs() < 0.0001);
         assert_eq!(comment.fix_effort, Some(core::comment::FixEffort::High));
+    }
+
+    #[test]
+    fn parse_llm_response_extracts_rule_from_line_metadata() {
+        let input = "Line 12 [rule:sec.sql.injection]: Security - Raw SQL with user input.";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 12);
+        assert_eq!(comments[0].rule_id.as_deref(), Some("sec.sql.injection"));
+    }
+
+    #[test]
+    fn format_patch_includes_rule_id() {
+        let mut comment = build_comment(
+            "rule-patch",
+            core::comment::Category::Security,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+        comment.rule_id = Some("sec.auth.guard".to_string());
+        let patch = format_as_patch(&[comment]);
+        assert!(patch.contains("# Rule: sec.auth.guard"));
     }
 
     #[test]

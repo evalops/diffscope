@@ -40,13 +40,14 @@ Review the code changes below and identify specific issues. Focus on problems th
    - Line number where the issue occurs
    - Clear description of the problem
    - Impact if not addressed
+   - Optional rule id when a scoped review rule applies
    - Suggested fix (if applicable)
 
 Format each issue as:
-Line [number]: [Issue type] - [Description]. [Impact]. [Suggestion if applicable].
+Line [number] [rule:<id> optional]: [Issue type] - [Description]. [Impact]. [Suggestion if applicable].
 
 Examples:
-Line 42: Security - User input passed directly to SQL query. Risk of SQL injection. Use parameterized queries.
+Line 42 [rule:sec.sql.injection]: Security - User input passed directly to SQL query. Risk of SQL injection. Use parameterized queries.
 Line 13: Bug - Missing null check before dereferencing pointer. May cause crash. Add null validation.
 Line 28: Performance - O(n²) algorithm for large dataset. Will be slow with many items. Consider using a hash map.
 </instructions>"#.to_string(),
