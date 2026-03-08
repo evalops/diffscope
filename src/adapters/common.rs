@@ -47,7 +47,7 @@ where
                 let status = response.status();
                 let body = response.text().await.unwrap_or_default();
                 if is_retryable_status(status) && attempt < max_retries {
-                    sleep(Duration::from_millis(base_delay_ms * (attempt as u64 + 1))).await;
+                    sleep(Duration::from_millis(base_delay_ms.saturating_mul(attempt as u64 + 1))).await;
                     continue;
                 }
 
@@ -62,7 +62,7 @@ where
             }
             Err(err) => {
                 if attempt < max_retries {
-                    sleep(Duration::from_millis(base_delay_ms * (attempt as u64 + 1))).await;
+                    sleep(Duration::from_millis(base_delay_ms.saturating_mul(attempt as u64 + 1))).await;
                     continue;
                 }
                 return Err(err.into());

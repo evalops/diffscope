@@ -568,7 +568,7 @@ impl Config {
             if timeout == 0 {
                 self.adapter_timeout_secs = None; // use default
             } else {
-                self.adapter_timeout_secs = Some(timeout.min(600));
+                self.adapter_timeout_secs = Some(timeout.clamp(5, 600));
             }
         }
         // Clamp adapter retries (0-10)
@@ -580,7 +580,7 @@ impl Config {
             if delay == 0 {
                 self.adapter_retry_delay_ms = None;
             } else {
-                self.adapter_retry_delay_ms = Some(delay.min(30_000));
+                self.adapter_retry_delay_ms = Some(delay.clamp(50, 30_000));
             }
         }
         // Normalize output language
@@ -1111,6 +1111,26 @@ mod tests {
         };
         config.normalize();
         assert_eq!(config.output_language, None);
+    }
+
+    #[test]
+    fn normalize_adapter_timeout_clamps_minimum() {
+        let mut config = Config {
+            adapter_timeout_secs: Some(2),
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.adapter_timeout_secs, Some(5));
+    }
+
+    #[test]
+    fn normalize_adapter_retry_delay_clamps_minimum() {
+        let mut config = Config {
+            adapter_retry_delay_ms: Some(10),
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.adapter_retry_delay_ms, Some(50));
     }
 
     #[test]

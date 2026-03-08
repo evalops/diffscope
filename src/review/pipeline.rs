@@ -483,7 +483,7 @@ pub fn build_review_guidance(
 
     // Output language directive
     if let Some(ref lang) = config.output_language {
-        if lang != "en" {
+        if lang != "en" && !lang.starts_with("en-") {
             sections.push(format!(
                 "Write all review comments and suggestions in {}.",
                 lang
@@ -935,6 +935,16 @@ mod tests {
         };
         let guidance = build_review_guidance(&config, None).unwrap();
         // "en" language should not add a language directive
+        assert!(!guidance.contains("Write all review comments"));
+    }
+
+    #[test]
+    fn build_review_guidance_skips_en_us_language() {
+        let config = config::Config {
+            output_language: Some("en-us".to_string()),
+            ..config::Config::default()
+        };
+        let guidance = build_review_guidance(&config, None).unwrap();
         assert!(!guidance.contains("Write all review comments"));
     }
 
