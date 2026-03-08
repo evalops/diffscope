@@ -10,6 +10,7 @@ pub struct AnthropicAdapter {
     config: ModelConfig,
     api_key: String,
     base_url: String,
+    retry_config: common::RetryConfig,
 }
 
 #[derive(Serialize)]
@@ -61,15 +62,23 @@ impl AnthropicAdapter {
             .or_else(|| if is_local { Some(String::new()) } else { None })
             .context("Anthropic API key not found. Set ANTHROPIC_API_KEY environment variable or provide in config")?;
 
+        let default_timeout = if is_local { 300 } else { 60 };
+        let timeout_secs = config.timeout_secs.unwrap_or(default_timeout);
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(if is_local { 300 } else { 60 }))
+            .timeout(std::time::Duration::from_secs(timeout_secs))
             .build()?;
+
+        let retry_config = common::RetryConfig {
+            max_retries: config.max_retries.unwrap_or(2),
+            base_delay_ms: config.retry_delay_ms.unwrap_or(250),
+        };
 
         Ok(Self {
             client,
             config,
             api_key,
             base_url,
+            retry_config,
         })
     }
 
@@ -92,7 +101,7 @@ impl LLMAdapter for AnthropicAdapter {
         };
 
         let url = format!("{}/messages", self.base_url);
-        let response = common::send_with_retry("Anthropic", || {
+        let response = common::send_with_retry_config("Anthropic", &self.retry_config, &mut || {
             self.client
                 .post(&url)
                 .header("x-api-key", &self.api_key)
@@ -153,6 +162,7 @@ mod tests {
             max_tokens: 100,
             openai_use_responses: None,
             adapter_override: None,
+            ..Default::default()
         }
     }
 

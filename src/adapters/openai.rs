@@ -10,6 +10,7 @@ pub struct OpenAIAdapter {
     config: ModelConfig,
     api_key: String,
     base_url: String,
+    retry_config: common::RetryConfig,
 }
 
 #[derive(Serialize)]
@@ -105,15 +106,23 @@ impl OpenAIAdapter {
                 "OpenAI API key not found. Set OPENAI_API_KEY environment variable or provide in config"
             })?;
 
+        let default_timeout = if is_local { 300 } else { 60 };
+        let timeout_secs = config.timeout_secs.unwrap_or(default_timeout);
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(if is_local { 300 } else { 60 }))
+            .timeout(std::time::Duration::from_secs(timeout_secs))
             .build()?;
+
+        let retry_config = common::RetryConfig {
+            max_retries: config.max_retries.unwrap_or(2),
+            base_delay_ms: config.retry_delay_ms.unwrap_or(250),
+        };
 
         Ok(Self {
             client,
             config,
             api_key,
             base_url,
+            retry_config,
         })
     }
 
@@ -169,7 +178,7 @@ impl OpenAIAdapter {
         };
 
         let url = format!("{}/chat/completions", self.base_url);
-        let response = common::send_with_retry("OpenAI", || {
+        let response = common::send_with_retry_config("OpenAI", &self.retry_config, &mut || {
             self.client
                 .post(&url)
                 .header("Authorization", format!("Bearer {}", self.api_key))
@@ -211,7 +220,7 @@ impl OpenAIAdapter {
         };
 
         let url = format!("{}/responses", self.base_url);
-        let response = common::send_with_retry("OpenAI", || {
+        let response = common::send_with_retry_config("OpenAI", &self.retry_config, &mut || {
             self.client
                 .post(&url)
                 .header("Authorization", format!("Bearer {}", self.api_key))
@@ -277,6 +286,7 @@ mod tests {
             max_tokens: 100,
             openai_use_responses: Some(false),
             adapter_override: None,
+            ..Default::default()
         }
     }
 

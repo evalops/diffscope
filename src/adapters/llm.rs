@@ -12,6 +12,15 @@ pub struct ModelConfig {
     pub openai_use_responses: Option<bool>,
     #[serde(default)]
     pub adapter_override: Option<String>,
+    /// Override HTTP timeout in seconds.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    /// Override max retries for transient failures.
+    #[serde(default)]
+    pub max_retries: Option<usize>,
+    /// Override base delay between retries in milliseconds.
+    #[serde(default)]
+    pub retry_delay_ms: Option<u64>,
 }
 
 impl Default for ModelConfig {
@@ -24,6 +33,9 @@ impl Default for ModelConfig {
             max_tokens: 4000,
             openai_use_responses: None,
             adapter_override: None,
+            timeout_secs: None,
+            max_retries: None,
+            retry_delay_ms: None,
         }
     }
 }

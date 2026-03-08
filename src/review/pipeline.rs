@@ -83,6 +83,18 @@ async fn review_diff_content_raw_inner(
     let diffs = core::DiffParser::parse_unified_diff(diff_content)?;
     info!("Parsed {} file diffs", diffs.len());
 
+    // Check file change limit
+    if let Some(limit) = config.file_change_limit {
+        if limit > 0 && diffs.len() > limit {
+            anyhow::bail!(
+                "Diff contains {} files, exceeding file_change_limit of {}. \
+                 Increase the limit or split the review.",
+                diffs.len(),
+                limit
+            );
+        }
+    }
+
     // Build enhanced review context from the new modules
     let mut enhanced_ctx = core::build_enhanced_context(
         &diffs,
@@ -96,6 +108,22 @@ async fn review_diff_content_raw_inner(
     if !enhanced_guidance.is_empty() {
         info!("Enhanced guidance generated ({} chars)", enhanced_guidance.len());
     }
+
+    // Auto-detect instruction files (.cursorrules, CLAUDE.md, agents.md, etc.)
+    let auto_instructions = if config.auto_detect_instructions && config.review_instructions.is_none() {
+        let detected = detect_instruction_files(repo_path);
+        if !detected.is_empty() {
+            let combined: Vec<String> = detected
+                .iter()
+                .map(|(name, content)| format!("# From {}\n{}", name, content))
+                .collect();
+            Some(combined.join("\n\n"))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let symbol_index = build_symbol_index(&config, repo_path);
     let pattern_repositories = resolve_pattern_repositories(&config, repo_path);
@@ -231,6 +259,13 @@ async fn review_diff_content_raw_inner(
         if !enhanced_guidance.is_empty() {
             local_prompt_config.system_prompt.push_str("\n\n");
             local_prompt_config.system_prompt.push_str(&enhanced_guidance);
+        }
+        // Inject auto-detected instruction files
+        if let Some(ref instructions) = auto_instructions {
+            local_prompt_config
+                .system_prompt
+                .push_str("\n\n# Project-specific instructions (auto-detected):\n");
+            local_prompt_config.system_prompt.push_str(instructions);
         }
         let local_prompt_builder = core::PromptBuilder::new(local_prompt_config);
         let (system_prompt, user_prompt) =
@@ -446,6 +481,23 @@ pub fn build_review_guidance(
         }
     }
 
+    // Output language directive
+    if let Some(ref lang) = config.output_language {
+        if lang != "en" {
+            sections.push(format!(
+                "Write all review comments and suggestions in {}.",
+                lang
+            ));
+        }
+    }
+
+    // Fix suggestions toggle
+    if !config.include_fix_suggestions {
+        sections.push(
+            "Do not include code fix suggestions. Only describe the issue.".to_string(),
+        );
+    }
+
     if sections.is_empty() {
         None
     } else {
@@ -615,6 +667,48 @@ fn has_excessive_repetition(text: &str) -> bool {
         }
     }
     false
+}
+
+/// Auto-detect instruction files commonly used by AI coding tools.
+/// Returns the concatenated contents of any found files (.cursorrules, CLAUDE.md, etc.)
+fn detect_instruction_files(repo_path: &Path) -> Vec<(String, String)> {
+    const INSTRUCTION_FILES: &[&str] = &[
+        ".cursorrules",
+        "CLAUDE.md",
+        ".claude/CLAUDE.md",
+        "agents.md",
+        ".github/copilot-instructions.md",
+        "GEMINI.md",
+        ".diffscope-instructions.md",
+    ];
+    const MAX_INSTRUCTION_SIZE: u64 = 10_000;
+
+    let mut results = Vec::new();
+    for filename in INSTRUCTION_FILES {
+        let path = repo_path.join(filename);
+        if path.is_file() {
+            // Skip files larger than 10KB
+            if let Ok(meta) = std::fs::metadata(&path) {
+                if meta.len() > MAX_INSTRUCTION_SIZE {
+                    warn!(
+                        "Skipping instruction file {} ({} bytes exceeds {})",
+                        filename,
+                        meta.len(),
+                        MAX_INSTRUCTION_SIZE
+                    );
+                    continue;
+                }
+            }
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let trimmed = content.trim().to_string();
+                if !trimmed.is_empty() {
+                    info!("Auto-detected instruction file: {}", filename);
+                    results.push((filename.to_string(), trimmed));
+                }
+            }
+        }
+    }
+    results
 }
 
 fn should_optimize_for_local(config: &config::Config) -> bool {
@@ -821,6 +915,54 @@ mod tests {
         };
         let guidance = build_review_guidance(&config, Some(&path_config)).unwrap();
         assert!(guidance.contains("Be extra careful here"));
+    }
+
+    #[test]
+    fn build_review_guidance_includes_output_language() {
+        let config = config::Config {
+            output_language: Some("ja".to_string()),
+            ..config::Config::default()
+        };
+        let guidance = build_review_guidance(&config, None).unwrap();
+        assert!(guidance.contains("ja"));
+    }
+
+    #[test]
+    fn build_review_guidance_skips_en_language() {
+        let config = config::Config {
+            output_language: Some("en".to_string()),
+            ..config::Config::default()
+        };
+        let guidance = build_review_guidance(&config, None).unwrap();
+        // "en" language should not add a language directive
+        assert!(!guidance.contains("Write all review comments"));
+    }
+
+    #[test]
+    fn build_review_guidance_no_fix_suggestions() {
+        let config = config::Config {
+            include_fix_suggestions: false,
+            ..config::Config::default()
+        };
+        let guidance = build_review_guidance(&config, None).unwrap();
+        assert!(guidance.contains("Do not include code fix suggestions"));
+    }
+
+    #[test]
+    fn detect_instruction_files_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let results = detect_instruction_files(dir.path());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn detect_instruction_files_finds_cursorrules() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".cursorrules"), "Use tabs not spaces").unwrap();
+        let results = detect_instruction_files(dir.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, ".cursorrules");
+        assert!(results[0].1.contains("Use tabs"));
     }
 
     // --- chunk_diff_for_context tests ---

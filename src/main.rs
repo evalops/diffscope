@@ -69,6 +69,18 @@ struct Cli {
     )]
     openai_responses: Option<bool>,
 
+    #[arg(long, global = true, help = "HTTP timeout in seconds for LLM requests")]
+    timeout: Option<u64>,
+
+    #[arg(long, global = true, help = "Max retries on transient failures")]
+    max_retries: Option<usize>,
+
+    #[arg(long, global = true, help = "Skip review if diff exceeds N files")]
+    file_change_limit: Option<usize>,
+
+    #[arg(long, global = true, help = "Output language (e.g., en, ja, de)")]
+    output_language: Option<String>,
+
     #[arg(long, global = true, default_value = "json")]
     output_format: OutputFormat,
 
@@ -290,6 +302,18 @@ async fn main() -> Result<()> {
         config.symbol_index = true;
         config.symbol_index_provider = "lsp".to_string();
         config.symbol_index_lsp_command = Some(command);
+    }
+    if let Some(timeout) = cli.timeout {
+        config.adapter_timeout_secs = Some(timeout);
+    }
+    if let Some(retries) = cli.max_retries {
+        config.adapter_max_retries = Some(retries);
+    }
+    if let Some(limit) = cli.file_change_limit {
+        config.file_change_limit = Some(limit);
+    }
+    if let Some(lang) = cli.output_language {
+        config.output_language = Some(lang);
     }
     config.normalize();
 

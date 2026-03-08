@@ -9,6 +9,7 @@ pub struct OllamaAdapter {
     client: Client,
     config: ModelConfig,
     base_url: String,
+    retry_config: common::RetryConfig,
 }
 
 // -- Chat API types (primary) --
@@ -100,14 +101,21 @@ impl OllamaAdapter {
             .clone()
             .unwrap_or_else(|| "http://localhost:11434".to_string());
 
+        let timeout_secs = config.timeout_secs.unwrap_or(300);
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
+            .timeout(std::time::Duration::from_secs(timeout_secs))
             .build()?;
+
+        let retry_config = common::RetryConfig {
+            max_retries: config.max_retries.unwrap_or(2),
+            base_delay_ms: config.retry_delay_ms.unwrap_or(250),
+        };
 
         Ok(Self {
             client,
             config,
             base_url,
+            retry_config,
         })
     }
 
@@ -190,7 +198,7 @@ impl LLMAdapter for OllamaAdapter {
         };
 
         let url = format!("{}/api/chat", self.base_url);
-        let response = common::send_with_retry("Ollama", || {
+        let response = common::send_with_retry_config("Ollama", &self.retry_config, &mut || {
             self.client.post(&url).json(&chat_request)
         })
         .await
@@ -236,6 +244,7 @@ mod tests {
             max_tokens: 100,
             openai_use_responses: None,
             adapter_override: None,
+            ..Default::default()
         }
     }
 

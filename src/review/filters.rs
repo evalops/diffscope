@@ -80,7 +80,12 @@ pub fn apply_comment_type_filter(
     kept
 }
 
-pub fn should_adaptively_suppress(comment: &core::Comment, feedback: &FeedbackStore) -> bool {
+pub fn should_adaptively_suppress_with_thresholds(
+    comment: &core::Comment,
+    feedback: &FeedbackStore,
+    rejected_threshold: usize,
+    margin: usize,
+) -> bool {
     if matches!(
         comment.severity,
         core::comment::Severity::Error | core::comment::Severity::Warning
@@ -94,12 +99,14 @@ pub fn should_adaptively_suppress(comment: &core::Comment, feedback: &FeedbackSt
         None => return false,
     };
 
-    stats.rejected >= 3 && stats.rejected >= stats.accepted.saturating_add(2)
+    stats.rejected >= rejected_threshold && stats.rejected >= stats.accepted.saturating_add(margin)
 }
 
-pub fn apply_feedback_suppression(
+pub fn apply_feedback_suppression_with_thresholds(
     comments: Vec<core::Comment>,
     feedback: &FeedbackStore,
+    rejected_threshold: usize,
+    margin: usize,
 ) -> Vec<core::Comment> {
     if feedback.suppress.is_empty() && feedback.by_comment_type.is_empty() {
         return comments;
@@ -115,7 +122,12 @@ pub fn apply_feedback_suppression(
             explicit_dropped += 1;
             continue;
         }
-        if should_adaptively_suppress(&comment, feedback) {
+        if should_adaptively_suppress_with_thresholds(
+            &comment,
+            feedback,
+            rejected_threshold,
+            margin,
+        ) {
             adaptive_dropped += 1;
             continue;
         }
@@ -173,7 +185,12 @@ pub fn apply_review_filters(
 ) -> Vec<core::Comment> {
     let comments = apply_confidence_threshold(comments, config.effective_min_confidence());
     let comments = apply_comment_type_filter(comments, &config.comment_types);
-    apply_feedback_suppression(comments, feedback)
+    apply_feedback_suppression_with_thresholds(
+        comments,
+        feedback,
+        config.feedback_suppression_threshold,
+        config.feedback_suppression_margin,
+    )
 }
 
 #[cfg(test)]
@@ -268,7 +285,7 @@ mod tests {
             ),
         ];
 
-        let filtered = apply_feedback_suppression(comments, &feedback);
+        let filtered = apply_feedback_suppression_with_thresholds(comments, &feedback, 3, 2);
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].id, "style-high");
@@ -289,7 +306,7 @@ mod tests {
         };
 
         let comment = build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Error, 0.9);
-        assert!(!should_adaptively_suppress(&comment, &feedback));
+        assert!(!should_adaptively_suppress_with_thresholds(&comment, &feedback, 3, 2));
     }
 
     #[test]
@@ -307,7 +324,7 @@ mod tests {
         };
 
         let comment = build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Warning, 0.9);
-        assert!(!should_adaptively_suppress(&comment, &feedback));
+        assert!(!should_adaptively_suppress_with_thresholds(&comment, &feedback, 3, 2));
     }
 
     #[test]
@@ -380,7 +397,7 @@ mod tests {
             build_comment("c2", core::comment::Category::Bug, core::comment::Severity::Error, 0.9),
         ];
 
-        let filtered = apply_feedback_suppression(comments, &feedback);
+        let filtered = apply_feedback_suppression_with_thresholds(comments, &feedback, 3, 2);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].id, "c2");
     }

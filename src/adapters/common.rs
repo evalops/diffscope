@@ -5,21 +5,39 @@ use std::time::Duration;
 use tokio::time::sleep;
 use url::Url;
 
-/// Send an HTTP request with retry logic for transient failures.
-///
-/// Retries up to 2 times on retryable status codes (429, 5xx) or connection errors,
-/// with linear backoff starting at 250ms.
-pub async fn send_with_retry<F>(
+/// Default retry parameters.
+const DEFAULT_MAX_RETRIES: usize = 2;
+const DEFAULT_BASE_DELAY_MS: u64 = 250;
+
+/// Configurable retry parameters for LLM adapter requests.
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    pub max_retries: usize,
+    pub base_delay_ms: u64,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: DEFAULT_MAX_RETRIES,
+            base_delay_ms: DEFAULT_BASE_DELAY_MS,
+        }
+    }
+}
+
+/// Send an HTTP request with configurable retry parameters.
+pub async fn send_with_retry_config<F>(
     adapter_name: &str,
-    mut make_request: F,
+    retry_config: &RetryConfig,
+    make_request: &mut F,
 ) -> Result<reqwest::Response>
 where
     F: FnMut() -> reqwest::RequestBuilder,
 {
-    const MAX_RETRIES: usize = 2;
-    const BASE_DELAY_MS: u64 = 250;
+    let max_retries = retry_config.max_retries;
+    let base_delay_ms = retry_config.base_delay_ms;
 
-    for attempt in 0..=MAX_RETRIES {
+    for attempt in 0..=max_retries {
         match make_request().send().await {
             Ok(response) => {
                 if response.status().is_success() {
@@ -28,8 +46,8 @@ where
 
                 let status = response.status();
                 let body = response.text().await.unwrap_or_default();
-                if is_retryable_status(status) && attempt < MAX_RETRIES {
-                    sleep(Duration::from_millis(BASE_DELAY_MS * (attempt as u64 + 1))).await;
+                if is_retryable_status(status) && attempt < max_retries {
+                    sleep(Duration::from_millis(base_delay_ms * (attempt as u64 + 1))).await;
                     continue;
                 }
 
@@ -43,8 +61,8 @@ where
                 );
             }
             Err(err) => {
-                if attempt < MAX_RETRIES {
-                    sleep(Duration::from_millis(BASE_DELAY_MS * (attempt as u64 + 1))).await;
+                if attempt < max_retries {
+                    sleep(Duration::from_millis(base_delay_ms * (attempt as u64 + 1))).await;
                     continue;
                 }
                 return Err(err.into());

@@ -91,6 +91,43 @@ pub struct Config {
     #[serde(default)]
     pub openai_use_responses: Option<bool>,
 
+    /// HTTP timeout in seconds for LLM adapter requests.
+    /// Defaults: 60s for cloud APIs, 300s for local endpoints.
+    #[serde(default)]
+    pub adapter_timeout_secs: Option<u64>,
+
+    /// Maximum number of retries on transient failures (429, 5xx).
+    #[serde(default)]
+    pub adapter_max_retries: Option<usize>,
+
+    /// Base delay in milliseconds between retries (linear backoff).
+    #[serde(default)]
+    pub adapter_retry_delay_ms: Option<u64>,
+
+    /// Maximum number of file changes before skipping review (0 = no limit).
+    #[serde(default)]
+    pub file_change_limit: Option<usize>,
+
+    /// Auto-detect and absorb .cursorrules, CLAUDE.md, agents.md files.
+    #[serde(default = "default_true")]
+    pub auto_detect_instructions: bool,
+
+    /// Language/locale for review output (e.g., "en", "ja", "de").
+    #[serde(default)]
+    pub output_language: Option<String>,
+
+    /// Whether to include AI fix suggestions with comments.
+    #[serde(default = "default_true")]
+    pub include_fix_suggestions: bool,
+
+    /// Minimum number of rejections before adaptive suppression kicks in.
+    #[serde(default = "default_feedback_suppression_threshold")]
+    pub feedback_suppression_threshold: usize,
+
+    /// Margin: rejected must exceed accepted by this amount for suppression.
+    #[serde(default = "default_feedback_suppression_margin")]
+    pub feedback_suppression_margin: usize,
+
     #[serde(default)]
     pub plugins: PluginConfig,
 
@@ -215,6 +252,15 @@ impl Default for Config {
             adapter: None,
             context_window: None,
             openai_use_responses: None,
+            adapter_timeout_secs: None,
+            adapter_max_retries: None,
+            adapter_retry_delay_ms: None,
+            file_change_limit: None,
+            auto_detect_instructions: true,
+            output_language: None,
+            include_fix_suggestions: true,
+            feedback_suppression_threshold: default_feedback_suppression_threshold(),
+            feedback_suppression_margin: default_feedback_suppression_margin(),
             plugins: PluginConfig::default(),
             exclude_patterns: Vec::new(),
             paths: HashMap::new(),
@@ -516,6 +562,40 @@ impl Config {
                 }
                 acc
             });
+
+        // Clamp adapter timeout to reasonable range (5s - 600s)
+        if let Some(timeout) = self.adapter_timeout_secs {
+            if timeout == 0 {
+                self.adapter_timeout_secs = None; // use default
+            } else {
+                self.adapter_timeout_secs = Some(timeout.min(600));
+            }
+        }
+        // Clamp adapter retries (0-10)
+        if let Some(retries) = self.adapter_max_retries {
+            self.adapter_max_retries = Some(retries.min(10));
+        }
+        // Clamp retry delay (50ms - 30s)
+        if let Some(delay) = self.adapter_retry_delay_ms {
+            if delay == 0 {
+                self.adapter_retry_delay_ms = None;
+            } else {
+                self.adapter_retry_delay_ms = Some(delay.min(30_000));
+            }
+        }
+        // Normalize output language
+        if let Some(ref lang) = self.output_language {
+            let trimmed = lang.trim().to_lowercase();
+            self.output_language = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            };
+        }
+        // Ensure suppression thresholds are reasonable
+        if self.feedback_suppression_threshold == 0 {
+            self.feedback_suppression_threshold = default_feedback_suppression_threshold();
+        }
     }
 
     pub fn get_path_config(&self, file_path: &Path) -> Option<&PathConfig> {
@@ -599,6 +679,9 @@ impl Config {
             max_tokens: self.max_tokens,
             openai_use_responses: self.openai_use_responses,
             adapter_override: self.adapter.clone(),
+            timeout_secs: self.adapter_timeout_secs,
+            max_retries: self.adapter_max_retries,
+            retry_delay_ms: self.adapter_retry_delay_ms,
         }
     }
 
@@ -723,6 +806,14 @@ fn default_pattern_repo_max_rules() -> usize {
 
 fn default_max_active_rules() -> usize {
     30
+}
+
+fn default_feedback_suppression_threshold() -> usize {
+    3
+}
+
+fn default_feedback_suppression_margin() -> usize {
+    2
 }
 
 fn default_true() -> bool {
@@ -970,5 +1061,65 @@ mod tests {
         };
         config.normalize();
         assert_eq!(config.temperature, default_temperature());
+    }
+
+    #[test]
+    fn normalize_adapter_timeout_clamps_to_max() {
+        let mut config = Config {
+            adapter_timeout_secs: Some(9999),
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.adapter_timeout_secs, Some(600));
+    }
+
+    #[test]
+    fn normalize_adapter_timeout_zero_clears() {
+        let mut config = Config {
+            adapter_timeout_secs: Some(0),
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.adapter_timeout_secs, None);
+    }
+
+    #[test]
+    fn normalize_adapter_retries_clamps() {
+        let mut config = Config {
+            adapter_max_retries: Some(50),
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.adapter_max_retries, Some(10));
+    }
+
+    #[test]
+    fn normalize_output_language_trims() {
+        let mut config = Config {
+            output_language: Some("  JA  ".to_string()),
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.output_language.as_deref(), Some("ja"));
+    }
+
+    #[test]
+    fn normalize_output_language_empty_clears() {
+        let mut config = Config {
+            output_language: Some("   ".to_string()),
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.output_language, None);
+    }
+
+    #[test]
+    fn normalize_feedback_suppression_zero_resets() {
+        let mut config = Config {
+            feedback_suppression_threshold: 0,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.feedback_suppression_threshold, default_feedback_suppression_threshold());
     }
 }
