@@ -67,8 +67,9 @@ Commit: docs: update installation instructions for v2.0
     pub fn extract_commit_message(response: &str) -> String {
         // Try to extract from <commit> tags first
         if let Some(start) = response.find("<commit>") {
-            if let Some(end) = response.find("</commit>") {
-                let commit = response[start + 8..end].trim();
+            let after_tag = start + 8;
+            if let Some(end) = response[after_tag..].find("</commit>") {
+                let commit = response[after_tag..after_tag + end].trim();
                 return commit.to_string();
             }
         }
@@ -133,5 +134,34 @@ Analyze the changes and provide a PR title in <title> tags.
         );
 
         (system_prompt.to_string(), user_prompt)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_commit_message_normal() {
+        let response = "<analysis>Changed auth</analysis>\n<commit>fix(auth): handle null token</commit>";
+        assert_eq!(
+            CommitPromptBuilder::extract_commit_message(response),
+            "fix(auth): handle null token"
+        );
+    }
+
+    #[test]
+    fn test_extract_commit_message_malformed_closing_before_opening() {
+        // Malformed: closing tag appears before opening tag — should NOT panic
+        let response = "text</commit> more <commit>feat: real message</commit>";
+        let result = CommitPromptBuilder::extract_commit_message(response);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_commit_message_no_tags() {
+        let response = "Some analysis\nfeat(auth): add login\nMore text";
+        let result = CommitPromptBuilder::extract_commit_message(response);
+        assert!(!result.is_empty());
     }
 }
