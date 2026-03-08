@@ -1181,12 +1181,77 @@ fn path_to_uri(path: &Path) -> Result<String> {
 
 fn url_encode(segment: &str) -> String {
     let mut out = String::new();
-    for ch in segment.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' || ch == '~' {
-            out.push(ch);
+    for byte in segment.bytes() {
+        if byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' || byte == b'.' || byte == b'~' {
+            out.push(byte as char);
         } else {
-            out.push_str(&format!("%{:02X}", ch as u32));
+            out.push_str(&format!("%{:02X}", byte));
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_url_encode_ascii() {
+        assert_eq!(url_encode("hello"), "hello");
+        assert_eq!(url_encode("file.rs"), "file.rs");
+        assert_eq!(url_encode("a b"), "a%20b");
+    }
+
+    #[test]
+    fn test_url_encode_multibyte_utf8() {
+        // '€' is U+20AC, UTF-8 bytes: 0xE2 0x82 0xAC
+        // Correct percent-encoding: %E2%82%AC
+        let encoded = url_encode("€");
+        assert_eq!(
+            encoded, "%E2%82%AC",
+            "Multi-byte UTF-8 chars must be percent-encoded per byte, got: {}",
+            encoded
+        );
+    }
+
+    #[test]
+    fn test_url_encode_two_byte_utf8() {
+        // 'é' is U+00E9, UTF-8 bytes: 0xC3 0xA9
+        // Correct percent-encoding: %C3%A9
+        let encoded = url_encode("café");
+        assert_eq!(
+            encoded, "caf%C3%A9",
+            "Two-byte UTF-8 chars must be percent-encoded per byte, got: {}",
+            encoded
+        );
+    }
+
+    #[test]
+    fn test_normalize_relative_path() {
+        let result = normalize_relative_path(PathBuf::from("src/../lib/./utils.rs"));
+        assert_eq!(result, PathBuf::from("lib/utils.rs"));
+    }
+
+    #[test]
+    fn test_normalize_relative_path_no_dots() {
+        let result = normalize_relative_path(PathBuf::from("src/lib/utils.rs"));
+        assert_eq!(result, PathBuf::from("src/lib/utils.rs"));
+    }
+
+    #[test]
+    fn test_candidate_paths_with_extension() {
+        let candidates = candidate_paths(Path::new("src/lib.rs"));
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0], PathBuf::from("src/lib.rs"));
+    }
+
+    #[test]
+    fn test_candidate_paths_without_extension() {
+        let candidates = candidate_paths(Path::new("src/lib"));
+        // Should include the original + extensions + directory index files
+        assert!(candidates.len() > 1);
+        assert!(candidates.contains(&PathBuf::from("src/lib")));
+        assert!(candidates.contains(&PathBuf::from("src/lib.rs")));
+        assert!(candidates.contains(&PathBuf::from("src/lib.py")));
+    }
 }
