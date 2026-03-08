@@ -134,7 +134,9 @@ impl AppState {
                 eprintln!("Failed to write config: {}", e);
                 return;
             }
-            let _ = tokio::fs::rename(&tmp_path, &state.config_path).await;
+            if let Err(e) = tokio::fs::rename(&tmp_path, &state.config_path).await {
+                eprintln!("Failed to rename config file: {}", e);
+            }
         });
     }
 

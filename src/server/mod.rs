@@ -61,14 +61,21 @@ async fn serve_embedded(uri: axum::http::Uri) -> Response {
 pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Result<()> {
     let state = Arc::new(state::AppState::new(config)?);
 
-    let allowed_origins: Vec<axum::http::HeaderValue> = [
+    let origin_strings = [
         format!("http://localhost:{}", port),
         format!("http://127.0.0.1:{}", port),
         "http://localhost:5173".to_string(),
-    ]
-    .iter()
-    .filter_map(|s| s.parse().ok())
-    .collect();
+    ];
+    let allowed_origins: Vec<axum::http::HeaderValue> = origin_strings
+        .iter()
+        .filter_map(|s| match s.parse() {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!("Warning: failed to parse CORS origin '{}': {}", s, e);
+                None
+            }
+        })
+        .collect();
 
     let cors = CorsLayer::new()
         .allow_origin(allowed_origins)

@@ -457,19 +457,19 @@ pub async fn update_config(
 
     *config = new_config;
     config.normalize();
-    drop(config);
 
-    // Persist config to disk
-    AppState::save_config_async(&state);
-
-    // Return updated config (redacted)
-    let config = state.config.read().await;
+    // Build response while still holding the write lock
     let mut result = serde_json::to_value(&*config).unwrap_or_default();
     if let Some(obj) = result.as_object_mut() {
         if obj.contains_key("api_key") {
             obj.insert("api_key".to_string(), serde_json::json!("***"));
         }
     }
+
+    drop(config);
+
+    // Persist config to disk
+    AppState::save_config_async(&state);
 
     Ok(Json(result))
 }
