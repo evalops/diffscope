@@ -288,7 +288,7 @@ fn analyze_file_risk(diff: &UnifiedDiff) -> HotspotResult {
     let max_line = diff
         .hunks
         .iter()
-        .map(|h| h.new_start + h.new_lines)
+        .map(|h| h.new_start + h.new_lines.saturating_sub(1))
         .max()
         .unwrap_or(1);
 
@@ -699,6 +699,42 @@ mod tests {
         let hotspots = review.detect_hotspots(&diffs);
         assert!(!hotspots.is_empty());
         assert!(hotspots[0].risk_score <= 1.0);
+    }
+
+    // BUG: max_line uses new_start + new_lines instead of new_start + new_lines - 1
+    // A hunk at line 10 with 3 lines (10,11,12) should give max_line=12, not 13
+    #[test]
+    fn test_hotspot_line_range_end() {
+        let review = MultiPassReview::with_defaults();
+        // Use "auth" path to trigger risk_score > 0.0 so the hotspot isn't filtered
+        let diffs = vec![UnifiedDiff {
+            file_path: PathBuf::from("src/auth.rs"),
+            old_content: None,
+            new_content: None,
+            hunks: vec![crate::core::diff_parser::DiffHunk {
+                old_start: 10,
+                old_lines: 3,
+                new_start: 10,
+                new_lines: 3,
+                context: String::new(),
+                changes: vec![
+                    make_added_line(10, "line 10"),
+                    make_added_line(11, "line 11"),
+                    make_added_line(12, "line 12"),
+                ],
+            }],
+            is_binary: false,
+            is_deleted: false,
+            is_new: false,
+        }];
+        let hotspots = review.detect_hotspots(&diffs);
+        assert_eq!(hotspots.len(), 1);
+        // Lines are 10,11,12 → max should be 12, not 13
+        assert_eq!(
+            hotspots[0].line_range.1, 12,
+            "max_line should be 12 (new_start + new_lines - 1), got {}",
+            hotspots[0].line_range.1
+        );
     }
 
     #[test]

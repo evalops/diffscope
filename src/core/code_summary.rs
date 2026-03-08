@@ -259,11 +259,13 @@ fn extract_parameters(code: &str, language: &str) -> Vec<String> {
 }
 
 static RUST_RETURN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"->\s*([^\{]+)").unwrap());
+    Lazy::new(|| Regex::new(r".*->\s*([^\{]+)").unwrap());
 
 fn extract_return_type(code: &str, language: &str) -> Option<String> {
     match language {
         "rs" => {
+            // Greedy .* consumes everything up to the LAST "->", which is
+            // the return type arrow (skips arrows inside fn pointer params)
             let first_lines: String = code.lines().take(3).collect::<Vec<_>>().join(" ");
             RUST_RETURN
                 .captures(&first_lines)
@@ -740,6 +742,21 @@ mod tests {
         assert!(
             cb.contains("bool"),
             "callback type should include '-> bool', got: '{cb}'"
+        );
+    }
+
+    // BUG: extract_return_type matches first "->" in the line, which hits the
+    // arrow inside fn pointer params instead of the actual return type arrow
+    #[test]
+    fn test_extract_return_type_with_fn_pointer_param() {
+        let code = "fn process(cb: fn(u32) -> bool) -> Result<()> {";
+        let ret = extract_return_type(code, "rs");
+        assert!(ret.is_some());
+        let ret_str = ret.unwrap();
+        // Should be "Result<()>", not "bool) -> Result<()>"
+        assert!(
+            ret_str.starts_with("Result"),
+            "Return type should be 'Result<()>', got: '{ret_str}'"
         );
     }
 

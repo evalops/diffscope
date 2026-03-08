@@ -815,7 +815,7 @@ fn next_func() {
         );
     }
 
-    // BUG: find_enclosing_function panics on underflow if end_line < start_line
+    // find_enclosing_function: verify no underflow if end_line < start_line
     #[test]
     fn test_find_enclosing_function_bad_boundary() {
         let boundaries = vec![
