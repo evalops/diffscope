@@ -1,6 +1,18 @@
 name: repo regression - missing RawComment rule_id initializer
 repo_path: ../../..
-diff_file: ./raw_comment_missing_field.patch
+diff: |
+  diff --git a/src/main.rs b/src/main.rs
+  index b9f5a12..ad88084 100644
+  --- a/src/main.rs
+  +++ b/src/main.rs
+  @@ -1966,7 +1966,6 @@ fn parse_llm_response(content: &str, file_path: &Path) -> Result<Vec<core::comm
+                   file_path: file_path.to_path_buf(),
+                   line_number,
+                   content,
+  -                rule_id,
+                   suggestion,
+                   severity: None,
+                   category: None,
 expect:
   must_find:
     - file: src/main.rs

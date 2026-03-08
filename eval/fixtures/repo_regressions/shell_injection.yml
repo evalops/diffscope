@@ -1,6 +1,21 @@
 name: repo regression - shell injection in debug helper
 repo_path: ../../..
-diff_file: ./shell_injection.patch
+diff: |
+  diff --git a/src/main.rs b/src/main.rs
+  index 2f4f9cb..8f128ab 100644
+  --- a/src/main.rs
+  +++ b/src/main.rs
+  @@ -1226,6 +1226,14 @@ async fn suggest_pr_title(config: config::Config) -> Result<()> {
+   
+       Ok(())
+   }
+  +
+  +fn run_debug_command(user_command: &str) {
+  +    let _ = std::process::Command::new("sh")
+  +        .arg("-c")
+  +        .arg(user_command)
+  +        .status();
+  +}
 expect:
   must_find:
     - file: src/main.rs

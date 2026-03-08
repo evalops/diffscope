@@ -1,6 +1,20 @@
 name: repo regression - unwrap panic in confidence parser
 repo_path: ../../..
-diff_file: ./smart_confidence_unwrap.patch
+diff: |
+  diff --git a/src/main.rs b/src/main.rs
+  index 7a12fe1..39d9220 100644
+  --- a/src/main.rs
+  +++ b/src/main.rs
+  @@ -2580,9 +2580,8 @@ fn parse_smart_confidence(value: &str) -> Option<f32> {
+       let trimmed = value.trim().trim_end_matches('%');
+  -    if let Ok(percent) = trimmed.parse::<f32>() {
+  -        Some((percent / 100.0).clamp(0.0, 1.0))
+  -    } else {
+  -        None
+  -    }
+  +    let percent = trimmed.parse::<f32>().unwrap();
+  +    Some((percent / 100.0).clamp(0.0, 1.0))
+   }
 expect:
   must_find:
     - file: src/main.rs
