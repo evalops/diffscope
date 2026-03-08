@@ -674,4 +674,57 @@ mod tests {
         stage.execute(&mut ctx).unwrap();
         assert_eq!(ctx.comments.len(), 1);
     }
+
+    // BUG: DeduplicateStage uses dedup_by which requires the vec to be sorted,
+    // but only deduplicates ADJACENT identical items. Different-content comments
+    // at the same file+line are NOT deduplicated.
+    #[test]
+    fn test_deduplicate_preserves_different_content_same_line() {
+        let mut ctx = PipelineContext::new();
+        ctx.comments.push(make_comment("test.rs", 5, "Missing null check", 0.8));
+        ctx.comments.push(make_comment("test.rs", 5, "Potential memory leak", 0.9));
+
+        let stage = DeduplicateStage;
+        stage.execute(&mut ctx).unwrap();
+        // Different content at same line should be preserved
+        assert_eq!(ctx.comments.len(), 2);
+    }
+
+    // BUG: SortBySeverityStage clones file_path in the sort key, which is expensive
+    // but functionally correct. Test that sort order is correct.
+    #[test]
+    fn test_sort_by_severity_order() {
+        let mut ctx = PipelineContext::new();
+        ctx.comments.push(make_comment("b.rs", 1, "info", 0.5));
+        ctx.comments[0].severity = Severity::Info;
+        ctx.comments.push(make_comment("a.rs", 1, "error", 0.9));
+        ctx.comments[1].severity = Severity::Error;
+        ctx.comments.push(make_comment("a.rs", 2, "warning", 0.7));
+        ctx.comments[2].severity = Severity::Warning;
+
+        let stage = SortBySeverityStage;
+        stage.execute(&mut ctx).unwrap();
+
+        // Error should come first, then Warning, then Info
+        assert_eq!(ctx.comments[0].severity, Severity::Error);
+        assert_eq!(ctx.comments[1].severity, Severity::Warning);
+        assert_eq!(ctx.comments[2].severity, Severity::Info);
+    }
+
+    // Test that pipeline records stage results correctly
+    #[test]
+    fn test_pipeline_records_all_stage_results() {
+        let pipeline = PipelineBuilder::new()
+            .add(Box::new(TaggingStage))
+            .add(Box::new(DeduplicateStage))
+            .add(Box::new(SortBySeverityStage))
+            .build();
+
+        let mut ctx = PipelineContext::new();
+        pipeline.execute(&mut ctx).unwrap();
+        assert_eq!(ctx.stage_results.len(), 3);
+        assert_eq!(ctx.stage_results[0].stage_name, "auto-tagger");
+        assert_eq!(ctx.stage_results[1].stage_name, "deduplicate");
+        assert_eq!(ctx.stage_results[2].stage_name, "sort-by-severity");
+    }
 }

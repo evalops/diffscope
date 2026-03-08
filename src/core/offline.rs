@@ -41,8 +41,10 @@ impl OfflineConfig {
             5_000
         } else if model_lower.contains("3b") {
             2_500
-        } else if model_lower.contains("1b") || model_lower.contains("1.5b") {
+        } else if model_lower.contains("1.5b") {
             1_500
+        } else if model_lower.contains("1b") {
+            1_000
         } else {
             4_000 // default estimate
         };
@@ -71,6 +73,8 @@ impl OfflineConfig {
         }
         if self.base_url.is_empty() {
             errors.push("Base URL cannot be empty".to_string());
+        } else if !self.base_url.starts_with("http://") && !self.base_url.starts_with("https://") {
+            errors.push("Base URL must start with http:// or https://".to_string());
         }
         if self.context_window < 512 {
             errors.push("Context window must be at least 512 tokens".to_string());
@@ -622,5 +626,40 @@ mod tests {
         );
         assert!(payload.to_string().contains(&config.model_name));
         assert!(payload.to_string().contains("system"));
+    }
+
+    // BUG: "1.5b" model name contains "1b" so it matched the 1b check first
+    #[test]
+    fn test_ram_estimation_1_5b_vs_1b() {
+        let config_1b = OfflineConfig {
+            model_name: "qwen2.5:1b".to_string(),
+            ..Default::default()
+        };
+        let config_1_5b = OfflineConfig {
+            model_name: "qwen2.5:1.5b".to_string(),
+            ..Default::default()
+        };
+        // 1.5b model should use strictly more RAM than 1b model
+        assert!(
+            config_1_5b.estimated_ram_mb() > config_1b.estimated_ram_mb(),
+            "1.5b ({}) should need more RAM than 1b ({})",
+            config_1_5b.estimated_ram_mb(),
+            config_1b.estimated_ram_mb()
+        );
+    }
+
+    // BUG: validate() doesn't check for obviously wrong base_url formats
+    #[test]
+    fn test_validate_rejects_invalid_url() {
+        let config = OfflineConfig {
+            base_url: "not-a-url".to_string(),
+            ..Default::default()
+        };
+        let errors = config.validate();
+        assert!(
+            errors.iter().any(|e| e.contains("URL") || e.contains("url")),
+            "Should flag invalid URL format, got: {:?}",
+            errors
+        );
     }
 }

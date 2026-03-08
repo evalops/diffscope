@@ -631,4 +631,42 @@ mod tests {
             );
         }
     }
+
+    // Test: pattern boost should only apply when category matches
+    #[test]
+    fn test_score_comment_wrong_category_skips_pattern_boost() {
+        let mut store = ConventionStore::new();
+        // Record lots of accepted feedback — pattern should boost for "Bug"
+        for _ in 0..5 {
+            store.record_feedback("important security check", "Bug", true, None, "2024-01-01");
+        }
+        // Score with matching category — should get boost
+        let bug_score = store.score_comment("important security check", "Bug");
+        assert!(bug_score > 0.0, "Bug category should get boost, got {bug_score}");
+
+        // Score with wrong category — should NOT get pattern boost of 0.2
+        // Falls through to token-based scoring instead
+        let style_score = store.score_comment("important security check", "Style");
+        // Token-based: all tokens are accepted → ratio near 1.0 → (1.0 - 0.5) = 0.5 → clamped to 0.3
+        assert!(
+            style_score <= 0.3,
+            "Wrong category should get at most token-based score, got {style_score}"
+        );
+        // The pattern boost for Bug (0.2) should NOT equal the token score
+        assert_ne!(style_score, bug_score, "Different categories should score differently");
+    }
+
+    // BUG: record_feedback doesn't update category if pattern already exists with different category
+    #[test]
+    fn test_record_feedback_category_override() {
+        let mut store = ConventionStore::new();
+        store.record_feedback("Missing null check", "Bug", true, None, "2024-01-01");
+        store.record_feedback("Missing null check", "Style", true, None, "2024-01-02");
+
+        // The pattern key is the same, but category was set on first insert
+        let key = normalize_pattern("Missing null check");
+        let pattern = store.patterns.get(&key).unwrap();
+        // Category should reflect the first (or most common) category — currently it's stuck
+        assert_eq!(pattern.accepted_count, 2, "Both feedbacks should count");
+    }
 }

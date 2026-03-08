@@ -252,17 +252,24 @@ fn find_function_end(lines: &[&str], start: usize, language: &str) -> usize {
             lines.len().saturating_sub(1)
         }
         _ => {
-            // Brace-based languages
+            // Brace-based languages — skip braces inside string literals
             let mut depth = 0i32;
             let mut found_open = false;
             for (i, line) in lines.iter().enumerate().skip(start) {
+                let mut in_string = false;
+                let mut prev_char = '\0';
                 for ch in line.chars() {
-                    if ch == '{' {
-                        depth += 1;
-                        found_open = true;
-                    } else if ch == '}' {
-                        depth -= 1;
+                    if ch == '"' && prev_char != '\\' {
+                        in_string = !in_string;
+                    } else if !in_string {
+                        if ch == '{' {
+                            depth += 1;
+                            found_open = true;
+                        } else if ch == '}' {
+                            depth -= 1;
+                        }
                     }
+                    prev_char = ch;
                 }
                 if found_open && depth <= 0 {
                     return i;
@@ -757,5 +764,77 @@ fn second() {
         let boundaries = detect_function_boundaries(content, "go");
         assert_eq!(boundaries.len(), 1);
         assert_eq!(boundaries[0].name, "handleRequest");
+    }
+
+    // BUG: brace counting includes braces in strings, giving wrong function end
+    // This test uses unbalanced braces in strings to expose the bug
+    #[test]
+    fn test_function_end_unbalanced_string_braces() {
+        let content = r#"fn render() {
+    let open_brace = "{{{{";
+    let msg = format!("value: {}", x);
+    println!("done");
+}
+
+fn next_func() {
+    // should be separate
+}
+"#;
+        let boundaries = detect_function_boundaries(content, "rs");
+        assert_eq!(boundaries.len(), 2, "Should find both functions: {:?}", boundaries);
+        // render() should end at the } on line 5 (before next_func)
+        assert!(
+            boundaries[0].end_line < boundaries[1].start_line,
+            "render ends at {} but next_func starts at {}",
+            boundaries[0].end_line,
+            boundaries[1].start_line
+        );
+    }
+
+    // BUG: Python function end detection fails for methods in classes
+    #[test]
+    fn test_python_method_boundaries() {
+        let content = r#"class Server:
+    def handle_request(self, request):
+        response = self.process(request)
+        return response
+
+    def process(self, request):
+        return request.upper()
+"#;
+        let boundaries = detect_function_boundaries(content, "py");
+        assert_eq!(boundaries.len(), 2, "Should find both methods: {:?}", boundaries);
+        assert_eq!(boundaries[0].name, "handle_request");
+        assert_eq!(boundaries[1].name, "process");
+        // handle_request should end before process starts
+        assert!(
+            boundaries[0].end_line < boundaries[1].start_line,
+            "handle_request ends at {} but process starts at {}",
+            boundaries[0].end_line,
+            boundaries[1].start_line
+        );
+    }
+
+    // BUG: find_enclosing_function panics on underflow if end_line < start_line
+    #[test]
+    fn test_find_enclosing_function_bad_boundary() {
+        let boundaries = vec![
+            FunctionBoundary {
+                name: "broken".to_string(),
+                start_line: 10,
+                end_line: 5, // invalid: end < start
+            },
+            FunctionBoundary {
+                name: "valid".to_string(),
+                start_line: 1,
+                end_line: 20,
+            },
+        ];
+        // Line 7: should match "valid" (1-20) but NOT "broken" (10-5)
+        // The min_by_key uses end_line - start_line, which would underflow for "broken"
+        // if it weren't filtered out first. But if both match filter, it WOULD panic.
+        let result = find_enclosing_function(&boundaries, 12);
+        // Line 12: matches "valid" (1-20). Should NOT panic even if "broken" passes filter.
+        assert!(result.is_some());
     }
 }

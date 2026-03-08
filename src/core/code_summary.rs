@@ -141,7 +141,12 @@ pub fn summarize_code_heuristic(
 /// Based on Greptile's finding that NL summaries + code yield 12% better similarity.
 pub fn build_embedding_text(symbol_name: &str, summary: &str, code: &str) -> String {
     let code_truncated = if code.len() > 500 {
-        &code[..500]
+        // Find a valid char boundary at or before byte 500
+        let mut end = 500;
+        while end > 0 && !code.is_char_boundary(end) {
+            end -= 1;
+        }
+        &code[..end]
     } else {
         code
     };
@@ -227,7 +232,7 @@ fn detect_symbol_kind(code: &str, language: &str) -> &'static str {
 }
 
 static RUST_PARAMS: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"fn\s+\w+\s*(?:<[^>]*>)?\s*\(([^)]*)\)").unwrap());
+    Lazy::new(|| Regex::new(r"fn\s+\w+\s*(?:<[^>]*>)?\s*\(((?:[^()]*|\([^()]*\))*)\)").unwrap());
 static PY_PARAMS: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"def\s+\w+\s*\(([^)]*)\)").unwrap());
 static JS_PARAMS: Lazy<Regex> =
@@ -705,5 +710,46 @@ mod tests {
         let code = "fn one_liner() -> bool { true }";
         let summary = summarize_code_heuristic("one_liner", code, Path::new("test.rs"), (1, 1));
         assert!(summary.summary.contains("one_liner"));
+    }
+
+    // BUG: build_embedding_text truncates at byte 500, panics on multi-byte UTF-8
+    #[test]
+    fn test_build_embedding_text_utf8_safety() {
+        // '€' is 3 bytes. 200 repetitions = 600 bytes. Byte 500 is mid-character (500/3 = 166.67)
+        let code = "€".repeat(200); // 600 bytes, 200 chars
+        let result = build_embedding_text("func", "summary", &code);
+        // Must not panic, and result must be valid UTF-8
+        assert!(!result.is_empty());
+    }
+
+    // Regex [^)] stops at first `)` inside nested types like `fn(u32)`
+    #[test]
+    fn test_extract_params_with_closure_type() {
+        let code = "pub fn process(items: Vec<String>, callback: fn(u32) -> bool) -> Result<()> {";
+        let params = extract_parameters(code, "rs");
+        // [^)]* stops at the `)` inside fn(u32), truncating the callback param's type
+        assert!(!params.is_empty(), "Should extract params, got: {:?}", params);
+        // callback param should have its full type including -> bool
+        let callback_param = params.iter().find(|p| p.contains("callback"));
+        assert!(
+            callback_param.is_some(),
+            "Should find callback param, got: {:?}",
+            params
+        );
+        let cb = callback_param.unwrap();
+        assert!(
+            cb.contains("bool"),
+            "callback type should include '-> bool', got: '{cb}'"
+        );
+    }
+
+    // BUG: extract_return_type with multi-line complex types
+    #[test]
+    fn test_extract_return_type_complex() {
+        let code = "pub fn query(\n    db: &Database,\n) -> Result<Vec<String>, Error> {\n";
+        let ret = extract_return_type(code, "rs");
+        assert!(ret.is_some(), "Should extract return type from multi-line signature");
+        let ret_str = ret.unwrap();
+        assert!(ret_str.contains("Result"), "Return type was: {ret_str}");
     }
 }

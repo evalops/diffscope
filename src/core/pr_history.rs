@@ -565,4 +565,59 @@ mod tests {
         // Should handle empty bodies gracefully
         assert_eq!(analyzer.comment_count(), 1);
     }
+
+    // BUG: extract_patterns replaces all patterns on every call, losing prior data
+    #[test]
+    fn test_extract_patterns_preserves_across_ingests() {
+        let mut analyzer = PRHistoryAnalyzer::new();
+
+        // Ingest 3 comments with the same token so it hits frequency >= 2
+        analyzer.ingest_comments(vec![
+            PRReviewComment {
+                body: "Missing error handling here".to_string(),
+                author: "alice".to_string(),
+                file_path: Some("src/main.rs".to_string()),
+                created_at: "2024-01-01".to_string(),
+                state: None,
+            },
+            PRReviewComment {
+                body: "Missing error handling again".to_string(),
+                author: "bob".to_string(),
+                file_path: Some("src/lib.rs".to_string()),
+                created_at: "2024-01-02".to_string(),
+                state: None,
+            },
+        ]);
+
+        let patterns_first = analyzer.extract_patterns();
+        let first_count = patterns_first.len();
+        assert!(first_count > 0, "Should have patterns from first batch");
+
+        // Ingest more comments with a different pattern
+        analyzer.ingest_comments(vec![
+            PRReviewComment {
+                body: "Security vulnerability found".to_string(),
+                author: "carol".to_string(),
+                file_path: Some("src/auth.rs".to_string()),
+                created_at: "2024-01-03".to_string(),
+                state: None,
+            },
+            PRReviewComment {
+                body: "Security vulnerability detected".to_string(),
+                author: "dave".to_string(),
+                file_path: Some("src/auth.rs".to_string()),
+                created_at: "2024-01-04".to_string(),
+                state: None,
+            },
+        ]);
+
+        let patterns_second = analyzer.extract_patterns();
+        // Should have patterns from BOTH batches
+        assert!(
+            patterns_second.len() >= first_count,
+            "Second extract should have >= patterns (had {}, now {})",
+            first_count,
+            patterns_second.len()
+        );
+    }
 }

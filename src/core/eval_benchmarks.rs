@@ -361,13 +361,30 @@ pub fn compare_results(
         }
     }
 
+    let mut improvements = Vec::new();
+    if f1_delta > max_regression {
+        improvements.push(format!(
+            "F1 improved by {:.3} (was {:.3}, now {:.3})",
+            f1_delta, baseline.aggregate.micro_f1, current.aggregate.micro_f1
+        ));
+    }
+    if precision_delta > max_regression {
+        improvements.push(format!(
+            "Precision improved by {:.3}",
+            precision_delta
+        ));
+    }
+    if recall_delta > max_regression {
+        improvements.push(format!("Recall improved by {:.3}", recall_delta));
+    }
+
     ComparisonResult {
         f1_delta,
         precision_delta,
         recall_delta,
         has_regression: !regressions.is_empty(),
         regressions,
-        improvements: Vec::new(),
+        improvements,
     }
 }
 
@@ -874,5 +891,47 @@ mod tests {
         assert_eq!(suite.fixture_count(), 0);
         let by_cat = suite.fixtures_by_category();
         assert!(by_cat.is_empty());
+    }
+
+    // BUG: compare_results never populates improvements vector
+    #[test]
+    fn test_compare_results_detects_improvements() {
+        let baseline = BenchmarkResult {
+            suite_name: "test".to_string(),
+            fixture_results: vec![],
+            aggregate: AggregateMetrics {
+                micro_f1: 0.5,
+                micro_precision: 0.5,
+                micro_recall: 0.5,
+                ..Default::default()
+            },
+            by_category: HashMap::new(),
+            by_difficulty: HashMap::new(),
+            threshold_pass: true,
+            threshold_failures: vec![],
+            timestamp: "2024-01-01".to_string(),
+        };
+        let current = BenchmarkResult {
+            suite_name: "test".to_string(),
+            fixture_results: vec![],
+            aggregate: AggregateMetrics {
+                micro_f1: 0.9,
+                micro_precision: 0.9,
+                micro_recall: 0.9,
+                ..Default::default()
+            },
+            by_category: HashMap::new(),
+            by_difficulty: HashMap::new(),
+            threshold_pass: true,
+            threshold_failures: vec![],
+            timestamp: "2024-01-02".to_string(),
+        };
+
+        let comparison = compare_results(&current, &baseline, 0.05);
+        assert!(!comparison.has_regression);
+        assert!(
+            !comparison.improvements.is_empty(),
+            "Should detect F1 improvement of +0.4"
+        );
     }
 }

@@ -129,9 +129,11 @@ impl GitHistoryAnalyzer {
             }
         }
 
-        // Calculate distinct authors per file
+        self.entries.extend(entries);
+
+        // Recalculate distinct authors per file from ALL entries
         let mut file_authors: HashMap<PathBuf, HashSet<String>> = HashMap::new();
-        for entry in &entries {
+        for entry in &self.entries {
             for change in &entry.files_changed {
                 file_authors
                     .entry(change.file_path.clone())
@@ -144,8 +146,6 @@ impl GitHistoryAnalyzer {
                 info.distinct_authors = authors.len();
             }
         }
-
-        self.entries.extend(entries);
     }
 
     /// Parse `git log --numstat` output into entries.
@@ -612,5 +612,43 @@ Date:   Tue Jan 2 12:00:00 2024 +0000
         assert!(is_bug_fix_commit("closes #123"));
         assert!(!is_bug_fix_commit("Add new feature"));
         assert!(!is_bug_fix_commit("Refactor module structure"));
+    }
+
+    // BUG: distinct_authors is overwritten (not accumulated) on repeated ingest_log calls
+    #[test]
+    fn test_distinct_authors_across_ingests() {
+        let mut analyzer = GitHistoryAnalyzer::new();
+
+        analyzer.ingest_log(vec![make_entry(
+            "abc1",
+            "alice",
+            "First commit",
+            vec![("src/lib.rs", 10, 5)],
+        )]);
+        analyzer.ingest_log(vec![make_entry(
+            "abc2",
+            "bob",
+            "Second commit",
+            vec![("src/lib.rs", 3, 1)],
+        )]);
+
+        let info = analyzer.file_info(Path::new("src/lib.rs")).unwrap();
+        assert_eq!(
+            info.distinct_authors, 2,
+            "Should count authors from both ingest calls, got {}",
+            info.distinct_authors
+        );
+    }
+
+    // BUG: commit_count accumulates but distinct_authors only counts latest batch
+    #[test]
+    fn test_cumulative_commit_count() {
+        let mut analyzer = GitHistoryAnalyzer::new();
+        analyzer.ingest_log(vec![make_entry("a", "alice", "m1", vec![("f.rs", 1, 0)])]);
+        analyzer.ingest_log(vec![make_entry("b", "alice", "m2", vec![("f.rs", 2, 0)])]);
+
+        let info = analyzer.file_info(Path::new("f.rs")).unwrap();
+        assert_eq!(info.commit_count, 2, "commit_count should be cumulative");
+        assert_eq!(info.lines_added_total, 3, "lines_added should accumulate");
     }
 }
