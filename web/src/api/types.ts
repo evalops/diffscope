@@ -62,6 +62,15 @@ export interface ReviewEvent {
   error?: string
 }
 
+export interface ReviewProgress {
+  current_file?: string
+  files_total: number
+  files_completed: number
+  files_skipped: number
+  elapsed_ms: number
+  estimated_remaining_ms?: number
+}
+
 export interface ReviewSession {
   id: string
   status: ReviewStatus
@@ -74,6 +83,7 @@ export interface ReviewSession {
   error?: string
   diff_content?: string
   event?: ReviewEvent
+  progress?: ReviewProgress
 }
 
 export interface StatusResponse {
@@ -110,6 +120,9 @@ export interface DoctorResponse {
 export interface StartReviewRequest {
   diff_source: 'head' | 'staged' | 'branch'
   base_branch?: string
+  model?: string
+  strictness?: number
+  review_profile?: string
 }
 
 // Parsed diff structures for the viewer
@@ -157,5 +170,39 @@ export interface TestProviderResponse {
 export interface GhStatusResponse {
   authenticated: boolean
   username?: string
+  avatar_url?: string
   scopes: string[]
+}
+
+export interface GhRepo {
+  full_name: string
+  description: string | null
+  language: string | null
+  updated_at: string
+  open_prs: number
+  default_branch: string
+  stargazers_count: number
+  private: boolean
+}
+
+export interface GhPullRequest {
+  number: number
+  title: string
+  author: string
+  state: string
+  created_at: string
+  updated_at: string
+  additions: number
+  deletions: number
+  changed_files: number
+  head_branch: string
+  base_branch: string
+  labels: string[]
+  draft: boolean
+}
+
+export interface StartPrReviewRequest {
+  repo: string
+  pr_number: number
+  post_results: boolean
 }

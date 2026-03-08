@@ -49,6 +49,27 @@ export const api = {
 
   getGhStatus: () => request<import('./types').GhStatusResponse>('/gh/status'),
 
+  getGhRepos: (params?: { page?: number; per_page?: number; search?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.page) qs.set('page', String(params.page))
+    if (params?.per_page) qs.set('per_page', String(params.per_page))
+    if (params?.search) qs.set('search', params.search)
+    const suffix = qs.toString() ? `?${qs}` : ''
+    return request<import('./types').GhRepo[]>(`/gh/repos${suffix}`)
+  },
+
+  getGhPrs: (repo: string, state?: string) => {
+    const qs = new URLSearchParams({ repo })
+    if (state) qs.set('state', state)
+    return request<import('./types').GhPullRequest[]>(`/gh/prs?${qs}`)
+  },
+
+  startPrReview: (body: import('./types').StartPrReviewRequest) =>
+    request<{ id: string; status: string }>('/gh/review', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   reviewDiff: (diffContent: string, title?: string) =>
     request<{ id: string; status: string }>('/review', {
       method: 'POST',

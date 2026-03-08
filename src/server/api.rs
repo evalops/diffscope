@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use super::state::{AppState, ReviewEvent, ReviewSession, ReviewStatus, MAX_DIFF_SIZE};
+use super::state::{AppState, ReviewEvent, ReviewProgress, ReviewSession, ReviewStatus, MAX_DIFF_SIZE};
 use crate::core::comment::CommentSynthesizer;
+use crate::review::ProgressCallback;
 use std::collections::HashMap;
 use tracing::{info, warn};
 
@@ -22,6 +23,18 @@ pub struct StartReviewRequest {
     pub diff_content: Option<String>,
     /// Optional title for the review (e.g. "owner/repo#123: PR title")
     pub title: Option<String>,
+    // --- per-review overrides ---
+    pub model: Option<String>,
+    pub strictness: Option<u8>,
+    pub review_profile: Option<String>,
+}
+
+/// Per-review config overrides from the start request.
+#[derive(Clone, Default)]
+struct ReviewOverrides {
+    model: Option<String>,
+    strictness: Option<u8>,
+    review_profile: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -140,6 +153,7 @@ pub async fn start_review(
         error: None,
         diff_content: None,
         event: None,
+        progress: None,
     };
 
     state.reviews.write().await.insert(id.clone(), session);
@@ -148,9 +162,14 @@ pub async fn start_review(
     let review_id = id.clone();
     let base_branch = request.base_branch.clone();
     let raw_diff = request.diff_content.clone();
+    let overrides = ReviewOverrides {
+        model: request.model.clone(),
+        strictness: request.strictness,
+        review_profile: request.review_profile.clone(),
+    };
 
     tokio::spawn(async move {
-        run_review_task(state_clone, review_id, diff_source, base_branch, raw_diff).await;
+        run_review_task(state_clone, review_id, diff_source, base_branch, raw_diff, overrides).await;
     });
 
     Ok(Json(StartReviewResponse {
@@ -172,6 +191,7 @@ async fn run_review_task(
     diff_source: String,
     base_branch: Option<String>,
     raw_diff: Option<String>,
+    overrides: ReviewOverrides,
 ) {
     let task_start = std::time::Instant::now();
 
@@ -183,8 +203,19 @@ async fn run_review_task(
         }
     }
 
-    let config = state.config.read().await.clone();
+    let mut config = state.config.read().await.clone();
     let repo_path = state.repo_path.clone();
+
+    // Apply per-review overrides
+    if let Some(m) = overrides.model {
+        config.model = m;
+    }
+    if let Some(s) = overrides.strictness {
+        config.strictness = s.clamp(1, 3);
+    }
+    if let Some(p) = overrides.review_profile {
+        config.review_profile = Some(p);
+    }
 
     // --- wide event seed ---
     let model = config.model.clone();
@@ -265,11 +296,53 @@ async fn run_review_task(
         return;
     }
 
+    // Build progress callback that updates the session during review
+    let on_progress: Option<ProgressCallback> = {
+        let ps = state.clone();
+        let pid = review_id.clone();
+        let pstart = task_start;
+        Some(Arc::new(move |update: crate::review::ProgressUpdate| {
+            let state = ps.clone();
+            let id = pid.clone();
+            let start = pstart;
+            tokio::spawn(async move {
+                let elapsed = start.elapsed().as_millis() as u64;
+                let avg = if update.files_completed > 0 {
+                    elapsed / update.files_completed as u64
+                } else { 0 };
+                let remaining_files = update.files_total
+                    .saturating_sub(update.files_completed)
+                    .saturating_sub(update.files_skipped);
+                let est = if update.files_completed > 0 {
+                    Some(remaining_files as u64 * avg)
+                } else { None };
+
+                let mut reviews = state.reviews.write().await;
+                if let Some(session) = reviews.get_mut(&id) {
+                    session.progress = Some(ReviewProgress {
+                        current_file: Some(update.current_file),
+                        files_total: update.files_total,
+                        files_completed: update.files_completed,
+                        files_skipped: update.files_skipped,
+                        elapsed_ms: elapsed,
+                        estimated_remaining_ms: est,
+                    });
+                    // Stream partial results: update comments in place
+                    session.comments = update.comments_so_far.clone();
+                    session.files_reviewed = update.files_completed;
+                    if !session.comments.is_empty() {
+                        session.summary = Some(CommentSynthesizer::generate_summary(&session.comments));
+                    }
+                }
+            });
+        }))
+    };
+
     // Run the review with a 5-minute timeout
     let llm_start = std::time::Instant::now();
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(300),
-        crate::review::review_diff_content_raw(&diff_content, config, &repo_path),
+        crate::review::review_diff_content_raw_with_progress(&diff_content, config, &repo_path, on_progress),
     )
     .await;
     let llm_ms = llm_start.elapsed().as_millis() as u64;
@@ -304,6 +377,7 @@ async fn run_review_task(
                 session.files_reviewed = files_reviewed;
                 session.completed_at = Some(current_timestamp());
                 session.event = Some(event);
+                session.progress = None; // clear progress on completion
             }
         }
         Ok(Err(e)) => {
@@ -323,6 +397,7 @@ async fn run_review_task(
                 session.error = Some(err_msg);
                 session.completed_at = Some(current_timestamp());
                 session.event = Some(event);
+                session.progress = None;
             }
         }
         Err(_) => {
@@ -342,6 +417,7 @@ async fn run_review_task(
                 session.error = Some(err_msg);
                 session.completed_at = Some(current_timestamp());
                 session.event = Some(event);
+                session.progress = None;
             }
         }
     }
@@ -979,6 +1055,7 @@ async fn github_api_get_diff(
 pub struct GhStatusResponse {
     pub authenticated: bool,
     pub username: Option<String>,
+    pub avatar_url: Option<String>,
     pub scopes: Vec<String>,
 }
 
@@ -992,6 +1069,7 @@ pub async fn get_gh_status(
             return Json(GhStatusResponse {
                 authenticated: false,
                 username: None,
+                avatar_url: None,
                 scopes: Vec::new(),
             });
         }
@@ -1004,6 +1082,7 @@ pub async fn get_gh_status(
             return Json(GhStatusResponse {
                 authenticated: false,
                 username: None,
+                avatar_url: None,
                 scopes: Vec::new(),
             });
         }
@@ -1026,6 +1105,7 @@ pub async fn get_gh_status(
         return Json(GhStatusResponse {
             authenticated: false,
             username: None,
+            avatar_url: None,
             scopes: Vec::new(),
         });
     }
@@ -1036,6 +1116,7 @@ pub async fn get_gh_status(
             return Json(GhStatusResponse {
                 authenticated: false,
                 username: None,
+                avatar_url: None,
                 scopes: Vec::new(),
             });
         }
@@ -1046,9 +1127,15 @@ pub async fn get_gh_status(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    let avatar_url = body
+        .get("avatar_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     Json(GhStatusResponse {
         authenticated: true,
         username,
+        avatar_url,
         scopes,
     })
 }
@@ -1068,6 +1155,8 @@ pub struct GhRepo {
     pub updated_at: String,
     pub open_prs: usize,
     pub default_branch: String,
+    pub stargazers_count: u32,
+    pub private: bool,
 }
 
 pub async fn get_gh_repos(
@@ -1157,6 +1246,14 @@ pub async fn get_gh_repos(
                     .and_then(|v| v.as_str())
                     .unwrap_or("main")
                     .to_string(),
+                stargazers_count: item
+                    .get("stargazers_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32,
+                private: item
+                    .get("private")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
             })
             .collect();
 
@@ -1212,6 +1309,14 @@ pub async fn get_gh_repos(
                     .and_then(|v| v.as_str())
                     .unwrap_or("main")
                     .to_string(),
+                stargazers_count: item
+                    .get("stargazers_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32,
+                private: item
+                    .get("private")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
             })
             .collect();
 
@@ -1512,6 +1617,7 @@ pub async fn start_pr_review(
         error: None,
         diff_content: Some(diff_content.clone()),
         event: None,
+        progress: None,
     };
 
     state.reviews.write().await.insert(id.clone(), session);
@@ -1618,6 +1724,7 @@ async fn run_pr_review_task(
                 if let Some(ref token) = github_token {
                     github_posted = post_pr_review_comments(
                         &state.http_client, token, &repo, pr_number, &comments,
+                        Some(&summary),
                     )
                     .await
                     .is_ok();
@@ -1702,24 +1809,110 @@ async fn post_pr_review_comments(
     repo: &str,
     pr_number: u32,
     comments: &[crate::core::Comment],
+    summary: Option<&crate::core::comment::ReviewSummary>,
 ) -> Result<(), String> {
-    let mut body = String::from("## DiffScope Review\n\n");
+    // Fetch PR head SHA (required for inline comments)
+    let pr_url = format!(
+        "https://api.github.com/repos/{}/pulls/{}",
+        repo, pr_number,
+    );
+    let pr_resp = github_api_get(client, token, &pr_url).await?;
+    if !pr_resp.status().is_success() {
+        let status = pr_resp.status();
+        let body = pr_resp.text().await.unwrap_or_default();
+        return Err(format!("Failed to get PR info {}: {}", status, body));
+    }
+    let pr_data: serde_json::Value = pr_resp.json().await
+        .map_err(|e| format!("Failed to parse PR response: {}", e))?;
+    let commit_id = pr_data
+        .get("head")
+        .and_then(|h| h.get("sha"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "No head SHA in PR response".to_string())?
+        .to_string();
+
+    // Build inline review comments
+    let mut inline_comments = Vec::new();
     for c in comments {
-        body.push_str(&format!(
-            "**{:?}** `{}` (line {}): {}\n\n",
-            c.severity,
-            c.file_path.display(),
-            c.line_number,
-            c.content
-        ));
-        if let Some(ref suggestion) = c.suggestion {
-            body.push_str(&format!("  > Suggestion: {}\n\n", suggestion));
+        let severity_icon = match format!("{:?}", c.severity).as_str() {
+            "Error" => ":rotating_light:",
+            "Warning" => ":warning:",
+            "Info" => ":information_source:",
+            "Suggestion" => ":bulb:",
+            _ => ":mag:",
+        };
+
+        let mut comment_body = format!(
+            "{} **{:?}** | {:?}",
+            severity_icon, c.severity, c.category
+        );
+        if c.confidence > 0.0 {
+            comment_body.push_str(&format!(
+                " | confidence: {}%",
+                (c.confidence * 100.0) as u32
+            ));
         }
+        comment_body.push_str(&format!("\n\n{}", c.content));
+
+        if let Some(ref suggestion) = c.suggestion {
+            comment_body.push_str(&format!("\n\n> **Suggestion:** {}", suggestion));
+        }
+        if let Some(ref cs) = c.code_suggestion {
+            comment_body.push_str(&format!(
+                "\n\n**Suggested fix:**\n```suggestion\n{}\n```",
+                cs.suggested_code
+            ));
+        }
+
+        // Normalize file path (strip leading / or a/ b/ prefixes)
+        let path = c.file_path.display().to_string();
+        let path = path.trim_start_matches('/');
+        let path = if path.starts_with("a/") || path.starts_with("b/") {
+            &path[2..]
+        } else {
+            path
+        };
+
+        inline_comments.push(serde_json::json!({
+            "path": path,
+            "line": c.line_number,
+            "side": "RIGHT",
+            "body": comment_body,
+        }));
     }
 
-    let review_body = serde_json::json!({
-        "body": body,
-        "event": "COMMENT",
+    // Build summary body
+    let mut review_body_text = String::from("## DiffScope Review\n\n");
+    if let Some(s) = summary {
+        review_body_text.push_str(&format!(
+            "**Score:** {}/10 | **Findings:** {}\n\n",
+            s.overall_score, s.total_comments
+        ));
+        if !s.recommendations.is_empty() {
+            review_body_text.push_str("**Recommendations:**\n");
+            for rec in &s.recommendations {
+                review_body_text.push_str(&format!("- {}\n", rec));
+            }
+            review_body_text.push('\n');
+        }
+    } else {
+        review_body_text.push_str(&format!(
+            "Found **{}** issue{}.\n\n",
+            comments.len(),
+            if comments.len() == 1 { "" } else { "s" }
+        ));
+    }
+    review_body_text.push_str("_Automated review by [DiffScope](https://github.com/haasonsaas/diffscope)_");
+
+    // Determine event type based on severity
+    let has_errors = comments.iter().any(|c| matches!(c.severity, crate::core::comment::Severity::Error));
+    let event = if has_errors { "REQUEST_CHANGES" } else { "COMMENT" };
+
+    let review_payload = serde_json::json!({
+        "commit_id": commit_id,
+        "body": review_body_text,
+        "event": event,
+        "comments": inline_comments,
     });
 
     let url = format!(
@@ -1727,9 +1920,10 @@ async fn post_pr_review_comments(
         repo, pr_number,
     );
 
-    let resp = github_api_post(client, token, &url, &review_body).await?;
+    let resp = github_api_post(client, token, &url, &review_payload).await?;
 
     if resp.status().is_success() {
+        info!(repo = %repo, pr = pr_number, comments = comments.len(), "Posted inline review to GitHub");
         Ok(())
     } else {
         let status = resp.status();

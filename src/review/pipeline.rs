@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 use tracing::{info, warn};
 
+use std::sync::Arc;
+
 use crate::adapters;
 use crate::config;
 use crate::core;
@@ -15,6 +17,19 @@ use crate::core::offline::optimize_prompt_for_local;
 use crate::output::OutputFormat;
 use crate::parsing::parse_llm_response;
 use crate::plugins;
+
+/// Progress update emitted per file during review.
+pub struct ProgressUpdate {
+    pub current_file: String,
+    pub files_total: usize,
+    pub files_completed: usize,
+    pub files_skipped: usize,
+    /// Comments found so far (accumulated from all completed files).
+    pub comments_so_far: Vec<core::Comment>,
+}
+
+/// Callback invoked before each file's LLM call and after completion.
+pub type ProgressCallback = Arc<dyn Fn(ProgressUpdate) + Send + Sync>;
 use super::context_helpers::{
     inject_custom_context, inject_pattern_repository_context,
     rank_and_trim_context_chunks, resolve_pattern_repositories,
@@ -47,6 +62,16 @@ pub async fn review_diff_content_raw(
     config: config::Config,
     repo_path: &Path,
 ) -> Result<Vec<core::Comment>> {
+    review_diff_content_raw_with_progress(diff_content, config, repo_path, None).await
+}
+
+/// Like `review_diff_content_raw` but with an optional progress callback.
+pub async fn review_diff_content_raw_with_progress(
+    diff_content: &str,
+    config: config::Config,
+    repo_path: &Path,
+    on_progress: Option<ProgressCallback>,
+) -> Result<Vec<core::Comment>> {
     // For local models, chunk oversized diffs instead of truncating
     if should_optimize_for_local(&config) {
         let context_budget = config.context_window.unwrap_or(8192);
@@ -61,7 +86,7 @@ pub async fn review_diff_content_raw(
             let mut all_comments = Vec::new();
             for (i, chunk) in chunks.iter().enumerate() {
                 eprintln!("Processing chunk {}/{}...", i + 1, chunks.len());
-                match review_diff_content_raw_inner(chunk, config.clone(), repo_path).await {
+                match review_diff_content_raw_inner(chunk, config.clone(), repo_path, on_progress.clone()).await {
                     Ok(comments) => all_comments.extend(comments),
                     Err(e) => {
                         eprintln!("Warning: chunk {} failed: {}", i + 1, e);
@@ -72,16 +97,22 @@ pub async fn review_diff_content_raw(
         }
     }
 
-    review_diff_content_raw_inner(diff_content, config, repo_path).await
+    review_diff_content_raw_inner(diff_content, config, repo_path, on_progress).await
 }
 
 async fn review_diff_content_raw_inner(
     diff_content: &str,
     config: config::Config,
     repo_path: &Path,
+    on_progress: Option<ProgressCallback>,
 ) -> Result<Vec<core::Comment>> {
     let diffs = core::DiffParser::parse_unified_diff(diff_content)?;
     info!("Parsed {} file diffs", diffs.len());
+
+    // Pre-count reviewable files for progress tracking
+    let files_total = diffs.len();
+    let mut files_completed: usize = 0;
+    let mut files_skipped: usize = 0;
 
     // Check file change limit
     if let Some(limit) = config.file_change_limit {
@@ -151,15 +182,29 @@ async fn review_diff_content_raw_inner(
         // Check if file should be excluded
         if config.should_exclude(&diff.file_path) {
             info!("Skipping excluded file: {}", diff.file_path.display());
+            files_skipped += 1;
             continue;
         }
         if diff.is_deleted {
             info!("Skipping deleted file: {}", diff.file_path.display());
+            files_skipped += 1;
             continue;
         }
         if diff.is_binary || diff.hunks.is_empty() {
             info!("Skipping non-text diff: {}", diff.file_path.display());
+            files_skipped += 1;
             continue;
+        }
+
+        // Emit progress: about to review this file
+        if let Some(ref cb) = on_progress {
+            cb(ProgressUpdate {
+                current_file: diff.file_path.display().to_string(),
+                files_total,
+                files_completed,
+                files_skipped,
+                comments_so_far: all_comments.clone(),
+            });
         }
 
         let mut context_chunks = context_fetcher
@@ -337,6 +382,8 @@ async fn review_diff_content_raw_inner(
             let comments = filter_comments_for_diff(diff, comments);
             all_comments.extend(comments);
         }
+
+        files_completed += 1;
     }
 
     // Run post-processors to filter and refine comments

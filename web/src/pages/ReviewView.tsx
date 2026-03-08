@@ -37,18 +37,11 @@ export function ReviewView() {
     )
   }
 
-  if (review.status === 'Pending' || review.status === 'Running') {
+  if (review.status === 'Pending') {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4">
-        <div className="relative">
-          <Loader2 className="animate-spin text-accent" size={40} />
-        </div>
-        <div className="text-center">
-          <p className="text-text-primary text-sm">
-            {review.status === 'Pending' ? 'Starting review...' : 'Analyzing code...'}
-          </p>
-          <p className="text-[11px] text-text-muted mt-1">This may take a while for local models</p>
-        </div>
+        <Loader2 className="animate-spin text-accent" size={40} />
+        <p className="text-text-primary text-sm">Starting review...</p>
         <div className="flex gap-1 mt-2">
           {[0,1,2,3].map(i => (
             <div key={i} className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" style={{ animationDelay: `${i * 150}ms` }} />
@@ -57,6 +50,9 @@ export function ReviewView() {
       </div>
     )
   }
+
+  // Running state: show progress bar + partial results (fall through to main UI below)
+  const isRunning = review.status === 'Running'
 
   if (review.status === 'Failed') {
     return (
@@ -142,6 +138,9 @@ export function ReviewView() {
       )}
 
       <div className="flex-1 overflow-auto flex flex-col min-w-0">
+        {/* Progress banner (visible during Running state) */}
+        {isRunning && <ProgressBanner progress={review.progress} comments={review.comments.length} />}
+
         {/* Summary bar */}
         {review.summary && (
           <div className="p-3 border-b border-border bg-surface-1 flex items-center gap-4">
@@ -288,6 +287,57 @@ export function ReviewView() {
                 </div>
               )}
             </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProgressBanner({ progress, comments }: { progress?: import('../api/types').ReviewProgress, comments: number }) {
+  if (!progress) {
+    return (
+      <div className="px-4 py-3 border-b border-accent/30 bg-accent/5 flex items-center gap-3">
+        <Loader2 className="animate-spin text-accent" size={14} />
+        <span className="text-[12px] text-text-primary">Analyzing code...</span>
+      </div>
+    )
+  }
+
+  const pct = progress.files_total > 0
+    ? ((progress.files_completed + progress.files_skipped) / progress.files_total) * 100
+    : 0
+
+  return (
+    <div className="border-b border-accent/30 bg-accent/5">
+      {/* Thin progress bar */}
+      <div className="h-0.5 bg-surface-2">
+        <div
+          className="h-full bg-accent transition-all duration-500 ease-out"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <div className="px-4 py-2.5 flex items-center gap-3">
+        <Loader2 className="animate-spin text-accent flex-shrink-0" size={14} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 text-[12px]">
+            <span className="text-text-primary font-medium">
+              {progress.files_completed + progress.files_skipped}/{progress.files_total} files
+            </span>
+            {progress.current_file && (
+              <span className="text-text-muted font-code truncate" title={progress.current_file}>
+                {progress.current_file}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-3 text-[11px] text-text-muted flex-shrink-0">
+          {comments > 0 && (
+            <span className="text-accent font-medium">{comments} findings</span>
+          )}
+          <span>{formatDuration(progress.elapsed_ms)} elapsed</span>
+          {progress.estimated_remaining_ms != null && progress.estimated_remaining_ms > 0 && (
+            <span>~{formatDuration(progress.estimated_remaining_ms)} left</span>
           )}
         </div>
       </div>

@@ -7,8 +7,10 @@ mod rule_helpers;
 pub use filters::apply_review_filters;
 pub use pipeline::{
     review_diff_content, review_diff_content_with_repo, review_diff_content_raw,
+    review_diff_content_raw_with_progress,
     extract_symbols_from_diff, filter_comments_for_diff,
     build_symbol_index, build_review_guidance,
+    ProgressCallback, ProgressUpdate,
 };
 pub use feedback::{
     load_feedback_store, load_feedback_store_from_path, save_feedback_store,

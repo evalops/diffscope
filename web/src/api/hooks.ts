@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from './client'
-import type { StartReviewRequest } from './types'
+import type { StartReviewRequest, StartPrReviewRequest } from './types'
 import { REFETCH } from '../lib/constants'
 
 export function useStatus() {
@@ -73,6 +73,40 @@ export function useUpdateConfig() {
     mutationFn: (updates: Record<string, unknown>) => api.updateConfig(updates),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['config'] })
+    },
+  })
+}
+
+export function useGhStatus() {
+  return useQuery({
+    queryKey: ['gh-status'],
+    queryFn: api.getGhStatus,
+    refetchInterval: false,
+  })
+}
+
+export function useGhRepos(params?: { page?: number; search?: string }, enabled = true) {
+  return useQuery({
+    queryKey: ['gh-repos', params],
+    queryFn: () => api.getGhRepos(params),
+    enabled,
+  })
+}
+
+export function useGhPrs(repo: string | undefined, state?: string) {
+  return useQuery({
+    queryKey: ['gh-prs', repo, state],
+    queryFn: () => api.getGhPrs(repo!, state),
+    enabled: !!repo,
+  })
+}
+
+export function useStartPrReview() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: StartPrReviewRequest) => api.startPrReview(request),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reviews'] })
     },
   })
 }

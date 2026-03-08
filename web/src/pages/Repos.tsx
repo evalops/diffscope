@@ -1,29 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Search, Lock, Star, GitPullRequest, Loader2, ChevronRight, RefreshCw, X, Eye, EyeOff } from 'lucide-react'
-import { initGitHub, clearGitHub, getOctokit, fetchUser, fetchRepos, searchRepos, fetchPullRequests, fetchPrDiff, postReviewToGitHub } from '../lib/github'
-import type { GhRepo, GhPullRequest, ReviewComment } from '../lib/github'
-import { api } from '../api/client'
-
-const STORAGE_KEY = 'diffscope_github_token'
-
-function timeAgo(dateStr: string): string {
-  if (!dateStr) return ''
-  const now = Date.now()
-  const then = new Date(dateStr).getTime()
-  const seconds = Math.floor((now - then) / 1000)
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}d ago`
-  const months = Math.floor(days / 30)
-  if (months < 12) return `${months}mo ago`
-  const years = Math.floor(months / 12)
-  return `${years}y ago`
-}
+import { useGhStatus, useGhRepos, useGhPrs, useStartPrReview, useUpdateConfig, useConfig } from '../api/hooks'
+import type { GhRepo, GhPullRequest } from '../api/types'
 
 const LANG_COLORS: Record<string, string> = {
   TypeScript: '#3178c6',
@@ -50,244 +29,127 @@ const LANG_COLORS: Record<string, string> = {
   Vue: '#41b883',
 }
 
-type View = 'repos' | 'prs' | 'pr-detail'
-
-interface GhUser {
-  login: string
-  avatar_url: string
-  name: string | null
+function timeAgo(dateStr: string): string {
+  if (!dateStr) return ''
+  const now = Date.now()
+  const then = new Date(dateStr).getTime()
+  const seconds = Math.floor((now - then) / 1000)
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months}mo ago`
+  const years = Math.floor(months / 12)
+  return `${years}y ago`
 }
+
+type View = 'repos' | 'prs' | 'pr-detail'
 
 export function Repos() {
   const navigate = useNavigate()
 
   // Auth state
-  const [token, setToken] = useState(() => localStorage.getItem(STORAGE_KEY) ?? '')
   const [tokenInput, setTokenInput] = useState('')
   const [showToken, setShowToken] = useState(false)
-  const [connected, setConnected] = useState(false)
-  const [user, setUser] = useState<GhUser | null>(null)
-  const [authError, setAuthError] = useState<string | null>(null)
+  const [tokenError, setTokenError] = useState<string | null>(null)
+  const [savingToken, setSavingToken] = useState(false)
 
   // View state
   const [view, setView] = useState<View>('repos')
-
-  // Repo list state
-  const [repos, setRepos] = useState<GhRepo[]>([])
-  const [reposLoading, setReposLoading] = useState(false)
-  const [reposError, setReposError] = useState<string | null>(null)
-  const [reposPage, setReposPage] = useState(1)
-  const [hasMore, setHasMore] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchTimeout, setSearchTimeout] = useState<ReturnType<typeof setTimeout> | null>(null)
-
-  // PR list state
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [reposPage, setReposPage] = useState(1)
   const [selectedRepo, setSelectedRepo] = useState<GhRepo | null>(null)
-  const [prs, setPrs] = useState<GhPullRequest[]>([])
-  const [prsLoading, setPrsLoading] = useState(false)
-  const [prsError, setPrsError] = useState<string | null>(null)
-  const [prFilter, setPrFilter] = useState<'open' | 'closed' | 'all'>('open')
-
-  // PR detail state
   const [selectedPr, setSelectedPr] = useState<GhPullRequest | null>(null)
-  const [reviewing, setReviewing] = useState(false)
-  const [reviewError, setReviewError] = useState<string | null>(null)
+  const [prFilter, setPrFilter] = useState<'open' | 'closed' | 'all' | 'merged'>('open')
   const [postResults, setPostResults] = useState(false)
 
-  // Initialize from stored token
+  // Backend queries
+  const { data: ghStatus, refetch: refetchGhStatus } = useGhStatus()
+  const { data: config } = useConfig()
+  const updateConfig = useUpdateConfig()
+  const connected = ghStatus?.authenticated ?? false
+  const username = ghStatus?.username
+  const avatarUrl = ghStatus?.avatar_url
+
+  const reposParams = debouncedSearch
+    ? { search: debouncedSearch }
+    : { page: reposPage }
+  const { data: repos, isLoading: reposLoading, error: reposError } = useGhRepos(reposParams, connected)
+  const { data: prs, isLoading: prsLoading, error: prsError } = useGhPrs(
+    selectedRepo?.full_name,
+    prFilter,
+  )
+  const startPrReview = useStartPrReview()
+
+  // Debounce search
   useEffect(() => {
-    if (token) {
-      connectGitHub(token)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const connectGitHub = async (tok: string) => {
-    setAuthError(null)
-    try {
-      initGitHub(tok)
-      const u = await fetchUser()
-      setUser(u)
-      setConnected(true)
-      localStorage.setItem(STORAGE_KEY, tok)
-      setToken(tok)
-    } catch (err) {
-      clearGitHub()
-      setConnected(false)
-      setUser(null)
-      setAuthError(err instanceof Error ? err.message : 'Failed to authenticate')
-    }
-  }
-
-  const handleDisconnect = () => {
-    clearGitHub()
-    setConnected(false)
-    setUser(null)
-    setToken('')
-    setTokenInput('')
-    localStorage.removeItem(STORAGE_KEY)
-    setRepos([])
-    setPrs([])
-    setSelectedRepo(null)
-    setSelectedPr(null)
-    setView('repos')
-  }
-
-  const handleConnect = () => {
-    if (tokenInput.trim()) {
-      connectGitHub(tokenInput.trim())
-    }
-  }
-
-  // Fetch repos
-  const loadRepos = useCallback(async (page: number, query: string, append = false) => {
-    if (!getOctokit()) return
-    setReposLoading(true)
-    setReposError(null)
-    try {
-      let data: GhRepo[]
-      if (query.trim()) {
-        data = await searchRepos(query.trim())
-        setHasMore(false)
-      } else {
-        data = await fetchRepos(page)
-        setHasMore(data.length === 20)
-      }
-      setRepos(prev => append ? [...prev, ...data] : data)
-    } catch (err) {
-      setReposError(err instanceof Error ? err.message : 'Failed to load repos')
-    } finally {
-      setReposLoading(false)
-    }
-  }, [])
-
-  // Load repos on connect
-  useEffect(() => {
-    if (connected) {
-      setReposPage(1)
-      loadRepos(1, searchQuery)
-    }
-  }, [connected, loadRepos, searchQuery])
-
-  // Debounced search
-  const handleSearchChange = (value: string) => {
-    setSearchQuery(value)
-    if (searchTimeout) clearTimeout(searchTimeout)
     const timeout = setTimeout(() => {
+      setDebouncedSearch(searchQuery)
       setReposPage(1)
-      loadRepos(1, value)
     }, 300)
-    setSearchTimeout(timeout)
+    return () => clearTimeout(timeout)
+  }, [searchQuery])
+
+  const handleConnect = async () => {
+    if (!tokenInput.trim()) return
+    setSavingToken(true)
+    setTokenError(null)
+    try {
+      await updateConfig.mutateAsync({ github_token: tokenInput.trim() })
+      await refetchGhStatus()
+      // Check if it actually authenticated
+      setTokenInput('')
+    } catch (err) {
+      setTokenError(err instanceof Error ? err.message : 'Failed to save token')
+    } finally {
+      setSavingToken(false)
+    }
   }
 
-  const handleLoadMore = () => {
-    const nextPage = reposPage + 1
-    setReposPage(nextPage)
-    loadRepos(nextPage, searchQuery, true)
+  const handleDisconnect = async () => {
+    try {
+      await updateConfig.mutateAsync({ github_token: '' })
+      await refetchGhStatus()
+      setSelectedRepo(null)
+      setSelectedPr(null)
+      setView('repos')
+    } catch {
+      // ignore
+    }
   }
 
-  // Select repo -> load PRs
-  const handleSelectRepo = async (repo: GhRepo) => {
+  const handleSelectRepo = (repo: GhRepo) => {
     setSelectedRepo(repo)
     setView('prs')
-    setPrsLoading(true)
-    setPrsError(null)
-    try {
-      const [owner, name] = repo.full_name.split('/')
-      const data = await fetchPullRequests(owner, name, prFilter)
-      setPrs(data)
-    } catch (err) {
-      setPrsError(err instanceof Error ? err.message : 'Failed to load PRs')
-    } finally {
-      setPrsLoading(false)
-    }
   }
 
-  // Reload PRs when filter changes
-  useEffect(() => {
-    if (selectedRepo && view === 'prs') {
-      const loadPrs = async () => {
-        setPrsLoading(true)
-        setPrsError(null)
-        try {
-          const [owner, name] = selectedRepo.full_name.split('/')
-          const data = await fetchPullRequests(owner, name, prFilter)
-          setPrs(data)
-        } catch (err) {
-          setPrsError(err instanceof Error ? err.message : 'Failed to load PRs')
-        } finally {
-          setPrsLoading(false)
-        }
-      }
-      loadPrs()
-    }
-  }, [prFilter, selectedRepo, view])
-
-  // Select PR
   const handleSelectPr = (pr: GhPullRequest) => {
     setSelectedPr(pr)
     setView('pr-detail')
-    setReviewError(null)
   }
 
-  // Review PR
   const handleReview = async () => {
     if (!selectedRepo || !selectedPr) return
-    setReviewing(true)
-    setReviewError(null)
     try {
-      const [owner, name] = selectedRepo.full_name.split('/')
-      const diff = await fetchPrDiff(owner, name, selectedPr.number)
-      const result = await api.reviewDiff(diff, `${selectedRepo.full_name}#${selectedPr.number}: ${selectedPr.title}`)
-
-      // If posting results, poll for completion then post inline comments
-      if (postResults) {
-        let review = await api.getReview(result.id)
-        // Poll until complete (max 5 min)
-        const deadline = Date.now() + 300_000
-        while ((review.status === 'Pending' || review.status === 'Running') && Date.now() < deadline) {
-          await new Promise(r => setTimeout(r, 2000))
-          review = await api.getReview(result.id)
-        }
-        if (review.status === 'Complete' && review.comments.length > 0) {
-          const ghComments: ReviewComment[] = review.comments.map(c => ({
-            file_path: c.file_path,
-            line_number: c.line_number,
-            content: c.content,
-            severity: c.severity,
-            category: c.category,
-            suggestion: c.suggestion,
-            confidence: c.confidence,
-            code_suggestion: c.code_suggestion ? {
-              original_code: c.code_suggestion.original_code,
-              suggested_code: c.code_suggestion.suggested_code,
-              explanation: c.code_suggestion.explanation,
-            } : undefined,
-          }))
-          await postReviewToGitHub(
-            owner, name, selectedPr.number, ghComments,
-            review.summary ? {
-              overall_score: review.summary.overall_score,
-              total_comments: review.summary.total_comments,
-              recommendations: review.summary.recommendations,
-            } : undefined,
-          )
-        }
-      }
-
+      const result = await startPrReview.mutateAsync({
+        repo: selectedRepo.full_name,
+        pr_number: selectedPr.number,
+        post_results: postResults,
+      })
       navigate(`/review/${result.id}`)
-    } catch (err) {
-      setReviewError(err instanceof Error ? err.message : 'Failed to start review')
-    } finally {
-      setReviewing(false)
+    } catch {
+      // error handled by mutation state
     }
   }
 
-  // Back navigation
   const handleBackToRepos = () => {
     setView('repos')
     setSelectedRepo(null)
-    setPrs([])
   }
 
   const handleBackToPrs = () => {
@@ -297,11 +159,18 @@ export function Repos() {
 
   // Not connected - show token input
   if (!connected) {
+    // Check if token is configured but invalid vs not set at all
+    const hasToken = config && typeof config === 'object' && (config as Record<string, unknown>).github_token === '***'
     return (
       <div className="p-6 max-w-2xl mx-auto">
         <h1 className="text-xl font-semibold text-text-primary mb-4">GitHub Repos</h1>
         <div className="bg-surface-1 border border-border rounded-lg p-4">
           <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">CONNECT GITHUB</div>
+          {hasToken ? (
+            <div className="flex items-center gap-2 mb-3 text-[12px] text-sev-warning bg-sev-warning/5 border border-sev-warning/20 rounded px-3 py-2">
+              A GitHub token is configured but authentication failed. Update it below.
+            </div>
+          ) : null}
           <p className="text-[12px] text-text-secondary mb-3">
             Enter a Personal Access Token to browse your repositories and review pull requests.
           </p>
@@ -311,7 +180,7 @@ export function Repos() {
               github.com/settings/tokens
             </a>
             {' '}&mdash; needs <code className="font-code text-accent bg-surface px-1 py-0.5 rounded text-[10px]">repo</code> scope.
-            The token is stored in your browser only and never sent to the DiffScope backend.
+            The token is stored securely on the DiffScope backend.
           </p>
           <div className="flex gap-2">
             <div className="relative flex-1">
@@ -333,16 +202,16 @@ export function Repos() {
             </div>
             <button
               onClick={handleConnect}
-              disabled={!tokenInput.trim()}
+              disabled={!tokenInput.trim() || savingToken}
               className="px-4 py-1.5 rounded text-[12px] font-medium bg-accent text-surface hover:bg-accent-dim disabled:opacity-50 transition-colors"
             >
-              Connect
+              {savingToken ? <Loader2 size={14} className="animate-spin" /> : 'Connect'}
             </button>
           </div>
-          {authError && (
+          {tokenError && (
             <div className="mt-3 flex items-center gap-2 text-[12px] text-sev-error">
               <span className="inline-block w-2 h-2 rounded-full bg-sev-error" />
-              {authError}
+              {tokenError}
             </div>
           )}
         </div>
@@ -359,13 +228,13 @@ export function Repos() {
         <input
           type="text"
           value={searchQuery}
-          onChange={(e) => handleSearchChange(e.target.value)}
+          onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Search repositories..."
           className="w-full bg-surface-1 border border-border rounded-lg pl-9 pr-9 py-2 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent"
         />
         {searchQuery && (
           <button
-            onClick={() => handleSearchChange('')}
+            onClick={() => setSearchQuery('')}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary"
           >
             <X size={14} />
@@ -373,15 +242,16 @@ export function Repos() {
         )}
       </div>
 
-      {/* Repo grid */}
+      {/* Error */}
       {reposError && (
         <div className="bg-surface-1 border border-sev-error/30 rounded-lg p-4 mb-4">
-          <p className="text-[12px] text-sev-error">{reposError}</p>
+          <p className="text-[12px] text-sev-error">{reposError instanceof Error ? reposError.message : 'Failed to load repos'}</p>
         </div>
       )}
 
+      {/* Repo grid */}
       <div className="grid grid-cols-2 gap-3">
-        {repos.map(repo => (
+        {(repos ?? []).map(repo => (
           <button
             key={repo.full_name}
             onClick={() => handleSelectRepo(repo)}
@@ -419,17 +289,18 @@ export function Repos() {
         ))}
       </div>
 
-      {/* Loading / Load more */}
+      {/* Loading */}
       {reposLoading && (
         <div className="flex justify-center py-6">
           <Loader2 size={20} className="animate-spin text-text-muted" />
         </div>
       )}
 
-      {!reposLoading && hasMore && repos.length > 0 && !searchQuery && (
+      {/* Load more */}
+      {!reposLoading && !debouncedSearch && (repos ?? []).length >= 20 && (
         <div className="flex justify-center pt-4">
           <button
-            onClick={handleLoadMore}
+            onClick={() => setReposPage(p => p + 1)}
             className="px-4 py-1.5 rounded text-[12px] font-medium bg-surface-2 border border-border text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors"
           >
             Load more
@@ -437,7 +308,7 @@ export function Repos() {
         </div>
       )}
 
-      {!reposLoading && repos.length === 0 && (
+      {!reposLoading && (repos ?? []).length === 0 && (
         <div className="text-center py-8 text-[13px] text-text-muted">
           {searchQuery ? 'No repositories found.' : 'No repositories to display.'}
         </div>
@@ -459,7 +330,7 @@ export function Repos() {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-[15px] font-semibold text-text-primary">{selectedRepo?.full_name}</h2>
         <div className="flex gap-1">
-          {(['open', 'closed', 'all'] as const).map(f => (
+          {(['open', 'closed', 'merged', 'all'] as const).map(f => (
             <button
               key={f}
               onClick={() => setPrFilter(f)}
@@ -477,7 +348,7 @@ export function Repos() {
 
       {prsError && (
         <div className="bg-surface-1 border border-sev-error/30 rounded-lg p-4 mb-4">
-          <p className="text-[12px] text-sev-error">{prsError}</p>
+          <p className="text-[12px] text-sev-error">{prsError instanceof Error ? prsError.message : 'Failed to load PRs'}</p>
         </div>
       )}
 
@@ -485,20 +356,22 @@ export function Repos() {
         <div className="flex justify-center py-8">
           <Loader2 size={20} className="animate-spin text-text-muted" />
         </div>
-      ) : prs.length === 0 ? (
+      ) : (prs ?? []).length === 0 ? (
         <div className="text-center py-8 text-[13px] text-text-muted">
           No {prFilter === 'all' ? '' : prFilter} pull requests.
         </div>
       ) : (
         <div className="space-y-2">
-          {prs.map(pr => (
+          {(prs ?? []).map(pr => (
             <button
               key={pr.number}
               onClick={() => handleSelectPr(pr)}
               className="w-full bg-surface-1 border border-border rounded-lg p-3 text-left hover:border-text-muted transition-colors group"
             >
               <div className="flex items-start gap-2">
-                <GitPullRequest size={14} className={`mt-0.5 shrink-0 ${pr.state === 'open' ? 'text-accent' : 'text-sev-error'}`} />
+                <GitPullRequest size={14} className={`mt-0.5 shrink-0 ${
+                  pr.state === 'open' ? 'text-accent' : pr.state === 'merged' ? 'text-purple-400' : 'text-sev-error'
+                }`} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-[13px] font-medium text-text-primary group-hover:text-accent transition-colors truncate">
@@ -552,7 +425,9 @@ export function Repos() {
 
         <div className="bg-surface-1 border border-border rounded-lg p-4 mb-4">
           <div className="flex items-start gap-2 mb-3">
-            <GitPullRequest size={16} className={`mt-0.5 shrink-0 ${selectedPr.state === 'open' ? 'text-accent' : 'text-sev-error'}`} />
+            <GitPullRequest size={16} className={`mt-0.5 shrink-0 ${
+              selectedPr.state === 'open' ? 'text-accent' : selectedPr.state === 'merged' ? 'text-purple-400' : 'text-sev-error'
+            }`} />
             <div>
               <h2 className="text-[15px] font-semibold text-text-primary">
                 {selectedPr.title}
@@ -573,6 +448,8 @@ export function Repos() {
                 <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
                   selectedPr.state === 'open'
                     ? 'bg-accent/15 text-accent border border-accent/30'
+                    : selectedPr.state === 'merged'
+                    ? 'bg-purple-400/15 text-purple-400 border border-purple-400/30'
                     : 'bg-sev-error/15 text-sev-error border border-sev-error/30'
                 }`}>
                   {selectedPr.draft ? 'Draft' : selectedPr.state}
@@ -623,13 +500,13 @@ export function Repos() {
             {/* Review button */}
             <button
               onClick={handleReview}
-              disabled={reviewing}
+              disabled={startPrReview.isPending}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-[13px] font-medium bg-accent text-surface hover:bg-accent-dim disabled:opacity-50 transition-colors"
             >
-              {reviewing ? (
+              {startPrReview.isPending ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  Fetching diff & reviewing...
+                  Starting review...
                 </>
               ) : (
                 <>
@@ -639,10 +516,10 @@ export function Repos() {
               )}
             </button>
 
-            {reviewError && (
+            {startPrReview.isError && (
               <div className="mt-3 flex items-center gap-2 text-[12px] text-sev-error">
                 <span className="inline-block w-2 h-2 rounded-full bg-sev-error" />
-                {reviewError}
+                {startPrReview.error instanceof Error ? startPrReview.error.message : 'Failed to start review'}
               </div>
             )}
           </div>
@@ -656,15 +533,17 @@ export function Repos() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-semibold text-text-primary">GitHub Repos</h1>
-        {user && (
+        {username && (
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              <img
-                src={user.avatar_url}
-                alt={user.login}
-                className="w-6 h-6 rounded-full"
-              />
-              <span className="text-[12px] text-text-secondary font-code">{user.login}</span>
+              {avatarUrl && (
+                <img
+                  src={avatarUrl}
+                  alt={username}
+                  className="w-6 h-6 rounded-full"
+                />
+              )}
+              <span className="text-[12px] text-text-secondary font-code">{username}</span>
               <span className="inline-block w-2 h-2 rounded-full bg-accent" />
             </div>
             <button

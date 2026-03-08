@@ -77,6 +77,19 @@ pub struct ReviewSession {
     pub diff_content: Option<String>,
     #[serde(default)]
     pub event: Option<ReviewEvent>,
+    #[serde(default)]
+    pub progress: Option<ReviewProgress>,
+}
+
+/// Live progress tracking for a running review.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ReviewProgress {
+    pub current_file: Option<String>,
+    pub files_total: usize,
+    pub files_completed: usize,
+    pub files_skipped: usize,
+    pub elapsed_ms: u64,
+    pub estimated_remaining_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
