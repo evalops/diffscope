@@ -1,0 +1,12 @@
+name: repo regression - shell injection in debug helper
+repo_path: ../../..
+diff_file: ./shell_injection.patch
+expect:
+  must_find:
+    - file: src/main.rs
+      contains: injection
+      rule_id: sec.shell.injection
+  must_not_find:
+    - contains: style
+  min_total: 1
+  max_total: 12

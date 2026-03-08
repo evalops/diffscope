@@ -1,0 +1,10 @@
+name: repo regression - missing RawComment rule_id initializer
+repo_path: ../../..
+diff_file: ./raw_comment_missing_field.patch
+expect:
+  must_find:
+    - file: src/main.rs
+      contains: rule_id
+      rule_id: compile.rawcomment.rule_id
+  min_total: 1
+  max_total: 8

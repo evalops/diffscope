@@ -1,0 +1,12 @@
+name: repo regression - unwrap panic in confidence parser
+repo_path: ../../..
+diff_file: ./smart_confidence_unwrap.patch
+expect:
+  must_find:
+    - file: src/main.rs
+      contains: unwrap
+      rule_id: reliability.unwrap_panic
+  must_not_find:
+    - contains: style
+  min_total: 1
+  max_total: 10

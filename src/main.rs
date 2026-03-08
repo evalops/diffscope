@@ -1107,6 +1107,17 @@ fn build_pr_summary_comment_body(comments: &[core::Comment]) -> String {
         body.push_str(&format!("- {}: {}\n", severity, count));
     }
 
+    let rule_hits = summarize_rule_hits(comments, 8);
+    if !rule_hits.is_empty() {
+        body.push_str("\n### Rule Hits\n");
+        for (rule_id, hit) in rule_hits {
+            body.push_str(&format!(
+                "- `{}`: {} hit(s) (E:{} W:{} I:{} S:{})\n",
+                rule_id, hit.total, hit.errors, hit.warnings, hit.infos, hit.suggestions
+            ));
+        }
+    }
+
     body.push_str("\n### Top Findings\n");
     for (shown, comment) in comments.iter().enumerate() {
         if shown >= 5 {
@@ -1122,6 +1133,49 @@ fn build_pr_summary_comment_body(comments: &[core::Comment]) -> String {
     }
 
     body
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct RuleHitBreakdown {
+    total: usize,
+    errors: usize,
+    warnings: usize,
+    infos: usize,
+    suggestions: usize,
+}
+
+fn summarize_rule_hits(
+    comments: &[core::Comment],
+    max_rules: usize,
+) -> Vec<(String, RuleHitBreakdown)> {
+    let mut by_rule: HashMap<String, RuleHitBreakdown> = HashMap::new();
+    for comment in comments {
+        let Some(rule_id) = normalize_rule_id(comment.rule_id.as_deref()) else {
+            continue;
+        };
+        let hit = by_rule.entry(rule_id).or_default();
+        hit.total = hit.total.saturating_add(1);
+        match comment.severity {
+            core::comment::Severity::Error => hit.errors = hit.errors.saturating_add(1),
+            core::comment::Severity::Warning => hit.warnings = hit.warnings.saturating_add(1),
+            core::comment::Severity::Info => hit.infos = hit.infos.saturating_add(1),
+            core::comment::Severity::Suggestion => {
+                hit.suggestions = hit.suggestions.saturating_add(1);
+            }
+        }
+    }
+
+    let mut rows = by_rule.into_iter().collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        right
+            .1
+            .total
+            .cmp(&left.1.total)
+            .then_with(|| right.1.errors.cmp(&left.1.errors))
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    rows.truncate(max_rules);
+    rows
 }
 
 async fn suggest_commit_message(config: config::Config) -> Result<()> {
@@ -1305,6 +1359,31 @@ struct EvalPattern {
     category: Option<String>,
     #[serde(default)]
     rule_id: Option<String>,
+    #[serde(default)]
+    require_rule_id: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EvalRuleMetrics {
+    rule_id: String,
+    expected: usize,
+    predicted: usize,
+    true_positives: usize,
+    false_positives: usize,
+    false_negatives: usize,
+    precision: f32,
+    recall: f32,
+    f1: f32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Default)]
+struct EvalRuleScoreSummary {
+    micro_precision: f32,
+    micro_recall: f32,
+    micro_f1: f32,
+    macro_precision: f32,
+    macro_recall: f32,
+    macro_f1: f32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1314,6 +1393,8 @@ struct EvalFixtureResult {
     total_comments: usize,
     required_matches: usize,
     required_total: usize,
+    rule_metrics: Vec<EvalRuleMetrics>,
+    rule_summary: Option<EvalRuleScoreSummary>,
     failures: Vec<String>,
 }
 
@@ -1322,6 +1403,8 @@ struct EvalReport {
     fixtures_total: usize,
     fixtures_passed: usize,
     fixtures_failed: usize,
+    rule_metrics: Vec<EvalRuleMetrics>,
+    rule_summary: Option<EvalRuleScoreSummary>,
     results: Vec<EvalFixtureResult>,
 }
 
@@ -1348,10 +1431,14 @@ async fn eval_command(
     let fixtures_total = results.len();
     let fixtures_passed = results.iter().filter(|result| result.passed).count();
     let fixtures_failed = fixtures_total.saturating_sub(fixtures_passed);
+    let rule_metrics = aggregate_rule_metrics(&results);
+    let rule_summary = summarize_rule_metrics(&rule_metrics);
     let report = EvalReport {
         fixtures_total,
         fixtures_passed,
         fixtures_failed,
+        rule_metrics,
+        rule_summary,
         results,
     };
 
@@ -1379,6 +1466,41 @@ async fn eval_command(
             for failure in &result.failures {
                 println!("  - {}", failure);
             }
+        }
+        if let Some(rule_summary) = result.rule_summary {
+            println!(
+                "  rule-metrics: micro P={:.0}% R={:.0}% F1={:.0}%",
+                rule_summary.micro_precision * 100.0,
+                rule_summary.micro_recall * 100.0,
+                rule_summary.micro_f1 * 100.0
+            );
+        }
+    }
+
+    if let Some(rule_summary) = report.rule_summary {
+        println!(
+            "Rule metrics (micro): P={:.0}% R={:.0}% F1={:.0}%",
+            rule_summary.micro_precision * 100.0,
+            rule_summary.micro_recall * 100.0,
+            rule_summary.micro_f1 * 100.0
+        );
+        println!(
+            "Rule metrics (macro): P={:.0}% R={:.0}% F1={:.0}%",
+            rule_summary.macro_precision * 100.0,
+            rule_summary.macro_recall * 100.0,
+            rule_summary.macro_f1 * 100.0
+        );
+
+        for metric in report.rule_metrics.iter().take(8) {
+            println!(
+                "  - {}: tp={} fp={} fn={} (P={:.0}% R={:.0}%)",
+                metric.rule_id,
+                metric.true_positives,
+                metric.false_positives,
+                metric.false_negatives,
+                metric.precision * 100.0,
+                metric.recall * 100.0
+            );
         }
     }
 
@@ -1498,9 +1620,21 @@ async fn run_eval_fixture(
     let mut failures = Vec::new();
     let mut required_matches = 0usize;
     let required_total = fixture.expect.must_find.len();
+    let mut used_comment_indices = HashSet::new();
+    let mut matched_pairs = Vec::new();
 
-    for expected in &fixture.expect.must_find {
-        if comments.iter().any(|comment| expected.matches(comment)) {
+    for (expected_idx, expected) in fixture.expect.must_find.iter().enumerate() {
+        let found = comments
+            .iter()
+            .enumerate()
+            .find(|(comment_idx, comment)| {
+                !used_comment_indices.contains(comment_idx) && expected.matches(comment)
+            })
+            .map(|(comment_idx, _)| comment_idx);
+
+        if let Some(comment_idx) = found {
+            used_comment_indices.insert(comment_idx);
+            matched_pairs.push((expected_idx, comment_idx));
             required_matches = required_matches.saturating_add(1);
         } else {
             failures.push(format!("Missing expected finding: {}", expected.describe()));
@@ -1517,6 +1651,9 @@ async fn run_eval_fixture(
             ));
         }
     }
+
+    let rule_metrics = compute_rule_metrics(&fixture.expect.must_find, &comments, &matched_pairs);
+    let rule_summary = summarize_rule_metrics(&rule_metrics);
 
     if let Some(min_total) = fixture.expect.min_total {
         if total_comments < min_total {
@@ -1541,8 +1678,171 @@ async fn run_eval_fixture(
         total_comments,
         required_matches,
         required_total,
+        rule_metrics,
+        rule_summary,
         failures,
     })
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct RuleMetricCounts {
+    expected: usize,
+    predicted: usize,
+    true_positives: usize,
+}
+
+fn compute_rule_metrics(
+    expected_patterns: &[EvalPattern],
+    comments: &[core::Comment],
+    matched_pairs: &[(usize, usize)],
+) -> Vec<EvalRuleMetrics> {
+    let mut counts_by_rule: HashMap<String, RuleMetricCounts> = HashMap::new();
+
+    for pattern in expected_patterns {
+        if let Some(rule_id) = pattern.normalized_rule_id() {
+            counts_by_rule.entry(rule_id).or_default().expected += 1;
+        }
+    }
+
+    for comment in comments {
+        if let Some(rule_id) = normalize_rule_id(comment.rule_id.as_deref()) {
+            counts_by_rule.entry(rule_id).or_default().predicted += 1;
+        }
+    }
+
+    for (expected_idx, comment_idx) in matched_pairs {
+        let expected_rule = expected_patterns
+            .get(*expected_idx)
+            .and_then(EvalPattern::normalized_rule_id);
+        let predicted_rule = comments
+            .get(*comment_idx)
+            .and_then(|comment| normalize_rule_id(comment.rule_id.as_deref()));
+        if let (Some(expected_rule), Some(predicted_rule)) = (expected_rule, predicted_rule) {
+            if expected_rule == predicted_rule {
+                counts_by_rule
+                    .entry(expected_rule)
+                    .or_default()
+                    .true_positives += 1;
+            }
+        }
+    }
+
+    build_rule_metrics_from_counts(&counts_by_rule)
+}
+
+fn aggregate_rule_metrics(results: &[EvalFixtureResult]) -> Vec<EvalRuleMetrics> {
+    let mut counts_by_rule: HashMap<String, RuleMetricCounts> = HashMap::new();
+    for result in results {
+        for metric in &result.rule_metrics {
+            let counts = counts_by_rule.entry(metric.rule_id.clone()).or_default();
+            counts.expected = counts.expected.saturating_add(metric.expected);
+            counts.predicted = counts.predicted.saturating_add(metric.predicted);
+            counts.true_positives = counts.true_positives.saturating_add(metric.true_positives);
+        }
+    }
+
+    build_rule_metrics_from_counts(&counts_by_rule)
+}
+
+fn build_rule_metrics_from_counts(
+    counts_by_rule: &HashMap<String, RuleMetricCounts>,
+) -> Vec<EvalRuleMetrics> {
+    let mut metrics = Vec::new();
+    for (rule_id, counts) in counts_by_rule {
+        let false_positives = counts.predicted.saturating_sub(counts.true_positives);
+        let false_negatives = counts.expected.saturating_sub(counts.true_positives);
+        let precision = if counts.predicted > 0 {
+            counts.true_positives as f32 / counts.predicted as f32
+        } else {
+            0.0
+        };
+        let recall = if counts.expected > 0 {
+            counts.true_positives as f32 / counts.expected as f32
+        } else {
+            0.0
+        };
+        let f1 = harmonic_mean(precision, recall);
+
+        metrics.push(EvalRuleMetrics {
+            rule_id: rule_id.clone(),
+            expected: counts.expected,
+            predicted: counts.predicted,
+            true_positives: counts.true_positives,
+            false_positives,
+            false_negatives,
+            precision,
+            recall,
+            f1,
+        });
+    }
+
+    metrics.sort_by(|left, right| {
+        right
+            .expected
+            .cmp(&left.expected)
+            .then_with(|| right.predicted.cmp(&left.predicted))
+            .then_with(|| left.rule_id.cmp(&right.rule_id))
+    });
+    metrics
+}
+
+fn summarize_rule_metrics(metrics: &[EvalRuleMetrics]) -> Option<EvalRuleScoreSummary> {
+    if metrics.is_empty() {
+        return None;
+    }
+
+    let mut tp_sum = 0usize;
+    let mut predicted_sum = 0usize;
+    let mut expected_sum = 0usize;
+    let mut precision_sum = 0.0f32;
+    let mut recall_sum = 0.0f32;
+    let mut f1_sum = 0.0f32;
+
+    for metric in metrics {
+        tp_sum = tp_sum.saturating_add(metric.true_positives);
+        predicted_sum = predicted_sum.saturating_add(metric.predicted);
+        expected_sum = expected_sum.saturating_add(metric.expected);
+        precision_sum += metric.precision;
+        recall_sum += metric.recall;
+        f1_sum += metric.f1;
+    }
+
+    let micro_precision = if predicted_sum > 0 {
+        tp_sum as f32 / predicted_sum as f32
+    } else {
+        0.0
+    };
+    let micro_recall = if expected_sum > 0 {
+        tp_sum as f32 / expected_sum as f32
+    } else {
+        0.0
+    };
+    let micro_f1 = harmonic_mean(micro_precision, micro_recall);
+    let count = metrics.len() as f32;
+
+    Some(EvalRuleScoreSummary {
+        micro_precision,
+        micro_recall,
+        micro_f1,
+        macro_precision: precision_sum / count,
+        macro_recall: recall_sum / count,
+        macro_f1: f1_sum / count,
+    })
+}
+
+fn harmonic_mean(precision: f32, recall: f32) -> f32 {
+    if precision + recall <= f32::EPSILON {
+        0.0
+    } else {
+        (2.0 * precision * recall) / (precision + recall)
+    }
+}
+
+fn normalize_rule_id(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
 }
 
 impl EvalPattern {
@@ -1587,14 +1887,16 @@ impl EvalPattern {
         }
 
         if let Some(rule_id) = &self.rule_id {
-            let expected = rule_id.trim().to_ascii_lowercase();
-            let actual = comment
-                .rule_id
-                .as_deref()
-                .map(|value| value.trim().to_ascii_lowercase())
-                .unwrap_or_default();
-            if expected != actual {
-                return false;
+            if self.require_rule_id {
+                let expected = rule_id.trim().to_ascii_lowercase();
+                let actual = comment
+                    .rule_id
+                    .as_deref()
+                    .map(|value| value.trim().to_ascii_lowercase())
+                    .unwrap_or_default();
+                if expected != actual {
+                    return false;
+                }
             }
         }
 
@@ -1633,7 +1935,11 @@ impl EvalPattern {
         if let Some(rule_id) = &self.rule_id {
             let rule_id = rule_id.trim();
             if !rule_id.is_empty() {
-                parts.push(format!("rule_id={}", rule_id));
+                if self.require_rule_id {
+                    parts.push(format!("rule_id={} (required)", rule_id));
+                } else {
+                    parts.push(format!("rule_id={} (label)", rule_id));
+                }
             }
         }
 
@@ -1665,12 +1971,17 @@ impl EvalPattern {
                 .map(str::trim)
                 .unwrap_or("")
                 .is_empty()
-            && self
-                .rule_id
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or("")
-                .is_empty()
+            && (!self.require_rule_id
+                || self
+                    .rule_id
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .is_empty())
+    }
+
+    fn normalized_rule_id(&self) -> Option<String> {
+        normalize_rule_id(self.rule_id.as_deref())
     }
 }
 
@@ -4369,5 +4680,136 @@ TAGS: auth, security
 
         let selected = select_discussion_comment(&comments, None, Some(2)).unwrap();
         assert_eq!(selected.id, "c2");
+    }
+
+    #[test]
+    fn eval_pattern_rule_id_label_is_non_blocking_by_default() {
+        let pattern = EvalPattern {
+            file: Some("src/lib.rs".to_string()),
+            line: None,
+            contains: Some("test".to_string()),
+            severity: None,
+            category: None,
+            rule_id: Some("sec.example".to_string()),
+            require_rule_id: false,
+        };
+        let comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+
+        assert!(pattern.matches(&comment));
+    }
+
+    #[test]
+    fn eval_pattern_rule_id_can_be_required() {
+        let pattern = EvalPattern {
+            file: Some("src/lib.rs".to_string()),
+            line: None,
+            contains: Some("test".to_string()),
+            severity: None,
+            category: None,
+            rule_id: Some("sec.example".to_string()),
+            require_rule_id: true,
+        };
+        let comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+
+        assert!(!pattern.matches(&comment));
+    }
+
+    #[test]
+    fn compute_rule_metrics_tracks_tp_fp_fn() {
+        let expected = vec![
+            EvalPattern {
+                file: Some("src/lib.rs".to_string()),
+                line: None,
+                contains: Some("test".to_string()),
+                severity: None,
+                category: None,
+                rule_id: Some("rule.alpha".to_string()),
+                require_rule_id: false,
+            },
+            EvalPattern {
+                file: Some("src/lib.rs".to_string()),
+                line: None,
+                contains: Some("test".to_string()),
+                severity: None,
+                category: None,
+                rule_id: Some("rule.beta".to_string()),
+                require_rule_id: false,
+            },
+        ];
+        let mut c1 = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+        c1.rule_id = Some("rule.alpha".to_string());
+        let mut c2 = build_comment(
+            "c2",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+        c2.rule_id = Some("rule.alpha".to_string());
+        let comments = vec![c1, c2];
+        let matched_pairs = vec![(0usize, 0usize)];
+
+        let metrics = compute_rule_metrics(&expected, &comments, &matched_pairs);
+        let alpha = metrics.iter().find(|metric| metric.rule_id == "rule.alpha");
+        let beta = metrics.iter().find(|metric| metric.rule_id == "rule.beta");
+
+        let alpha = alpha.expect("expected alpha metrics");
+        assert_eq!(alpha.expected, 1);
+        assert_eq!(alpha.predicted, 2);
+        assert_eq!(alpha.true_positives, 1);
+        assert_eq!(alpha.false_positives, 1);
+        assert_eq!(alpha.false_negatives, 0);
+
+        let beta = beta.expect("expected beta metrics");
+        assert_eq!(beta.expected, 1);
+        assert_eq!(beta.predicted, 0);
+        assert_eq!(beta.true_positives, 0);
+        assert_eq!(beta.false_positives, 0);
+        assert_eq!(beta.false_negatives, 1);
+    }
+
+    #[test]
+    fn summarize_rule_hits_orders_by_volume() {
+        let mut c1 = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.9,
+        );
+        c1.rule_id = Some("rule.alpha".to_string());
+        let mut c2 = build_comment(
+            "c2",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+        c2.rule_id = Some("rule.alpha".to_string());
+        let mut c3 = build_comment(
+            "c3",
+            core::comment::Category::Security,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+        c3.rule_id = Some("rule.beta".to_string());
+
+        let hits = summarize_rule_hits(&[c1, c2, c3], 8);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].0, "rule.alpha");
+        assert_eq!(hits[0].1.total, 2);
+        assert_eq!(hits[1].0, "rule.beta");
     }
 }

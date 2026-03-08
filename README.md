@@ -133,12 +133,16 @@ expect:
       contains: missing auth check
       severity: error
       category: security
-      rule_id: sec.auth.guard
+      rule_id: sec.auth.guard      # label for per-rule precision/recall
+      require_rule_id: false       # set true to require model-emitted RULE id
   must_not_find:
     - contains: style
   min_total: 1
   max_total: 8
 ```
+
+`diffscope eval` now reports per-rule precision/recall/F1 (micro and macro), and includes top rule-level TP/FP/FN counts in CLI and JSON output.
+Starter fixtures live in `eval/fixtures/repo_regressions`.
 
 ### Smart Review (Enhanced Analysis)
 ```bash
