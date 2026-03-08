@@ -42,6 +42,7 @@ pub async fn git_command(
                 git.get_default_branch()
                     .unwrap_or_else(|_| "main".to_string())
             });
+            core::validate_ref_name(&base_branch)?;
             info!("Analyzing changes from branch: {}", base_branch);
             git.get_branch_diff(&base_branch)?
         }

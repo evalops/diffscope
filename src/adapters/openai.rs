@@ -1,10 +1,9 @@
+use crate::adapters::common;
 use crate::adapters::llm::{LLMAdapter, LLMRequest, LLMResponse, ModelConfig, Usage};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use tokio::time::sleep;
 
 pub struct OpenAIAdapter {
     client: Client,
@@ -92,7 +91,7 @@ impl OpenAIAdapter {
             .clone()
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
 
-        let is_local = is_local_endpoint(&base_url);
+        let is_local = common::is_local_endpoint(&base_url);
 
         let api_key = config.api_key.clone()
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
@@ -111,41 +110,6 @@ impl OpenAIAdapter {
         })
     }
 
-    async fn send_with_retry<F>(&self, mut make_request: F) -> Result<reqwest::Response>
-    where
-        F: FnMut() -> reqwest::RequestBuilder,
-    {
-        const MAX_RETRIES: usize = 2;
-        const BASE_DELAY_MS: u64 = 250;
-
-        for attempt in 0..=MAX_RETRIES {
-            match make_request().send().await {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        return Ok(response);
-                    }
-
-                    let status = response.status();
-                    let body = response.text().await.unwrap_or_default();
-                    if is_retryable_status(status) && attempt < MAX_RETRIES {
-                        sleep(Duration::from_millis(BASE_DELAY_MS * (attempt as u64 + 1))).await;
-                        continue;
-                    }
-
-                    anyhow::bail!("OpenAI API error ({}): {}", status, body);
-                }
-                Err(err) => {
-                    if attempt < MAX_RETRIES {
-                        sleep(Duration::from_millis(BASE_DELAY_MS * (attempt as u64 + 1))).await;
-                        continue;
-                    }
-                    return Err(err.into());
-                }
-            }
-        }
-
-        anyhow::bail!("OpenAI request failed after retries");
-    }
 }
 
 #[async_trait]
@@ -161,16 +125,6 @@ impl LLMAdapter for OpenAIAdapter {
     fn _model_name(&self) -> &str {
         &self.config.model_name
     }
-}
-
-fn is_retryable_status(status: StatusCode) -> bool {
-    status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
-}
-
-fn is_local_endpoint(url: &str) -> bool {
-    url.contains("localhost") || url.contains("127.0.0.1") || url.contains("0.0.0.0")
-        || url.contains("[::1]")
-        || (!url.contains("openai.com") && !url.contains("anthropic.com"))
 }
 
 fn should_use_responses_api(config: &ModelConfig) -> bool {
@@ -208,16 +162,15 @@ impl OpenAIAdapter {
         };
 
         let url = format!("{}/chat/completions", self.base_url);
-        let response = self
-            .send_with_retry(|| {
-                self.client
-                    .post(&url)
-                    .header("Authorization", format!("Bearer {}", self.api_key))
-                    .header("Content-Type", "application/json")
-                    .json(&openai_request)
-            })
-            .await
-            .context("Failed to send request to OpenAI")?;
+        let response = common::send_with_retry("OpenAI", || {
+            self.client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&openai_request)
+        })
+        .await
+        .context("Failed to send request to OpenAI")?;
 
         let openai_response: OpenAIResponse = response
             .json()
@@ -251,16 +204,15 @@ impl OpenAIAdapter {
         };
 
         let url = format!("{}/responses", self.base_url);
-        let response = self
-            .send_with_retry(|| {
-                self.client
-                    .post(&url)
-                    .header("Authorization", format!("Bearer {}", self.api_key))
-                    .header("Content-Type", "application/json")
-                    .json(&openai_request)
-            })
-            .await
-            .context("Failed to send request to OpenAI")?;
+        let response = common::send_with_retry("OpenAI", || {
+            self.client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&openai_request)
+        })
+        .await
+        .context("Failed to send request to OpenAI")?;
 
         let openai_response: OpenAIResponsesResponse = response
             .json()
@@ -302,4 +254,372 @@ fn extract_response_text(response: &OpenAIResponsesResponse) -> String {
     }
 
     combined
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::llm::{LLMAdapter, LLMRequest, ModelConfig};
+
+    fn test_config(base_url: &str) -> ModelConfig {
+        ModelConfig {
+            model_name: "gpt-4o".to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: Some(base_url.to_string()),
+            temperature: 0.2,
+            max_tokens: 100,
+            openai_use_responses: Some(false),
+            adapter_override: None,
+        }
+    }
+
+    fn test_request() -> LLMRequest {
+        LLMRequest {
+            system_prompt: "system".to_string(),
+            user_prompt: "user".to_string(),
+            temperature: None,
+            max_tokens: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_successful_completion() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [{"message": {"role": "assistant", "content": "test response"}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                    "model": "gpt-4o"
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.content, "test response");
+        assert_eq!(response.model, "gpt-4o");
+        let usage = response.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 5);
+        assert_eq!(usage.total_tokens, 15);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_api_error_non_retryable_401() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(401)
+            .with_body("Unauthorized")
+            .expect(1)
+            .create_async()
+            .await;
+
+        let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_err());
+        let err_msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            err_msg.contains("401") || err_msg.contains("Unauthorized"),
+            "Error should mention 401 or Unauthorized, got: {}",
+            err_msg
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_api_error_non_retryable_403() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(403)
+            .with_body("Forbidden")
+            .expect(1)
+            .create_async()
+            .await;
+
+        let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_err());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_retryable_error_429_all_fail() {
+        // 429 should retry up to MAX_RETRIES (2), so 3 total attempts
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(429)
+            .with_body("Rate limited")
+            .expect(3)
+            .create_async()
+            .await;
+
+        let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_err());
+        let err_msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            err_msg.contains("429") || err_msg.contains("Rate limited"),
+            "Error should mention rate limiting, got: {}",
+            err_msg
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_retryable_error_500_all_fail() {
+        // Server errors should also retry (3 total attempts)
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(500)
+            .with_body("Internal Server Error")
+            .expect(3)
+            .create_async()
+            .await;
+
+        let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_err());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_empty_choices_returns_empty_content() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [],
+                    "usage": {"prompt_tokens": 5, "completion_tokens": 0, "total_tokens": 5},
+                    "model": "gpt-4o"
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.content, "");
+    }
+
+    #[test]
+    fn test_local_endpoint_no_api_key() {
+        let config = ModelConfig {
+            model_name: "local-model".to_string(),
+            api_key: None,
+            base_url: Some("http://localhost:8080".to_string()),
+            ..Default::default()
+        };
+        let adapter = OpenAIAdapter::new(config);
+        assert!(adapter.is_ok());
+    }
+
+    #[test]
+    fn test_local_endpoint_127_0_0_1_no_api_key() {
+        let config = ModelConfig {
+            model_name: "local-model".to_string(),
+            api_key: None,
+            base_url: Some("http://127.0.0.1:8080".to_string()),
+            ..Default::default()
+        };
+        let adapter = OpenAIAdapter::new(config);
+        assert!(adapter.is_ok());
+    }
+
+    #[test]
+    fn test_should_use_responses_api_explicit_true() {
+        let config = ModelConfig {
+            openai_use_responses: Some(true),
+            ..Default::default()
+        };
+        assert!(should_use_responses_api(&config));
+    }
+
+    #[test]
+    fn test_should_use_responses_api_explicit_false() {
+        let config = ModelConfig {
+            openai_use_responses: Some(false),
+            ..Default::default()
+        };
+        assert!(!should_use_responses_api(&config));
+    }
+
+    #[test]
+    fn test_should_use_responses_api_non_openai_base_url() {
+        let config = ModelConfig {
+            openai_use_responses: None,
+            base_url: Some("http://localhost:8080".to_string()),
+            ..Default::default()
+        };
+        assert!(!should_use_responses_api(&config));
+    }
+
+    #[test]
+    fn test_should_use_responses_api_gpt35_disabled() {
+        let config = ModelConfig {
+            model_name: "gpt-3.5-turbo".to_string(),
+            openai_use_responses: None,
+            ..Default::default()
+        };
+        assert!(!should_use_responses_api(&config));
+    }
+
+    #[test]
+    fn test_should_use_responses_api_gpt4o_default() {
+        let config = ModelConfig {
+            model_name: "gpt-4o".to_string(),
+            openai_use_responses: None,
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            ..Default::default()
+        };
+        assert!(should_use_responses_api(&config));
+    }
+
+    #[test]
+    fn test_extract_response_text_single_message() {
+        let response = OpenAIResponsesResponse {
+            output: vec![OpenAIResponseOutput {
+                output_type: "message".to_string(),
+                content: vec![OpenAIResponseContent {
+                    content_type: "output_text".to_string(),
+                    text: Some("hello world".to_string()),
+                }],
+            }],
+            model: "gpt-4o".to_string(),
+            usage: None,
+        };
+        assert_eq!(extract_response_text(&response), "hello world");
+    }
+
+    #[test]
+    fn test_extract_response_text_non_message_skipped() {
+        let response = OpenAIResponsesResponse {
+            output: vec![OpenAIResponseOutput {
+                output_type: "tool_call".to_string(),
+                content: vec![OpenAIResponseContent {
+                    content_type: "output_text".to_string(),
+                    text: Some("should be ignored".to_string()),
+                }],
+            }],
+            model: "gpt-4o".to_string(),
+            usage: None,
+        };
+        assert_eq!(extract_response_text(&response), "");
+    }
+
+    #[test]
+    fn test_extract_response_text_empty_output() {
+        let response = OpenAIResponsesResponse {
+            output: vec![],
+            model: "gpt-4o".to_string(),
+            usage: None,
+        };
+        assert_eq!(extract_response_text(&response), "");
+    }
+
+    #[test]
+    fn test_extract_response_text_multiple_blocks_joined() {
+        let response = OpenAIResponsesResponse {
+            output: vec![OpenAIResponseOutput {
+                output_type: "message".to_string(),
+                content: vec![
+                    OpenAIResponseContent {
+                        content_type: "output_text".to_string(),
+                        text: Some("first".to_string()),
+                    },
+                    OpenAIResponseContent {
+                        content_type: "output_text".to_string(),
+                        text: Some("second".to_string()),
+                    },
+                ],
+            }],
+            model: "gpt-4o".to_string(),
+            usage: None,
+        };
+        assert_eq!(extract_response_text(&response), "first\nsecond");
+    }
+
+    #[test]
+    fn test_model_name() {
+        let config = test_config("http://localhost:8080");
+        let adapter = OpenAIAdapter::new(config).unwrap();
+        assert_eq!(adapter._model_name(), "gpt-4o");
+    }
+
+    #[tokio::test]
+    async fn test_request_includes_auth_header() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .match_header("Authorization", "Bearer test-key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                    "model": "gpt-4o"
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_ok());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_custom_temperature_and_max_tokens_override() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                    "model": "gpt-4o"
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter
+            .complete(LLMRequest {
+                system_prompt: "s".to_string(),
+                user_prompt: "u".to_string(),
+                temperature: Some(0.8),
+                max_tokens: Some(500),
+            })
+            .await;
+
+        assert!(result.is_ok());
+    }
 }

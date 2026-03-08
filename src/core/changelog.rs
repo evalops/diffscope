@@ -110,6 +110,11 @@ impl ChangelogGenerator {
     }
 
     fn collect_entries(&self, from_tag: Option<&str>, to_ref: &str) -> Result<Vec<ChangelogEntry>> {
+        super::git::validate_ref_name(to_ref)?;
+        if let Some(tag) = from_tag {
+            super::git::validate_ref_name(tag)?;
+        }
+
         let mut revwalk = self.repo.revwalk()?;
 
         // Start from the target ref

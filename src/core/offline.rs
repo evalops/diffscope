@@ -633,7 +633,7 @@ mod tests {
         assert!(payload.to_string().contains("system"));
     }
 
-    // BUG: "1.5b" model name contains "1b" so it matched the 1b check first
+    // Regression: 1.5b must not match the 1b check (check order matters)
     #[test]
     fn test_ram_estimation_1_5b_vs_1b() {
         let config_1b = OfflineConfig {
@@ -653,7 +653,7 @@ mod tests {
         );
     }
 
-    // BUG: truncate_to_tokens slices at byte offset without char boundary check
+    // Regression: truncate_to_tokens must respect UTF-8 char boundaries
     #[test]
     fn test_truncate_to_tokens_utf8_safety() {
         // '€' is 3 bytes (U+20AC). With context_window=504, budget=4,
@@ -668,7 +668,7 @@ mod tests {
         assert!(!sys.is_empty() || sys.contains("Truncated") || sys.is_empty());
     }
 
-    // BUG: validate() doesn't check for obviously wrong base_url formats
+    // Regression: validate() must reject invalid URL formats
     #[test]
     fn test_validate_rejects_invalid_url() {
         let config = OfflineConfig {

@@ -902,7 +902,7 @@ mod tests {
         assert!(by_cat.is_empty());
     }
 
-    // BUG: AggregateMetrics::compute silently drops results when weights.len() < results.len()
+    // Regression: mismatched weights must fall back to macro_f1, not silently drop results
     #[test]
     fn test_aggregate_weights_length_mismatch() {
         let r1 = FixtureResult::compute("a", 2, 0, 2, 0, 0); // f1 = 1.0
@@ -924,8 +924,7 @@ mod tests {
         );
     }
 
-    // BUG: FPR formula uses FP/(FP+TP) which equals 1-precision, making it redundant.
-    // Should track total_tn and use FP/(FP+TN) for real false positive rate.
+    // Regression: FPR must use FP/(FP+TN), not FP/(FP+TP)
     #[test]
     fn test_fpr_uses_true_negatives() {
         let r1 = FixtureResult::compute("a", 10, 10, 10, 0, 1);
@@ -966,7 +965,7 @@ mod tests {
         );
     }
 
-    // BUG: compare_results never populates improvements vector
+    // Regression: compare_results must populate improvements when metrics improve
     #[test]
     fn test_compare_results_detects_improvements() {
         let baseline = BenchmarkResult {

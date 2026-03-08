@@ -703,7 +703,7 @@ mod tests {
         assert!(hotspots[0].risk_score <= 1.0);
     }
 
-    // BUG: max_line uses new_start + new_lines instead of new_start + new_lines - 1
+    // Regression: hotspot line range end must be new_start + new_lines - 1, not new_start + new_lines
     // A hunk at line 10 with 3 lines (10,11,12) should give max_line=12, not 13
     #[test]
     fn test_hotspot_line_range_end() {

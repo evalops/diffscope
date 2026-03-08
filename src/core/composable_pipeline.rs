@@ -244,14 +244,17 @@ impl PipelineStage for SortBySeverityStage {
     }
 
     fn execute(&self, ctx: &mut PipelineContext) -> Result<()> {
-        ctx.comments.sort_by_key(|c| {
-            let sev = match c.severity {
+        ctx.comments.sort_by(|a, b| {
+            let severity_rank = |s: &crate::core::comment::Severity| match s {
                 crate::core::comment::Severity::Error => 0,
                 crate::core::comment::Severity::Warning => 1,
                 crate::core::comment::Severity::Info => 2,
                 crate::core::comment::Severity::Suggestion => 3,
             };
-            (sev, c.file_path.clone(), c.line_number)
+            severity_rank(&a.severity)
+                .cmp(&severity_rank(&b.severity))
+                .then_with(|| a.file_path.cmp(&b.file_path))
+                .then_with(|| a.line_number.cmp(&b.line_number))
         });
         Ok(())
     }
@@ -675,9 +678,7 @@ mod tests {
         assert_eq!(ctx.comments.len(), 1);
     }
 
-    // BUG: DeduplicateStage uses dedup_by which requires the vec to be sorted,
-    // but only deduplicates ADJACENT identical items. Different-content comments
-    // at the same file+line are NOT deduplicated.
+    // Regression: DeduplicateStage must preserve different-content comments at the same line
     #[test]
     fn test_deduplicate_preserves_different_content_same_line() {
         let mut ctx = PipelineContext::new();
@@ -690,8 +691,7 @@ mod tests {
         assert_eq!(ctx.comments.len(), 2);
     }
 
-    // BUG: SortBySeverityStage clones file_path in the sort key, which is expensive
-    // but functionally correct. Test that sort order is correct.
+    // Regression: SortBySeverityStage must sort Error > Warning > Info
     #[test]
     fn test_sort_by_severity_order() {
         let mut ctx = PipelineContext::new();

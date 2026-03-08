@@ -30,7 +30,7 @@ pub use diff_parser::{DiffParser, UnifiedDiff};
 pub use enhanced_review::{
     build_enhanced_context, apply_enhanced_filters, generate_enhanced_guidance,
 };
-pub use git::GitIntegration;
+pub use git::{validate_ref_name, GitIntegration};
 pub use pr_summary::{PRSummaryGenerator, SummaryOptions};
 pub use prompt::PromptBuilder;
 pub use rules::{active_rules_for_file, load_rules_from_patterns, ReviewRule};

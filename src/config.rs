@@ -2,6 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -281,6 +282,35 @@ impl Config {
                 .filter(|s| !s.trim().is_empty());
         }
 
+        // Validate base_url: must be a valid http/https URL with a host
+        if let Some(ref raw_url) = self.base_url {
+            match url::Url::parse(raw_url) {
+                Ok(parsed) => {
+                    if !matches!(parsed.scheme(), "http" | "https") {
+                        warn!(
+                            "base_url '{}' uses unsupported scheme '{}' (expected http or https), ignoring",
+                            raw_url,
+                            parsed.scheme()
+                        );
+                        self.base_url = None;
+                    } else if parsed.host().is_none() {
+                        warn!(
+                            "base_url '{}' has no valid host, ignoring",
+                            raw_url
+                        );
+                        self.base_url = None;
+                    }
+                }
+                Err(err) => {
+                    warn!(
+                        "base_url '{}' is not a valid URL ({}), ignoring",
+                        raw_url, err
+                    );
+                    self.base_url = None;
+                }
+            }
+        }
+
         // Normalize adapter field
         if let Some(ref adapter) = self.adapter {
             let normalized = adapter.trim().to_lowercase();
@@ -296,11 +326,23 @@ impl Config {
         }
 
         if !self.temperature.is_finite() || self.temperature < 0.0 || self.temperature > 2.0 {
+            warn!(
+                "temperature {} is outside valid range 0.0..=2.0, resetting to default {}",
+                self.temperature,
+                default_temperature()
+            );
             self.temperature = default_temperature();
         }
 
         if self.max_tokens == 0 {
+            warn!("max_tokens is 0, resetting to default {}", default_max_tokens());
             self.max_tokens = default_max_tokens();
+        } else if self.max_tokens > 128_000 {
+            warn!(
+                "max_tokens {} exceeds maximum 128000, clamping to 128000",
+                self.max_tokens
+            );
+            self.max_tokens = 128_000;
         }
         if self.context_max_chunks == 0 {
             self.context_max_chunks = default_context_max_chunks();
@@ -348,8 +390,16 @@ impl Config {
             self.min_confidence = self.min_confidence.clamp(0.0, 1.0);
         }
         if self.strictness == 0 {
+            warn!(
+                "strictness 0 is invalid (valid range: 1-3), resetting to default {}",
+                default_strictness()
+            );
             self.strictness = default_strictness();
         } else if self.strictness > 3 {
+            warn!(
+                "strictness {} is invalid (valid range: 1-3), clamping to 3",
+                self.strictness
+            );
             self.strictness = 3;
         }
 
@@ -772,5 +822,153 @@ mod tests {
 
         // Exact match should work
         assert!(config.path_matches("src/file.rs", "src/file.rs"));
+    }
+
+    #[test]
+    fn normalize_validates_base_url_valid_http() {
+        let mut config = Config {
+            base_url: Some("http://localhost:11434".to_string()),
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(
+            config.base_url.as_deref(),
+            Some("http://localhost:11434")
+        );
+    }
+
+    #[test]
+    fn normalize_validates_base_url_valid_https() {
+        let mut config = Config {
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(
+            config.base_url.as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+    }
+
+    #[test]
+    fn normalize_rejects_base_url_bad_scheme() {
+        let mut config = Config {
+            base_url: Some("ftp://example.com".to_string()),
+            ..Config::default()
+        };
+        config.normalize();
+        assert!(config.base_url.is_none());
+    }
+
+    #[test]
+    fn normalize_rejects_base_url_no_host() {
+        let mut config = Config {
+            base_url: Some("http://".to_string()),
+            ..Config::default()
+        };
+        config.normalize();
+        assert!(config.base_url.is_none());
+    }
+
+    #[test]
+    fn normalize_rejects_base_url_not_a_url() {
+        let mut config = Config {
+            base_url: Some("not a url at all".to_string()),
+            ..Config::default()
+        };
+        config.normalize();
+        assert!(config.base_url.is_none());
+    }
+
+    #[test]
+    fn normalize_rejects_base_url_javascript_scheme() {
+        let mut config = Config {
+            base_url: Some("javascript:alert(1)".to_string()),
+            ..Config::default()
+        };
+        config.normalize();
+        assert!(config.base_url.is_none());
+    }
+
+    #[test]
+    fn normalize_clamps_max_tokens_above_limit() {
+        let mut config = Config {
+            max_tokens: 200_000,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.max_tokens, 128_000);
+    }
+
+    #[test]
+    fn normalize_accepts_max_tokens_at_limit() {
+        let mut config = Config {
+            max_tokens: 128_000,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.max_tokens, 128_000);
+    }
+
+    #[test]
+    fn normalize_strictness_warns_and_clamps_above_3() {
+        let mut config = Config {
+            strictness: 5,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.strictness, 3);
+    }
+
+    #[test]
+    fn normalize_strictness_warns_and_defaults_zero() {
+        let mut config = Config {
+            strictness: 0,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.strictness, default_strictness());
+    }
+
+    #[test]
+    fn normalize_accepts_valid_strictness() {
+        for s in 1..=3 {
+            let mut config = Config {
+                strictness: s,
+                ..Config::default()
+            };
+            config.normalize();
+            assert_eq!(config.strictness, s);
+        }
+    }
+
+    #[test]
+    fn normalize_temperature_negative() {
+        let mut config = Config {
+            temperature: -0.5,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.temperature, default_temperature());
+    }
+
+    #[test]
+    fn normalize_temperature_nan() {
+        let mut config = Config {
+            temperature: f32::NAN,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.temperature, default_temperature());
+    }
+
+    #[test]
+    fn normalize_temperature_infinity() {
+        let mut config = Config {
+            temperature: f32::INFINITY,
+            ..Config::default()
+        };
+        config.normalize();
+        assert_eq!(config.temperature, default_temperature());
     }
 }

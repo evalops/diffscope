@@ -1,6 +1,47 @@
 use anyhow::{Context, Result};
 use git2::{BranchType, DiffFormat, DiffOptions, Repository};
+use once_cell::sync::Lazy;
+use regex::Regex;
 use std::path::{Path, PathBuf};
+
+/// Validate a user-provided git ref name (branch, tag, or arbitrary ref).
+///
+/// Git ref names must not contain spaces, `..`, control characters, or
+/// the special characters `~`, `^`, `:`, `?`, `\`, `[`, `*`.
+/// They also cannot start/end with `.` or `/`, and cannot end with `.lock`.
+pub fn validate_ref_name(name: &str) -> Result<()> {
+    static REF_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_./@{}\-]*$").unwrap());
+
+    if name.is_empty() {
+        anyhow::bail!("Invalid ref name: name is empty");
+    }
+
+    if !REF_RE.is_match(name) {
+        anyhow::bail!(
+            "Invalid ref name '{}': must start with alphanumeric and contain only \
+             alphanumeric, '.', '_', '/', '@', '{{', '}}', or '-' characters",
+            name
+        );
+    }
+
+    if name.contains("..") {
+        anyhow::bail!("Invalid ref name '{}': must not contain '..'", name);
+    }
+
+    if name.ends_with(".lock") {
+        anyhow::bail!("Invalid ref name '{}': must not end with '.lock'", name);
+    }
+
+    if name.ends_with('/') || name.ends_with('.') {
+        anyhow::bail!(
+            "Invalid ref name '{}': must not end with '/' or '.'",
+            name
+        );
+    }
+
+    Ok(())
+}
 
 pub struct GitIntegration {
     repo: Repository,
@@ -50,6 +91,7 @@ impl GitIntegration {
     }
 
     pub fn get_branch_diff(&self, base_branch: &str) -> Result<String> {
+        validate_ref_name(base_branch)?;
         let base = self.repo.revparse_single(base_branch)?.peel_to_commit()?;
         let head = self.repo.head()?.peel_to_commit()?;
 
@@ -123,5 +165,86 @@ impl GitIntegration {
         }
 
         Ok("main".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_ref_name_accepts_simple_branch() {
+        assert!(validate_ref_name("main").is_ok());
+        assert!(validate_ref_name("master").is_ok());
+        assert!(validate_ref_name("develop").is_ok());
+    }
+
+    #[test]
+    fn validate_ref_name_accepts_slashes_and_dashes() {
+        assert!(validate_ref_name("feature/add-login").is_ok());
+        assert!(validate_ref_name("release/v1.2.3").is_ok());
+        assert!(validate_ref_name("fix/issue-42").is_ok());
+    }
+
+    #[test]
+    fn validate_ref_name_accepts_at_brace_syntax() {
+        // git reflog syntax like HEAD@{1}
+        assert!(validate_ref_name("HEAD@{1}").is_ok());
+    }
+
+    #[test]
+    fn validate_ref_name_rejects_empty() {
+        assert!(validate_ref_name("").is_err());
+    }
+
+    #[test]
+    fn validate_ref_name_rejects_double_dot() {
+        assert!(validate_ref_name("main..develop").is_err());
+    }
+
+    #[test]
+    fn validate_ref_name_rejects_dot_lock_suffix() {
+        assert!(validate_ref_name("branch.lock").is_err());
+    }
+
+    #[test]
+    fn validate_ref_name_rejects_trailing_slash() {
+        assert!(validate_ref_name("feature/").is_err());
+    }
+
+    #[test]
+    fn validate_ref_name_rejects_trailing_dot() {
+        assert!(validate_ref_name("branch.").is_err());
+    }
+
+    #[test]
+    fn validate_ref_name_rejects_spaces() {
+        assert!(validate_ref_name("my branch").is_err());
+    }
+
+    #[test]
+    fn validate_ref_name_rejects_control_chars() {
+        assert!(validate_ref_name("branch\x00name").is_err());
+        assert!(validate_ref_name("branch\tname").is_err());
+    }
+
+    #[test]
+    fn validate_ref_name_rejects_special_git_chars() {
+        assert!(validate_ref_name("branch~1").is_err());
+        assert!(validate_ref_name("branch^2").is_err());
+        assert!(validate_ref_name("branch:ref").is_err());
+        assert!(validate_ref_name("branch?").is_err());
+        assert!(validate_ref_name("branch[0]").is_err());
+        assert!(validate_ref_name("branch*").is_err());
+    }
+
+    #[test]
+    fn validate_ref_name_rejects_starting_with_dot() {
+        assert!(validate_ref_name(".hidden").is_err());
+    }
+
+    #[test]
+    fn validate_ref_name_rejects_starting_with_dash() {
+        assert!(validate_ref_name("-flag").is_err());
     }
 }

@@ -656,7 +656,7 @@ mod tests {
         assert_ne!(style_score, bug_score, "Different categories should score differently");
     }
 
-    // BUG: record_feedback doesn't update category if pattern already exists with different category
+    // Regression: record_feedback must count both feedbacks even with different categories
     #[test]
     fn test_record_feedback_category_override() {
         let mut store = ConventionStore::new();

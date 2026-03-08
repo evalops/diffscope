@@ -714,7 +714,7 @@ mod tests {
         assert!(summary.summary.contains("one_liner"));
     }
 
-    // BUG: build_embedding_text truncates at byte 500, panics on multi-byte UTF-8
+    // Regression: build_embedding_text must respect UTF-8 char boundaries when truncating
     #[test]
     fn test_build_embedding_text_utf8_safety() {
         // '€' is 3 bytes. 200 repetitions = 600 bytes. Byte 500 is mid-character (500/3 = 166.67)
@@ -745,8 +745,7 @@ mod tests {
         );
     }
 
-    // BUG: extract_return_type matches first "->" in the line, which hits the
-    // arrow inside fn pointer params instead of the actual return type arrow
+    // Regression: extract_return_type must skip "->" inside fn pointer params
     #[test]
     fn test_extract_return_type_with_fn_pointer_param() {
         let code = "fn process(cb: fn(u32) -> bool) -> Result<()> {";
@@ -760,7 +759,7 @@ mod tests {
         );
     }
 
-    // BUG: extract_return_type with multi-line complex types
+    // Regression: extract_return_type must handle multi-line signatures
     #[test]
     fn test_extract_return_type_complex() {
         let code = "pub fn query(\n    db: &Database,\n) -> Result<Vec<String>, Error> {\n";

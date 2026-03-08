@@ -1,10 +1,9 @@
+use crate::adapters::common;
 use crate::adapters::llm::{LLMAdapter, LLMRequest, LLMResponse, ModelConfig, Usage};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use tokio::time::sleep;
 
 pub struct AnthropicAdapter {
     client: Client,
@@ -55,7 +54,7 @@ impl AnthropicAdapter {
             .clone()
             .unwrap_or_else(|| "https://api.anthropic.com/v1".to_string());
 
-        let is_local = is_local_endpoint(&base_url);
+        let is_local = common::is_local_endpoint(&base_url);
 
         let api_key = config.api_key.clone()
             .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
@@ -74,41 +73,6 @@ impl AnthropicAdapter {
         })
     }
 
-    async fn send_with_retry<F>(&self, mut make_request: F) -> Result<reqwest::Response>
-    where
-        F: FnMut() -> reqwest::RequestBuilder,
-    {
-        const MAX_RETRIES: usize = 2;
-        const BASE_DELAY_MS: u64 = 250;
-
-        for attempt in 0..=MAX_RETRIES {
-            match make_request().send().await {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        return Ok(response);
-                    }
-
-                    let status = response.status();
-                    let body = response.text().await.unwrap_or_default();
-                    if is_retryable_status(status) && attempt < MAX_RETRIES {
-                        sleep(Duration::from_millis(BASE_DELAY_MS * (attempt as u64 + 1))).await;
-                        continue;
-                    }
-
-                    anyhow::bail!("Anthropic API error ({}): {}", status, body);
-                }
-                Err(err) => {
-                    if attempt < MAX_RETRIES {
-                        sleep(Duration::from_millis(BASE_DELAY_MS * (attempt as u64 + 1))).await;
-                        continue;
-                    }
-                    return Err(err.into());
-                }
-            }
-        }
-
-        anyhow::bail!("Anthropic request failed after retries");
-    }
 }
 
 #[async_trait]
@@ -128,18 +92,17 @@ impl LLMAdapter for AnthropicAdapter {
         };
 
         let url = format!("{}/messages", self.base_url);
-        let response = self
-            .send_with_retry(|| {
-                self.client
-                    .post(&url)
-                    .header("x-api-key", &self.api_key)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("anthropic-beta", "messages-2023-12-15")
-                    .header("Content-Type", "application/json")
-                    .json(&anthropic_request)
-            })
-            .await
-            .context("Failed to send request to Anthropic")?;
+        let response = common::send_with_retry("Anthropic", || {
+            self.client
+                .post(&url)
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("anthropic-beta", "messages-2023-12-15")
+                .header("Content-Type", "application/json")
+                .json(&anthropic_request)
+        })
+        .await
+        .context("Failed to send request to Anthropic")?;
 
         let anthropic_response: AnthropicResponse = response
             .json()
@@ -176,12 +139,262 @@ impl LLMAdapter for AnthropicAdapter {
     }
 }
 
-fn is_retryable_status(status: StatusCode) -> bool {
-    status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::llm::{LLMAdapter, LLMRequest, ModelConfig};
+
+    fn test_config(base_url: &str) -> ModelConfig {
+        ModelConfig {
+            model_name: "claude-3-5-sonnet-20241022".to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: Some(base_url.to_string()),
+            temperature: 0.2,
+            max_tokens: 100,
+            openai_use_responses: None,
+            adapter_override: None,
+        }
+    }
+
+    fn test_request() -> LLMRequest {
+        LLMRequest {
+            system_prompt: "system".to_string(),
+            user_prompt: "user".to_string(),
+            temperature: None,
+            max_tokens: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_successful_completion() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/messages")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "content": [{"type": "text", "text": "test response"}],
+                    "model": "claude-3-5-sonnet-20241022",
+                    "usage": {"input_tokens": 10, "output_tokens": 5}
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.content, "test response");
+        assert_eq!(response.model, "claude-3-5-sonnet-20241022");
+        let usage = response.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 5);
+        assert_eq!(usage.total_tokens, 15);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_api_error_non_retryable_401() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/messages")
+            .with_status(401)
+            .with_body("Unauthorized")
+            .expect(1)
+            .create_async()
+            .await;
+
+        let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_err());
+        let err_msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            err_msg.contains("401") || err_msg.contains("Unauthorized"),
+            "Error should mention 401 or Unauthorized, got: {}",
+            err_msg
+        );
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_retryable_error_429_all_fail() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/messages")
+            .with_status(429)
+            .with_body("Rate limited")
+            .expect(3)
+            .create_async()
+            .await;
+
+        let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_err());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_retryable_error_500_all_fail() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/messages")
+            .with_status(500)
+            .with_body("Internal Server Error")
+            .expect(3)
+            .create_async()
+            .await;
+
+        let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_err());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_request_includes_anthropic_headers() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/messages")
+            .match_header("x-api-key", "test-key")
+            .match_header("anthropic-version", "2023-06-01")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "content": [{"type": "text", "text": "ok"}],
+                    "model": "claude-3-5-sonnet-20241022",
+                    "usage": {"input_tokens": 1, "output_tokens": 1}
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_ok());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_unsupported_content_type() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/messages")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "content": [{"type": "image", "text": "ignored"}],
+                    "model": "claude-3-5-sonnet-20241022",
+                    "usage": {"input_tokens": 1, "output_tokens": 1}
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert!(
+            response.content.contains("Unsupported content type"),
+            "Expected 'Unsupported content type' in response, got: {}",
+            response.content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_empty_content_array() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/messages")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "content": [],
+                    "model": "claude-3-5-sonnet-20241022",
+                    "usage": {"input_tokens": 1, "output_tokens": 0}
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.complete(test_request()).await;
+
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.content, "");
+    }
+
+    #[test]
+    fn test_local_endpoint_no_api_key() {
+        let config = ModelConfig {
+            model_name: "claude-3-5-sonnet-20241022".to_string(),
+            api_key: None,
+            base_url: Some("http://localhost:8080".to_string()),
+            ..Default::default()
+        };
+        let adapter = AnthropicAdapter::new(config);
+        assert!(adapter.is_ok());
+    }
+
+    #[test]
+    fn test_local_endpoint_127_0_0_1_no_api_key() {
+        let config = ModelConfig {
+            model_name: "claude-3-5-sonnet-20241022".to_string(),
+            api_key: None,
+            base_url: Some("http://127.0.0.1:8080".to_string()),
+            ..Default::default()
+        };
+        let adapter = AnthropicAdapter::new(config);
+        assert!(adapter.is_ok());
+    }
+
+    #[test]
+    fn test_model_name() {
+        let config = test_config("http://localhost:8080");
+        let adapter = AnthropicAdapter::new(config).unwrap();
+        assert_eq!(adapter._model_name(), "claude-3-5-sonnet-20241022");
+    }
+
+    #[tokio::test]
+    async fn test_custom_temperature_and_max_tokens_override() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/messages")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "content": [{"type": "text", "text": "ok"}],
+                    "model": "claude-3-5-sonnet-20241022",
+                    "usage": {"input_tokens": 1, "output_tokens": 1}
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter
+            .complete(LLMRequest {
+                system_prompt: "s".to_string(),
+                user_prompt: "u".to_string(),
+                temperature: Some(0.9),
+                max_tokens: Some(200),
+            })
+            .await;
+
+        assert!(result.is_ok());
+    }
 }
 
-fn is_local_endpoint(url: &str) -> bool {
-    url.contains("localhost") || url.contains("127.0.0.1") || url.contains("0.0.0.0")
-        || url.contains("[::1]")
-        || (!url.contains("openai.com") && !url.contains("anthropic.com"))
-}

@@ -769,8 +769,7 @@ fn second() {
         assert_eq!(boundaries[0].name, "handleRequest");
     }
 
-    // BUG: brace counting includes braces in strings, giving wrong function end
-    // This test uses unbalanced braces in strings to expose the bug
+    // Regression: brace counting must skip braces inside string literals
     #[test]
     fn test_function_end_unbalanced_string_braces() {
         let content = r#"fn render() {
@@ -794,7 +793,7 @@ fn next_func() {
         );
     }
 
-    // BUG: Python function end detection fails for methods in classes
+    // Regression: Python function end detection must work for methods inside classes
     #[test]
     fn test_python_method_boundaries() {
         let content = r#"class Server:

@@ -399,14 +399,14 @@ impl CommentSynthesizer {
     }
 
     fn sort_by_priority(comments: &mut [Comment]) {
-        comments.sort_by_key(|c| {
-            let severity_priority = match c.severity {
+        comments.sort_by(|a, b| {
+            let severity_rank = |s: &Severity| match s {
                 Severity::Error => 0,
                 Severity::Warning => 1,
                 Severity::Info => 2,
                 Severity::Suggestion => 3,
             };
-            let category_priority = match c.category {
+            let category_rank = |c: &Category| match c {
                 Category::Security => 0,
                 Category::Bug => 1,
                 Category::Performance => 2,
@@ -417,12 +417,11 @@ impl CommentSynthesizer {
                 Category::Testing => 7,
                 Category::Architecture => 8,
             };
-            (
-                severity_priority,
-                category_priority,
-                c.file_path.clone(),
-                c.line_number,
-            )
+            severity_rank(&a.severity)
+                .cmp(&severity_rank(&b.severity))
+                .then_with(|| category_rank(&a.category).cmp(&category_rank(&b.category)))
+                .then_with(|| a.file_path.cmp(&b.file_path))
+                .then_with(|| a.line_number.cmp(&b.line_number))
         });
     }
 }

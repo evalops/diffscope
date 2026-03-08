@@ -57,49 +57,191 @@ pub trait LLMAdapter: Send + Sync {
 }
 
 pub fn create_adapter(config: &ModelConfig) -> Result<Box<dyn LLMAdapter>> {
+    let config = config.clone(); // single clone upfront
+
     // Explicit adapter override takes priority
     if let Some(ref adapter) = config.adapter_override {
         return match adapter.as_str() {
-            "anthropic" => Ok(Box::new(crate::adapters::AnthropicAdapter::new(config.clone())?)),
-            "ollama" => Ok(Box::new(crate::adapters::OllamaAdapter::new(config.clone())?)),
-            _ => Ok(Box::new(crate::adapters::OpenAIAdapter::new(config.clone())?)),
+            "anthropic" => Ok(Box::new(crate::adapters::AnthropicAdapter::new(config)?)),
+            "ollama" => Ok(Box::new(crate::adapters::OllamaAdapter::new(config)?)),
+            _ => Ok(Box::new(crate::adapters::OpenAIAdapter::new(config)?)),
         };
     }
 
     // Model-name heuristic
     match config.model_name.as_str() {
         // Anthropic Claude models (all versions)
-        name if name.starts_with("claude-") => Ok(Box::new(
-            crate::adapters::AnthropicAdapter::new(config.clone())?,
-        )),
+        name if name.starts_with("claude-") => {
+            Ok(Box::new(crate::adapters::AnthropicAdapter::new(config)?))
+        }
         // Legacy claude naming without dash
-        name if name.starts_with("claude") => Ok(Box::new(crate::adapters::AnthropicAdapter::new(
-            config.clone(),
-        )?)),
+        name if name.starts_with("claude") => {
+            Ok(Box::new(crate::adapters::AnthropicAdapter::new(config)?))
+        }
         // OpenAI models
-        name if name.starts_with("gpt-") => Ok(Box::new(crate::adapters::OpenAIAdapter::new(
-            config.clone(),
-        )?)),
-        name if name.starts_with("o1-") => Ok(Box::new(crate::adapters::OpenAIAdapter::new(
-            config.clone(),
-        )?)),
+        name if name.starts_with("gpt-") => {
+            Ok(Box::new(crate::adapters::OpenAIAdapter::new(config)?))
+        }
+        name if name.starts_with("o1-") => {
+            Ok(Box::new(crate::adapters::OpenAIAdapter::new(config)?))
+        }
         // Ollama models
-        name if name.starts_with("ollama:") => Ok(Box::new(crate::adapters::OllamaAdapter::new(
-            config.clone(),
-        )?)),
+        name if name.starts_with("ollama:") => {
+            Ok(Box::new(crate::adapters::OllamaAdapter::new(config)?))
+        }
         _name
             if config
                 .base_url
                 .as_ref()
                 .is_some_and(|u| u.contains("11434")) =>
         {
-            Ok(Box::new(crate::adapters::OllamaAdapter::new(
-                config.clone(),
-            )?))
+            Ok(Box::new(crate::adapters::OllamaAdapter::new(config)?))
         }
         // Default to OpenAI for unknown models
-        _ => Ok(Box::new(crate::adapters::OpenAIAdapter::new(
-            config.clone(),
-        )?)),
+        _ => Ok(Box::new(crate::adapters::OpenAIAdapter::new(config)?)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper config that uses a local base_url so no real API key is needed.
+    fn local_config(model_name: &str) -> ModelConfig {
+        ModelConfig {
+            model_name: model_name.to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: Some("http://localhost:9999".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_create_adapter_claude_dash_prefix() {
+        let config = local_config("claude-3-5-sonnet-20241022");
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter._model_name(), "claude-3-5-sonnet-20241022");
+    }
+
+    #[test]
+    fn test_create_adapter_claude_legacy_prefix() {
+        let config = local_config("claude3sonnet");
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter._model_name(), "claude3sonnet");
+    }
+
+    #[test]
+    fn test_create_adapter_gpt() {
+        let config = local_config("gpt-4o");
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter._model_name(), "gpt-4o");
+    }
+
+    #[test]
+    fn test_create_adapter_gpt35() {
+        let config = local_config("gpt-3.5-turbo");
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter._model_name(), "gpt-3.5-turbo");
+    }
+
+    #[test]
+    fn test_create_adapter_o1() {
+        let config = local_config("o1-preview");
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter._model_name(), "o1-preview");
+    }
+
+    #[test]
+    fn test_create_adapter_ollama_prefix() {
+        let config = local_config("ollama:codellama");
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter._model_name(), "ollama:codellama");
+    }
+
+    #[test]
+    fn test_create_adapter_ollama_by_port() {
+        let config = ModelConfig {
+            model_name: "codellama".to_string(),
+            api_key: None,
+            base_url: Some("http://localhost:11434".to_string()),
+            ..Default::default()
+        };
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter._model_name(), "codellama");
+    }
+
+    #[test]
+    fn test_create_adapter_default_unknown_model() {
+        // Unknown model name with a local base_url should default to OpenAI adapter
+        let config = local_config("some-custom-model");
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter._model_name(), "some-custom-model");
+    }
+
+    #[test]
+    fn test_create_adapter_explicit_override_anthropic() {
+        let config = ModelConfig {
+            model_name: "gpt-4o".to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: Some("http://localhost:9999".to_string()),
+            adapter_override: Some("anthropic".to_string()),
+            ..Default::default()
+        };
+        // Even though model_name says "gpt-4o", the override should pick Anthropic
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter._model_name(), "gpt-4o");
+    }
+
+    #[test]
+    fn test_create_adapter_explicit_override_ollama() {
+        let config = ModelConfig {
+            model_name: "my-model".to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: Some("http://localhost:9999".to_string()),
+            adapter_override: Some("ollama".to_string()),
+            ..Default::default()
+        };
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter._model_name(), "my-model");
+    }
+
+    #[test]
+    fn test_create_adapter_explicit_override_openai() {
+        let config = ModelConfig {
+            model_name: "claude-3-5-sonnet-20241022".to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: Some("http://localhost:9999".to_string()),
+            adapter_override: Some("openai".to_string()),
+            ..Default::default()
+        };
+        // Even though model_name says "claude-*", the override should pick OpenAI
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter._model_name(), "claude-3-5-sonnet-20241022");
+    }
+
+    #[test]
+    fn test_create_adapter_explicit_override_unknown_defaults_to_openai() {
+        let config = ModelConfig {
+            model_name: "my-model".to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: Some("http://localhost:9999".to_string()),
+            adapter_override: Some("unknown-adapter".to_string()),
+            ..Default::default()
+        };
+        // Unknown adapter override should default to OpenAI
+        let adapter = create_adapter(&config).unwrap();
+        assert_eq!(adapter._model_name(), "my-model");
+    }
+
+    #[test]
+    fn test_model_config_default() {
+        let config = ModelConfig::default();
+        assert_eq!(config.model_name, "gpt-4o");
+        assert!(config.api_key.is_none());
+        assert!(config.base_url.is_none());
+        assert!((config.temperature - 0.2).abs() < f32::EPSILON);
+        assert_eq!(config.max_tokens, 4000);
+        assert!(config.openai_use_responses.is_none());
+        assert!(config.adapter_override.is_none());
     }
 }

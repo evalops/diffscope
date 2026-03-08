@@ -566,7 +566,7 @@ mod tests {
         assert_eq!(analyzer.comment_count(), 1);
     }
 
-    // BUG: extract_patterns replaces all patterns on every call, losing prior data
+    // Regression: extract_patterns must preserve data across multiple ingest calls
     #[test]
     fn test_extract_patterns_preserves_across_ingests() {
         let mut analyzer = PRHistoryAnalyzer::new();

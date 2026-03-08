@@ -662,7 +662,7 @@ Date:   Tue Jan 2 12:00:00 2024 +0000
         assert!(!is_bug_fix_commit("Refactor module structure"));
     }
 
-    // BUG: distinct_authors is overwritten (not accumulated) on repeated ingest_log calls
+    // Regression: distinct_authors must accumulate across multiple ingest_log calls
     #[test]
     fn test_distinct_authors_across_ingests() {
         let mut analyzer = GitHistoryAnalyzer::new();
@@ -688,8 +688,7 @@ Date:   Tue Jan 2 12:00:00 2024 +0000
         );
     }
 
-    // BUG: last_modified uses string comparison which is lexicographic, not chronological.
-    // "Wed Jan 1" > "Mon Feb 1" because 'W' > 'M', but Feb 1 is newer than Jan 1.
+    // Regression: last_modified must use chronological comparison, not lexicographic
     #[test]
     fn test_last_modified_chronological_order() {
         let mut analyzer = GitHistoryAnalyzer::new();
@@ -728,7 +727,7 @@ Date:   Tue Jan 2 12:00:00 2024 +0000
         );
     }
 
-    // BUG: commit_count accumulates but distinct_authors only counts latest batch
+    // Regression: distinct_authors must be cumulative like commit_count
     #[test]
     fn test_cumulative_commit_count() {
         let mut analyzer = GitHistoryAnalyzer::new();
