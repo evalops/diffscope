@@ -19,6 +19,8 @@ pub struct Comment {
     pub code_suggestion: Option<CodeSuggestion>,
     pub tags: Vec<String>,
     pub fix_effort: FixEffort,
+    #[serde(default)]
+    pub feedback: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +160,7 @@ impl CommentSynthesizer {
             code_suggestion,
             tags,
             fix_effort,
+            feedback: None,
         }))
     }
 

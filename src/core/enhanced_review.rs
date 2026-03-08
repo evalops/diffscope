@@ -659,7 +659,14 @@ fn exercise_offline() -> (OfflineConfig, OfflineModelManager) {
     let _recommended = manager.recommend_review_model();
     let _all_models = manager.available_models();
     let _url = manager.generate_url();
+    let _chat_url = manager.chat_url();
     let _payload = manager.build_request_payload(
+        &config.model_name,
+        "test prompt",
+        Some("system"),
+        &config,
+    );
+    let _chat_payload = manager.build_chat_request_payload(
         &config.model_name,
         "test prompt",
         Some("system"),

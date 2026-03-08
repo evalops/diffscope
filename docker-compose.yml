@@ -16,8 +16,8 @@ services:
     build: .
     image: diffscope:latest
     depends_on:
-      ollama:
-        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
     environment:
       - DIFFSCOPE_BASE_URL=http://ollama:11434
       - DIFFSCOPE_MODEL=${DIFFSCOPE_MODEL:-ollama:codellama}
@@ -32,12 +32,45 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  # CPU-only variant (use instead of 'ollama' when no GPU is available)
+  ollama-cpu:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    profiles:
+      - cpu
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["ollama", "pull", "${DIFFSCOPE_OLLAMA_MODEL:-codellama:7b}"]
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    restart: "no"
 
 volumes:
   ollama_data:

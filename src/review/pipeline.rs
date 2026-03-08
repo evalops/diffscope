@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
+use std::time::Instant;
 use tracing::{info, warn};
 
 use crate::adapters;
@@ -42,6 +43,39 @@ pub async fn review_diff_content_with_repo(
 }
 
 pub async fn review_diff_content_raw(
+    diff_content: &str,
+    config: config::Config,
+    repo_path: &Path,
+) -> Result<Vec<core::Comment>> {
+    // For local models, chunk oversized diffs instead of truncating
+    if should_optimize_for_local(&config) {
+        let context_budget = config.context_window.unwrap_or(8192);
+        // Reserve ~40% of context window for the diff (rest for system prompt, context, response)
+        let max_diff_chars = (context_budget * 2 / 5).max(1000);
+        let chunks = chunk_diff_for_context(diff_content, max_diff_chars);
+        if chunks.len() > 1 {
+            eprintln!(
+                "Diff split into {} chunks for local model context window",
+                chunks.len()
+            );
+            let mut all_comments = Vec::new();
+            for (i, chunk) in chunks.iter().enumerate() {
+                eprintln!("Processing chunk {}/{}...", i + 1, chunks.len());
+                match review_diff_content_raw_inner(chunk, config.clone(), repo_path).await {
+                    Ok(comments) => all_comments.extend(comments),
+                    Err(e) => {
+                        eprintln!("Warning: chunk {} failed: {}", i + 1, e);
+                    }
+                }
+            }
+            return Ok(all_comments);
+        }
+    }
+
+    review_diff_content_raw_inner(diff_content, config, repo_path).await
+}
+
+async fn review_diff_content_raw_inner(
     diff_content: &str,
     config: config::Config,
     repo_path: &Path,
@@ -210,6 +244,8 @@ pub async fn review_diff_content_raw(
             (system_prompt, user_prompt)
         };
 
+        let is_local = should_optimize_for_local(&config);
+
         let request = adapters::llm::LLMRequest {
             system_prompt,
             user_prompt,
@@ -217,7 +253,28 @@ pub async fn review_diff_content_raw(
             max_tokens: None,
         };
 
+        if is_local {
+            eprintln!("Sending to local model (this may take a while)...");
+        }
+        let request_start = Instant::now();
+
         let response = adapter.complete(request).await?;
+
+        if is_local {
+            let elapsed = request_start.elapsed();
+            eprintln!("Response received ({:.1}s)", elapsed.as_secs_f64());
+        }
+
+        // Validate LLM response before parsing
+        if let Err(validation_err) = validate_llm_response(&response.content) {
+            eprintln!("Warning: LLM response validation failed: {}", validation_err);
+            if is_local {
+                eprintln!(
+                    "Hint: Try a larger model or reduce diff size for better results with local models."
+                );
+            }
+            continue;
+        }
 
         if let Ok(raw_comments) = parse_llm_response(&response.content, &diff.file_path) {
             let mut comments = core::CommentSynthesizer::synthesize(raw_comments)?;
@@ -485,6 +542,81 @@ pub fn build_symbol_index(config: &config::Config, repo_root: &Path) -> Option<c
     }
 }
 
+/// Split a large diff into chunks that fit within context budget.
+/// Each chunk gets its own LLM call, results are merged.
+fn chunk_diff_for_context(diff_content: &str, max_chars: usize) -> Vec<String> {
+    if diff_content.len() <= max_chars {
+        return vec![diff_content.to_string()];
+    }
+
+    let mut chunks = Vec::new();
+    let mut current_chunk = String::new();
+
+    // Split by file boundaries (diff --git)
+    for section in diff_content.split("\ndiff --git ") {
+        let section = if chunks.is_empty() && current_chunk.is_empty() {
+            section.to_string()
+        } else {
+            format!("diff --git {}", section)
+        };
+
+        if current_chunk.len() + section.len() > max_chars && !current_chunk.is_empty() {
+            chunks.push(current_chunk);
+            current_chunk = section;
+        } else {
+            current_chunk.push_str(&section);
+        }
+    }
+
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk);
+    }
+
+    chunks
+}
+
+/// Validate LLM response quality for common local model issues.
+fn validate_llm_response(response: &str) -> Result<(), String> {
+    // Empty response
+    if response.trim().is_empty() {
+        return Err("Empty response from model".to_string());
+    }
+
+    // Response too short to contain valid review
+    if response.len() < 10 {
+        return Err("Response too short to contain valid review".to_string());
+    }
+
+    // Repeated token detection (common with small models)
+    if has_excessive_repetition(response) {
+        return Err("Response contains excessive repetition (model may be stuck)".to_string());
+    }
+
+    Ok(())
+}
+
+fn has_excessive_repetition(text: &str) -> bool {
+    // Check if any 20-char substring repeats more than 5 times
+    if text.len() < 100 {
+        return false;
+    }
+    let window = 20.min(text.len() / 5);
+    for start in 0..text.len().saturating_sub(window * 5) {
+        if !text.is_char_boundary(start) || !text.is_char_boundary(start + window) {
+            continue;
+        }
+        let pattern = &text[start..start + window];
+        if pattern.trim().is_empty() {
+            continue;
+        }
+        let count = text.matches(pattern).count();
+        if count > 5 {
+            return true;
+        }
+    }
+    false
+}
+
 fn should_optimize_for_local(config: &config::Config) -> bool {
     // Optimize if context_window is explicitly set
     if config.context_window.is_some() {
@@ -689,5 +821,122 @@ mod tests {
         };
         let guidance = build_review_guidance(&config, Some(&path_config)).unwrap();
         assert!(guidance.contains("Be extra careful here"));
+    }
+
+    // --- chunk_diff_for_context tests ---
+
+    #[test]
+    fn chunk_diff_small_diff_returns_single_chunk() {
+        let diff = "diff --git a/foo.rs b/foo.rs\n+hello\n";
+        let chunks = chunk_diff_for_context(diff, 1000);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], diff);
+    }
+
+    #[test]
+    fn chunk_diff_splits_at_file_boundaries() {
+        let diff = "diff --git a/a.rs b/a.rs\n+line1\n\ndiff --git a/b.rs b/b.rs\n+line2\n\ndiff --git a/c.rs b/c.rs\n+line3\n";
+        // Set max_chars small enough to force splits
+        let chunks = chunk_diff_for_context(diff, 40);
+        assert!(chunks.len() >= 2, "Expected at least 2 chunks, got {}", chunks.len());
+        // Each chunk should start with diff --git (or be the first chunk which inherits it)
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert!(
+                chunk.contains("diff --git"),
+                "Chunk {} should contain 'diff --git': {:?}",
+                i,
+                chunk
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_diff_empty_input() {
+        let chunks = chunk_diff_for_context("", 100);
+        // Empty string produces one chunk containing the empty string
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "");
+    }
+
+    #[test]
+    fn chunk_diff_single_large_file_not_split_midfile() {
+        // A single file diff that exceeds max_chars should still be one chunk
+        // (we only split at file boundaries, not mid-file)
+        let diff = format!("diff --git a/big.rs b/big.rs\n{}", "+line\n".repeat(100));
+        let chunks = chunk_diff_for_context(&diff, 50);
+        assert_eq!(chunks.len(), 1, "Single-file diff should not be split");
+    }
+
+    #[test]
+    fn chunk_diff_preserves_all_content() {
+        let file_a = "diff --git a/a.rs b/a.rs\n+alpha\n";
+        let file_b = "\ndiff --git a/b.rs b/b.rs\n+beta\n";
+        let file_c = "\ndiff --git a/c.rs b/c.rs\n+gamma\n";
+        let diff = format!("{}{}{}", file_a, file_b, file_c);
+        let chunks = chunk_diff_for_context(&diff, 50);
+        // Rejoin all chunks and verify content is preserved
+        let rejoined: String = chunks.join("");
+        // Both original and rejoined should contain the same file sections
+        assert!(rejoined.contains("+alpha"));
+        assert!(rejoined.contains("+beta"));
+        assert!(rejoined.contains("+gamma"));
+    }
+
+    // --- validate_llm_response tests ---
+
+    #[test]
+    fn validate_response_accepts_valid_response() {
+        let response = "Here is my review of the code changes:\n- Line 5: potential null reference";
+        assert!(validate_llm_response(response).is_ok());
+    }
+
+    #[test]
+    fn validate_response_rejects_empty() {
+        assert!(validate_llm_response("").is_err());
+        assert!(validate_llm_response("   \n\t  ").is_err());
+    }
+
+    #[test]
+    fn validate_response_rejects_too_short() {
+        assert!(validate_llm_response("OK").is_err());
+        assert!(validate_llm_response("no issue").is_err());
+    }
+
+    #[test]
+    fn validate_response_rejects_repetitive() {
+        // Create a response with excessive repetition
+        let repeated = "This is a repeating segment.".repeat(20);
+        assert!(validate_llm_response(&repeated).is_err());
+    }
+
+    // --- has_excessive_repetition tests ---
+
+    #[test]
+    fn repetition_short_text_always_false() {
+        assert!(!has_excessive_repetition("short"));
+        assert!(!has_excessive_repetition(""));
+        assert!(!has_excessive_repetition("a".repeat(99).as_str()));
+    }
+
+    #[test]
+    fn repetition_normal_text_false() {
+        let text = "This is a normal code review response. The function looks correct \
+                    but there may be an edge case on line 42 where the input could be null. \
+                    Consider adding a guard clause to handle this scenario.";
+        assert!(!has_excessive_repetition(text));
+    }
+
+    #[test]
+    fn repetition_stuck_model_detected() {
+        // Simulate a model stuck repeating tokens
+        let text = "The code looks fine. ".repeat(10);
+        assert!(has_excessive_repetition(&text));
+    }
+
+    #[test]
+    fn repetition_whitespace_only_not_flagged() {
+        // 200 spaces should not be flagged (whitespace patterns are skipped)
+        let text = " ".repeat(200);
+        assert!(!has_excessive_repetition(&text));
     }
 }

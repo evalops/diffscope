@@ -395,6 +395,7 @@ mod tests {
             code_suggestion: None,
             tags: vec![],
             fix_effort: core::comment::FixEffort::Low,
+            feedback: None,
         };
         let result = select_discussion_comment(&[comment.clone()], None, None).unwrap();
         assert_eq!(result.id, "cmt_1");
@@ -417,6 +418,7 @@ mod tests {
             code_suggestion: None,
             tags: vec![],
             fix_effort: core::comment::FixEffort::Low,
+            feedback: None,
         };
 
         let comments = vec![comment];

@@ -93,10 +93,17 @@ impl OpenAIAdapter {
 
         let is_local = common::is_local_endpoint(&base_url);
 
+        let is_openrouter = base_url.contains("openrouter.ai");
+
         let api_key = config.api_key.clone()
+            .or_else(|| if is_openrouter { std::env::var("OPENROUTER_API_KEY").ok() } else { None })
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
             .or_else(|| if is_local { Some(String::new()) } else { None })
-            .context("OpenAI API key not found. Set OPENAI_API_KEY environment variable or provide in config")?;
+            .context(if is_openrouter {
+                "OpenRouter API key not found. Set OPENROUTER_API_KEY environment variable or provide in config"
+            } else {
+                "OpenAI API key not found. Set OPENAI_API_KEY environment variable or provide in config"
+            })?;
 
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(if is_local { 300 } else { 60 }))

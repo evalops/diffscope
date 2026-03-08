@@ -6,6 +6,7 @@ mod output;
 mod parsing;
 mod plugins;
 mod review;
+mod server;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -23,7 +24,7 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    #[arg(long, global = true, default_value = "gpt-4o")]
+    #[arg(long, global = true, default_value = "anthropic/claude-sonnet-4.6")]
     model: String,
 
     #[arg(long, global = true, help = "LLM API base URL (e.g. http://localhost:11434)")]
@@ -201,6 +202,11 @@ enum Commands {
     },
     #[command(about = "Check self-hosted LLM setup: endpoint reachability, models, and recommendations")]
     Doctor,
+    /// Start the web UI server
+    Serve {
+        #[arg(long, default_value = "3000")]
+        port: u16,
+    },
     #[command(about = "Evaluate review quality against fixture expectations")]
     Eval {
         #[arg(long, default_value = "eval/fixtures")]
@@ -360,6 +366,9 @@ async fn main() -> Result<()> {
         }
         Commands::Doctor => {
             commands::doctor_command(config).await?;
+        }
+        Commands::Serve { port } => {
+            server::start_server(config, port).await?;
         }
         Commands::Eval {
             fixtures,

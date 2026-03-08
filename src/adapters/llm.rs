@@ -17,7 +17,7 @@ pub struct ModelConfig {
 impl Default for ModelConfig {
     fn default() -> Self {
         Self {
-            model_name: "gpt-4o".to_string(),
+            model_name: "anthropic/claude-sonnet-4.6".to_string(),
             api_key: None,
             base_url: None,
             temperature: 0.2,
@@ -64,8 +64,25 @@ pub fn create_adapter(config: &ModelConfig) -> Result<Box<dyn LLMAdapter>> {
         return match adapter.as_str() {
             "anthropic" => Ok(Box::new(crate::adapters::AnthropicAdapter::new(config)?)),
             "ollama" => Ok(Box::new(crate::adapters::OllamaAdapter::new(config)?)),
+            "openrouter" => {
+                // OpenRouter uses OpenAI-compatible API
+                let mut or_config = config.clone();
+                if or_config.base_url.is_none() {
+                    or_config.base_url = Some("https://openrouter.ai/api/v1".to_string());
+                }
+                Ok(Box::new(crate::adapters::OpenAIAdapter::new(or_config)?))
+            }
             _ => Ok(Box::new(crate::adapters::OpenAIAdapter::new(config)?)),
         };
+    }
+
+    // OpenRouter-style model IDs (vendor/model)
+    if config.model_name.contains('/') {
+        let mut or_config = config;
+        if or_config.base_url.is_none() {
+            or_config.base_url = Some("https://openrouter.ai/api/v1".to_string());
+        }
+        return Ok(Box::new(crate::adapters::OpenAIAdapter::new(or_config)?));
     }
 
     // Model-name heuristic
@@ -236,7 +253,7 @@ mod tests {
     #[test]
     fn test_model_config_default() {
         let config = ModelConfig::default();
-        assert_eq!(config.model_name, "gpt-4o");
+        assert_eq!(config.model_name, "anthropic/claude-sonnet-4.6");
         assert!(config.api_key.is_none());
         assert!(config.base_url.is_none());
         assert!((config.temperature - 0.2).abs() < f32::EPSILON);

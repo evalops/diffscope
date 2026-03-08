@@ -373,6 +373,7 @@ mod tests {
             code_suggestion: None,
             tags: vec![],
             fix_effort: FixEffort::Medium,
+            feedback: None,
         }
     }
 

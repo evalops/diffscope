@@ -221,12 +221,65 @@ git diff | diffscope review \
 
 #### Docker Compose (Ollama + DiffScope)
 ```bash
-# Start Ollama and DiffScope together
+# Start Ollama (with GPU) and DiffScope together — model is auto-pulled
 docker compose up diffscope-local
 
-# Pull a model first
-docker compose exec ollama ollama pull codellama
+# CPU-only mode (no NVIDIA GPU required)
+docker compose --profile cpu up ollama-cpu
+
+# Pull a specific model manually
+docker compose exec ollama ollama pull deepseek-coder:6.7b-instruct
 ```
+
+#### Docker with GPU
+
+Requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html):
+
+```bash
+# Install NVIDIA Container Toolkit (Ubuntu/Debian)
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+
+# Run with GPU
+docker compose up diffscope-local
+```
+
+If you don't have an NVIDIA GPU, use the CPU-only profile or run Ollama directly on the host.
+
+#### Recommended Models
+
+| RAM Available | Recommended Model | Command |
+|---|---|---|
+| 8 GB | Codellama 7B Q4 | `ollama pull codellama:7b-instruct-q4_0` |
+| 16 GB | Deepseek Coder 6.7B | `ollama pull deepseek-coder:6.7b-instruct` |
+| 16 GB | Codellama 13B Q4 | `ollama pull codellama:13b-instruct-q4_0` |
+| 32+ GB | Deepseek Coder 33B Q4 | `ollama pull deepseek-coder:33b-instruct-q4_0` |
+
+For best results, use instruction-tuned (`-instruct`) variants of code-specialized models.
+
+#### Performance Tuning
+
+For local models, adjust these config values based on your model's context window:
+
+```yaml
+# .diffscope.yml for 7B model on 16GB RAM
+context_window: 8192        # Model's actual context limit
+max_tokens: 2048            # Max response length
+max_diff_chars: 12000       # Truncate large diffs
+max_context_chars: 8000     # Limit surrounding code context
+context_max_chunks: 8       # Max context files to include
+temperature: 0.1            # Low temp for consistent reviews
+```
+
+**Tips:**
+- `diffscope doctor` shows detected context window and tests inference speed
+- Quantized models (Q4, Q5) use ~50-60% less RAM with minimal quality loss
+- GPU inference is 5-10x faster than CPU-only
+- First request after model load is slower (loading into VRAM)
 
 #### Check Your Setup
 ```bash
@@ -234,6 +287,29 @@ docker compose exec ollama ollama pull codellama
 diffscope doctor
 diffscope doctor --base-url http://localhost:11434
 ```
+
+#### Troubleshooting
+
+**Model is slow (>30 seconds per review)**
+- Check tokens/sec with `diffscope doctor`
+- Try a quantized model: `ollama pull codellama:7b-instruct-q4_0`
+- Reduce context: set `max_diff_chars: 8000` and `context_window: 4096`
+
+**Out of memory errors**
+- Use a smaller model (7B instead of 13B)
+- Use heavier quantization (Q4 instead of Q8)
+- Set `context_window` lower in config (e.g., 4096)
+- Monitor with `nvidia-smi` (GPU) or `htop` (RAM)
+
+**Empty or garbage reviews**
+- Run `diffscope doctor` to test model responsiveness
+- Try a code-specialized model (deepseek-coder, codellama)
+- Avoid models smaller than 3B for code review
+
+**"Endpoint unreachable" error**
+- Verify server is running: `curl http://localhost:11434/api/tags`
+- Check the port matches your `base_url` config
+- For Docker: ensure services are on the same network
 
 #### Environment Variables
 | Variable | Description |

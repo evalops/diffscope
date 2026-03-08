@@ -195,12 +195,61 @@ impl OfflineModelManager {
         &self.models
     }
 
-    /// Generate the Ollama API URL for generating completions.
+    /// Generate the Ollama API URL for chat completions.
+    pub fn chat_url(&self) -> String {
+        format!("{}/api/chat", self.ollama_base_url)
+    }
+
+    /// Generate the Ollama API URL for generating completions (legacy).
     pub fn generate_url(&self) -> String {
         format!("{}/api/generate", self.ollama_base_url)
     }
 
-    /// Build an Ollama-compatible request payload.
+    /// Build an Ollama chat-compatible request payload.
+    pub fn build_chat_request_payload(
+        &self,
+        model: &str,
+        prompt: &str,
+        system: Option<&str>,
+        config: &OfflineConfig,
+    ) -> serde_json::Value {
+        let mut messages = Vec::new();
+
+        if let Some(system_prompt) = system {
+            messages.push(serde_json::json!({
+                "role": "system",
+                "content": system_prompt
+            }));
+        }
+
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": prompt
+        }));
+
+        let mut payload = serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "stream": false,
+            "options": {
+                "num_ctx": config.context_window,
+                "num_predict": config.max_tokens,
+            }
+        });
+
+        if let Some(ref quant) = config.quantization {
+            payload["options"]["quantization"] =
+                serde_json::Value::String(quant.clone());
+        }
+
+        if let Some(gpu) = config.gpu_layers {
+            payload["options"]["num_gpu"] = serde_json::Value::Number(gpu.into());
+        }
+
+        payload
+    }
+
+    /// Build an Ollama-compatible request payload (legacy generate API).
     pub fn build_request_payload(
         &self,
         model: &str,
@@ -233,6 +282,54 @@ impl OfflineModelManager {
 
         payload
     }
+
+    /// Query Ollama's `/api/show` endpoint to detect the model's default context window size.
+    ///
+    /// Returns `Ok(Some(num_ctx))` if the model metadata contains a `num_ctx` parameter,
+    /// `Ok(None)` if the parameter is not found, or `Err` if the request fails.
+    #[allow(dead_code)]
+    pub async fn detect_context_window(&self, model_name: &str) -> Result<Option<usize>> {
+        let url = format!("{}/api/show", self.ollama_base_url);
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
+
+        let response = client
+            .post(&url)
+            .json(&serde_json::json!({"name": model_name}))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Ok(None);
+        }
+
+        let body: serde_json::Value = response.json().await?;
+        let parameters = body
+            .get("parameters")
+            .and_then(|p| p.as_str());
+
+        Ok(parse_num_ctx_from_params(parameters))
+    }
+}
+
+/// Parse the `num_ctx` value from Ollama's parameters string.
+///
+/// The parameters field is a newline-separated list of key-value pairs, e.g.:
+/// `num_ctx 4096\ntemperature 0.8`
+#[allow(dead_code)]
+fn parse_num_ctx_from_params(parameters: Option<&str>) -> Option<usize> {
+    let params = parameters?;
+    for line in params.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("num_ctx") {
+            let value_str = rest.trim();
+            if let Ok(value) = value_str.parse::<usize>() {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 /// Readiness check result for offline operation.
@@ -681,5 +778,127 @@ mod tests {
             "Should flag invalid URL format, got: {:?}",
             errors
         );
+    }
+
+    #[test]
+    fn test_chat_url() {
+        let manager = OfflineModelManager::new("http://localhost:11434");
+        assert_eq!(manager.chat_url(), "http://localhost:11434/api/chat");
+    }
+
+    #[test]
+    fn test_build_chat_request_payload() {
+        let manager = OfflineModelManager::new("http://localhost:11434");
+        let config = OfflineConfig::default();
+
+        let payload = manager.build_chat_request_payload(
+            "llama3.2",
+            "Review this code",
+            Some("You are a code reviewer"),
+            &config,
+        );
+
+        assert_eq!(payload["model"], "llama3.2");
+        assert_eq!(payload["stream"], false);
+
+        let messages = payload["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "You are a code reviewer");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"], "Review this code");
+    }
+
+    #[test]
+    fn test_build_chat_request_payload_no_system() {
+        let manager = OfflineModelManager::new("http://localhost:11434");
+        let config = OfflineConfig::default();
+
+        let payload = manager.build_chat_request_payload(
+            "llama3.2",
+            "Review this code",
+            None,
+            &config,
+        );
+
+        let messages = payload["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+    }
+
+    #[test]
+    fn test_parse_num_ctx_from_params_found() {
+        assert_eq!(
+            parse_num_ctx_from_params(Some("num_ctx 4096\ntemperature 0.8")),
+            Some(4096)
+        );
+    }
+
+    #[test]
+    fn test_parse_num_ctx_from_params_missing() {
+        assert_eq!(
+            parse_num_ctx_from_params(Some("temperature 0.8\nstop [INST]")),
+            None
+        );
+    }
+
+    #[test]
+    fn test_parse_num_ctx_from_params_none() {
+        assert_eq!(parse_num_ctx_from_params(None), None);
+    }
+
+    #[test]
+    fn test_parse_num_ctx_from_params_large() {
+        assert_eq!(
+            parse_num_ctx_from_params(Some("num_ctx 131072")),
+            Some(131072)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_detect_context_window_success() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/api/show")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"parameters": "num_ctx 16384\ntemperature 0.7"}"#)
+            .create_async()
+            .await;
+
+        let manager = OfflineModelManager::new(&server.url());
+        let result = manager.detect_context_window("codellama").await.unwrap();
+        assert_eq!(result, Some(16384));
+    }
+
+    #[tokio::test]
+    async fn test_detect_context_window_no_num_ctx() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/api/show")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"parameters": "temperature 0.7"}"#)
+            .create_async()
+            .await;
+
+        let manager = OfflineModelManager::new(&server.url());
+        let result = manager.detect_context_window("codellama").await.unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn test_detect_context_window_server_error() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/api/show")
+            .with_status(404)
+            .with_body("not found")
+            .create_async()
+            .await;
+
+        let manager = OfflineModelManager::new(&server.url());
+        let result = manager.detect_context_window("nonexistent").await.unwrap();
+        assert_eq!(result, None);
     }
 }

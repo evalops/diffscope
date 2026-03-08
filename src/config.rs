@@ -631,7 +631,7 @@ impl Config {
 }
 
 fn default_model() -> String {
-    "gpt-4o".to_string()
+    "anthropic/claude-sonnet-4.6".to_string()
 }
 
 fn default_temperature() -> f32 {

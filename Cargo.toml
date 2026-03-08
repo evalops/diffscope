@@ -11,7 +11,7 @@ categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
-tokio = { version = "1.35", features = ["macros", "rt-multi-thread", "fs", "time"] }
+tokio = { version = "1.35", features = ["macros", "rt-multi-thread", "fs", "time", "sync"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
@@ -31,6 +31,11 @@ glob = "0.3"
 ignore = "0.4"
 shell-words = "1.1"
 url = "2.5"
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+rust-embed = "8"
+uuid = { version = "1", features = ["v4"] }
+mime_guess = "2"
 
 [dev-dependencies]
 tempfile = "3.8"

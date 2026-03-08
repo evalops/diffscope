@@ -596,6 +596,7 @@ mod tests {
             code_suggestion: None,
             tags: Vec::new(),
             fix_effort: core::comment::FixEffort::Low,
+            feedback: None,
         }
     }
 
