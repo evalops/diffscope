@@ -268,9 +268,68 @@ fn truncate_with_notice(mut content: String, max_chars: usize) -> String {
     if max_chars == 0 || content.len() <= max_chars {
         return content;
     }
-    content.truncate(max_chars.saturating_sub(20));
+    let mut end = max_chars.saturating_sub(20);
+    while end > 0 && !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    content.truncate(end);
     content.push_str("\n[Truncated]\n");
     content
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_with_notice_utf8_safety() {
+        // '€' is 3 bytes in UTF-8. With 5 euros = 15 bytes,
+        // max_chars=10 means truncate at 10 - 20 = 0 (saturating), but
+        // let's use a value where the truncation point lands mid-character.
+        let content = "€€€€€€€€€€".to_string(); // 10 euros = 30 bytes
+        // max_chars=25: truncate at 25-20=5, but byte 5 is mid-char (€ boundaries: 0,3,6,9,...)
+        // This should NOT panic
+        let result = truncate_with_notice(content, 25);
+        assert!(result.contains("[Truncated]"));
+        // Verify the result is valid UTF-8 (it is since it's a String, but
+        // the point is truncate() would have panicked)
+        assert!(result.len() > 0);
+    }
+
+    #[test]
+    fn test_truncate_with_notice_ascii() {
+        let content = "hello world, this is a long string".to_string();
+        let result = truncate_with_notice(content, 30);
+        assert!(result.contains("[Truncated]"));
+    }
+
+    #[test]
+    fn test_truncate_with_notice_no_truncation() {
+        let content = "short".to_string();
+        let result = truncate_with_notice(content, 100);
+        assert_eq!(result, "short");
+        assert!(!result.contains("[Truncated]"));
+    }
+
+    #[test]
+    fn test_merge_ranges_basic() {
+        let ranges = vec![(1, 5), (3, 8), (10, 15)];
+        let merged = merge_ranges(&ranges);
+        assert_eq!(merged, vec![(1, 8), (10, 15)]);
+    }
+
+    #[test]
+    fn test_merge_ranges_empty() {
+        let merged = merge_ranges(&[]);
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn test_merge_ranges_adjacent() {
+        let ranges = vec![(1, 5), (6, 10)];
+        let merged = merge_ranges(&ranges);
+        assert_eq!(merged, vec![(1, 10)]);
+    }
 }
 
 async fn read_file_lossy(path: &Path) -> Result<String> {

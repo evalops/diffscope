@@ -218,7 +218,7 @@ impl SymbolGraph {
         }
 
         while let Some((current, depth, accumulated_cost)) = queue.pop_front() {
-            if depth > max_hops {
+            if depth >= max_hops {
                 continue;
             }
 
@@ -927,6 +927,35 @@ impl Authenticator for AdminAuth {
         let locations = graph.ranked_to_locations(&ranked);
         assert_eq!(locations.len(), 1);
         assert_eq!(locations[0].file_path, PathBuf::from("t.rs"));
+    }
+
+    #[test]
+    fn test_related_symbols_max_hops_zero() {
+        // max_hops=0 means no traversal — should return no results
+        let mut graph = SymbolGraph::new();
+        graph.add_node(SymbolNode {
+            name: "A".to_string(),
+            file_path: PathBuf::from("a.rs"),
+            line_range: (1, 10),
+            kind: SymbolKind::Function,
+            edges: Vec::new(),
+        });
+        graph.add_node(SymbolNode {
+            name: "B".to_string(),
+            file_path: PathBuf::from("b.rs"),
+            line_range: (1, 10),
+            kind: SymbolKind::Function,
+            edges: Vec::new(),
+        });
+        graph.add_edge("A", "B", SymbolRelation::Calls);
+
+        let results = graph.related_symbols(&["A".to_string()], 0, 10);
+        assert!(
+            results.is_empty(),
+            "max_hops=0 should return no results, but got {} results: {:?}",
+            results.len(),
+            results.iter().map(|r| &r.name).collect::<Vec<_>>()
+        );
     }
 
     #[test]
