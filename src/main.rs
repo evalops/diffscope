@@ -2424,6 +2424,20 @@ fn format_as_markdown(comments: &[core::Comment]) -> String {
     }
     output.push('\n');
 
+    let rule_hits = summarize_rule_hits(comments, 12);
+    if !rule_hits.is_empty() {
+        output.push_str("### Issues by Rule\n\n");
+        output.push_str("| Rule | Count | Error | Warning | Info | Suggestion |\n");
+        output.push_str("|------|-------|-------|---------|------|------------|\n");
+        for (rule_id, hit) in rule_hits {
+            output.push_str(&format!(
+                "| `{}` | {} | {} | {} | {} | {} |\n",
+                rule_id, hit.total, hit.errors, hit.warnings, hit.infos, hit.suggestions
+            ));
+        }
+        output.push('\n');
+    }
+
     // Recommendations
     if !summary.recommendations.is_empty() {
         output.push_str("### Recommendations\n\n");
@@ -3090,6 +3104,20 @@ fn format_smart_review_output(
         output.push_str(&format!("| {} | {} |\n", category, cat_count));
     }
     output.push('\n');
+
+    let rule_hits = summarize_rule_hits(comments, 12);
+    if !rule_hits.is_empty() {
+        output.push_str("#### By Rule\n\n");
+        output.push_str("| Rule | Count | Error | Warning | Info | Suggestion |\n");
+        output.push_str("|------|-------|-------|---------|------|------------|\n");
+        for (rule_id, hit) in rule_hits {
+            output.push_str(&format!(
+                "| `{}` | {} | {} | {} | {} | {} |\n",
+                rule_id, hit.total, hit.errors, hit.warnings, hit.infos, hit.suggestions
+            ));
+        }
+        output.push('\n');
+    }
 
     // Actionable Recommendations
     if !summary.recommendations.is_empty() {

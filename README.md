@@ -144,6 +144,7 @@ expect:
 
 `diffscope eval` now reports per-rule precision/recall/F1 (micro and macro), and includes top rule-level TP/FP/FN counts in CLI and JSON output.
 Starter fixtures live in `eval/fixtures/repo_regressions`.
+Markdown and smart-review reports now include rule-level issue breakdown tables when rule ids are available.
 
 ### Smart Review (Enhanced Analysis)
 ```bash
