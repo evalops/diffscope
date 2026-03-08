@@ -312,6 +312,9 @@ fn content_similarity(a: &str, b: &str) -> f32 {
     let words_a: std::collections::HashSet<&str> = a.split_whitespace().collect();
     let words_b: std::collections::HashSet<&str> = b.split_whitespace().collect();
 
+    if words_a.is_empty() && words_b.is_empty() {
+        return 1.0;
+    }
     if words_a.is_empty() || words_b.is_empty() {
         return 0.0;
     }
@@ -528,7 +531,7 @@ mod tests {
     fn test_content_similarity() {
         assert!(content_similarity("the cat sat on mat", "the cat sat on mat") > 0.99);
         assert!(content_similarity("the cat sat", "completely different words") < 0.2);
-        assert!(content_similarity("", "") < 0.01);
+        assert!(content_similarity("", "") > 0.99); // identical empty strings
         assert!(content_similarity("hello", "") < 0.01);
     }
 
@@ -614,13 +617,12 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_empty_comments() {
+    fn test_merge_keeps_nonempty_different_comments() {
         let review = MultiPassReview::with_defaults();
-        let existing = vec![make_comment("test.rs", 1, "")];
-        let deep = vec![make_comment("test.rs", 1, "")];
-        // Empty comments have similarity 0.0, so both should be kept
+        let existing = vec![make_comment("test.rs", 1, "first issue")];
+        let deep = vec![make_comment("test.rs", 1, "completely different issue")];
         let merged = review.merge_results(existing, deep);
-        assert_eq!(merged.len(), 2);
+        assert_eq!(merged.len(), 2, "Different comments should both be kept");
     }
 
     #[test]
@@ -744,5 +746,23 @@ mod tests {
         assert!(config.enable_deep_pass);
         assert!((config.hotspot_threshold - 0.5).abs() < 0.01);
         assert_eq!(config.max_deep_files, 5);
+    }
+
+    #[test]
+    fn test_content_similarity_both_empty() {
+        // Two empty strings are identical — similarity should be 1.0, not 0.0
+        assert_eq!(content_similarity("", ""), 1.0);
+        assert_eq!(content_similarity("   ", "   "), 1.0);
+        assert_eq!(content_similarity("  \n\t  ", ""), 1.0);
+    }
+
+    #[test]
+    fn test_merge_deduplicates_empty_comments() {
+        let review = MultiPassReview::with_defaults();
+        let existing = vec![make_comment("test.rs", 1, "")];
+        let deep = vec![make_comment("test.rs", 1, "")];
+        // Two identical empty comments at the same location should be deduped
+        let merged = review.merge_results(existing, deep);
+        assert_eq!(merged.len(), 1, "Empty duplicate comments should be deduped");
     }
 }

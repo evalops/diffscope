@@ -155,7 +155,7 @@ pub fn format_as_markdown(comments: &[core::Comment], rule_priority: &[String]) 
     output.push_str("---\n\n## Detailed Issues\n\n");
 
     // Group comments by file
-    let mut comments_by_file = std::collections::HashMap::new();
+    let mut comments_by_file = std::collections::BTreeMap::new();
     for comment in comments {
         comments_by_file
             .entry(&comment.file_path)
@@ -840,5 +840,51 @@ mod tests {
         assert!(output.contains("7.5/10"));
         assert!(output.contains("Critical Issues"));
         assert!(output.contains("Fix bugs"));
+    }
+
+    #[test]
+    fn format_markdown_file_sections_are_deterministic() {
+        // Comments across multiple files should produce deterministic file section ordering
+        let mut c1 = build_test_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.9,
+        );
+        c1.file_path = PathBuf::from("src/z_last.rs");
+
+        let mut c2 = build_test_comment(
+            "c2",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.8,
+        );
+        c2.file_path = PathBuf::from("src/a_first.rs");
+
+        let mut c3 = build_test_comment(
+            "c3",
+            core::comment::Category::Security,
+            core::comment::Severity::Info,
+            0.7,
+        );
+        c3.file_path = PathBuf::from("src/m_middle.rs");
+
+        let comments = vec![c1, c2, c3];
+        let output = format_as_markdown(&comments, &[]);
+
+        // Run multiple times — should always produce the same output
+        for _ in 0..5 {
+            let output2 = format_as_markdown(&comments, &[]);
+            assert_eq!(output, output2, "Markdown output should be deterministic across runs");
+        }
+
+        // File sections should appear in sorted order
+        let z_pos = output.find("src/z_last.rs").expect("should contain z_last.rs");
+        let a_pos = output.find("src/a_first.rs").expect("should contain a_first.rs");
+        let m_pos = output.find("src/m_middle.rs").expect("should contain m_middle.rs");
+        assert!(
+            a_pos < m_pos && m_pos < z_pos,
+            "Files should appear in sorted order: a_first({a_pos}) < m_middle({m_pos}) < z_last({z_pos})"
+        );
     }
 }

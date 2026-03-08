@@ -257,9 +257,13 @@ fn find_function_end(lines: &[&str], start: usize, language: &str) -> usize {
             let mut found_open = false;
             for (i, line) in lines.iter().enumerate().skip(start) {
                 let mut in_string = false;
-                let mut prev_char = '\0';
+                let mut escaped = false;
                 for ch in line.chars() {
-                    if ch == '"' && prev_char != '\\' {
+                    if escaped {
+                        escaped = false;
+                    } else if in_string && ch == '\\' {
+                        escaped = true;
+                    } else if ch == '"' {
                         in_string = !in_string;
                     } else if !in_string {
                         if ch == '{' {
@@ -269,7 +273,6 @@ fn find_function_end(lines: &[&str], start: usize, language: &str) -> usize {
                             depth -= 1;
                         }
                     }
-                    prev_char = ch;
                 }
                 if found_open && depth <= 0 {
                     return i;
@@ -836,5 +839,18 @@ fn next_func() {
         let result = find_enclosing_function(&boundaries, 12);
         // Line 12: matches "valid" (1-20). Should NOT panic even if "broken" passes filter.
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_find_function_end_escaped_backslash_in_string() {
+        // A string containing "\\" (escaped backslash) on the same line as braces.
+        // The closing quote after "\\" terminates the string, so the closing brace
+        // on the same line should be counted.
+        let lines: Vec<&str> = vec![
+            r#"function foo() { let s = "\\"; }"#,  // line 0: open+close on same line
+            "function next() {",                      // line 1: next function
+        ];
+        let end = find_function_end(&lines, 0, "js");
+        assert_eq!(end, 0, "Function should end at line 0 (braces balanced on same line with escaped backslash)");
     }
 }
