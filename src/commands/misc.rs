@@ -351,7 +351,42 @@ fn select_discussion_comment(
         return Ok(selected);
     }
 
-    Ok(comments[0].clone())
+    comments
+        .first()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("No comments available"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_select_discussion_comment_empty_comments() {
+        // Should return an error, not panic
+        let result = select_discussion_comment(&[], None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_select_discussion_comment_defaults_to_first() {
+        let comment = core::Comment {
+            id: "cmt_1".to_string(),
+            file_path: PathBuf::from("test.rs"),
+            line_number: 1,
+            content: "test".to_string(),
+            rule_id: None,
+            severity: core::comment::Severity::Info,
+            category: core::comment::Category::BestPractice,
+            suggestion: None,
+            confidence: 0.8,
+            code_suggestion: None,
+            tags: vec![],
+            fix_effort: core::comment::FixEffort::Low,
+        };
+        let result = select_discussion_comment(&[comment.clone()], None, None).unwrap();
+        assert_eq!(result.id, "cmt_1");
+    }
 }
 
 fn load_discussion_thread(path: Option<&std::path::Path>, comment_id: &str) -> DiscussionThread {
