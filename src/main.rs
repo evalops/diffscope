@@ -7,6 +7,7 @@ mod parsing;
 mod plugins;
 mod review;
 mod server;
+mod vault;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -80,6 +81,15 @@ struct Cli {
 
     #[arg(long, global = true, help = "Output language (e.g., en, ja, de)")]
     output_language: Option<String>,
+
+    #[arg(long, global = true, help = "Vault server address (e.g., https://vault:8200)")]
+    vault_addr: Option<String>,
+
+    #[arg(long, global = true, help = "Vault secret path (e.g., diffscope)")]
+    vault_path: Option<String>,
+
+    #[arg(long, global = true, help = "Key within Vault secret to use as API key (default: api_key)")]
+    vault_key: Option<String>,
 
     #[arg(long, global = true, default_value = "json")]
     output_format: OutputFormat,
@@ -315,7 +325,21 @@ async fn main() -> Result<()> {
     if let Some(lang) = cli.output_language {
         config.output_language = Some(lang);
     }
+    if let Some(vault_addr) = cli.vault_addr {
+        config.vault_addr = Some(vault_addr);
+    }
+    if let Some(vault_path) = cli.vault_path {
+        config.vault_path = Some(vault_path);
+    }
+    if let Some(vault_key) = cli.vault_key {
+        config.vault_key = Some(vault_key);
+    }
     config.normalize();
+
+    // Resolve API key from Vault if configured and api_key is not already set
+    if let Err(e) = config.resolve_vault_api_key().await {
+        eprintln!("Warning: Failed to fetch API key from Vault: {:#}", e);
+    }
 
     match cli.command {
         Commands::Review {

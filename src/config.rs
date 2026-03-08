@@ -128,6 +128,30 @@ pub struct Config {
     #[serde(default = "default_feedback_suppression_margin")]
     pub feedback_suppression_margin: usize,
 
+    /// HashiCorp Vault server address (e.g., https://vault.example.com:8200).
+    #[serde(default)]
+    pub vault_addr: Option<String>,
+
+    /// Vault authentication token.
+    #[serde(default)]
+    pub vault_token: Option<String>,
+
+    /// Secret path in Vault (e.g., "diffscope" or "ci/diffscope").
+    #[serde(default)]
+    pub vault_path: Option<String>,
+
+    /// Key within the Vault secret to extract as the API key (default: "api_key").
+    #[serde(default)]
+    pub vault_key: Option<String>,
+
+    /// Vault KV engine mount point (default: "secret").
+    #[serde(default)]
+    pub vault_mount: Option<String>,
+
+    /// Vault Enterprise namespace.
+    #[serde(default)]
+    pub vault_namespace: Option<String>,
+
     #[serde(default)]
     pub plugins: PluginConfig,
 
@@ -261,6 +285,12 @@ impl Default for Config {
             include_fix_suggestions: true,
             feedback_suppression_threshold: default_feedback_suppression_threshold(),
             feedback_suppression_margin: default_feedback_suppression_margin(),
+            vault_addr: None,
+            vault_token: None,
+            vault_path: None,
+            vault_key: None,
+            vault_mount: None,
+            vault_namespace: None,
             plugins: PluginConfig::default(),
             exclude_patterns: Vec::new(),
             paths: HashMap::new(),
@@ -683,6 +713,31 @@ impl Config {
             max_retries: self.adapter_max_retries,
             retry_delay_ms: self.adapter_retry_delay_ms,
         }
+    }
+
+    /// Try to resolve the API key from Vault if Vault is configured and api_key is not set.
+    pub async fn resolve_vault_api_key(&mut self) -> Result<()> {
+        if self.api_key.is_some() {
+            return Ok(());
+        }
+
+        let vault_config = crate::vault::try_build_vault_config(
+            self.vault_addr.as_deref(),
+            self.vault_token.as_deref(),
+            self.vault_path.as_deref(),
+            self.vault_key.as_deref(),
+            self.vault_mount.as_deref(),
+            self.vault_namespace.as_deref(),
+        );
+
+        if let Some(vc) = vault_config {
+            tracing::info!("Fetching API key from Vault at {}", vc.addr);
+            let secret = crate::vault::fetch_secret(&vc).await?;
+            self.api_key = Some(secret);
+            tracing::info!("API key loaded from Vault");
+        }
+
+        Ok(())
     }
 
     /// Returns true if the configured base_url points to a local/self-hosted server.
