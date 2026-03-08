@@ -306,8 +306,8 @@ pub async fn list_reviews(
         .collect();
     list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
 
-    let page = params.page.unwrap_or(1).max(1).min(10_000);
-    let per_page = params.per_page.unwrap_or(20).max(1).min(100);
+    let page = params.page.unwrap_or(1).clamp(1, 10_000);
+    let per_page = params.per_page.unwrap_or(20).clamp(1, 100);
     let start = (page - 1).saturating_mul(per_page);
     let list = if start < list.len() {
         let end = list.len().min(start.saturating_add(per_page));
