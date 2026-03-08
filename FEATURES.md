@@ -103,3 +103,10 @@ This enhanced system provides professional-grade code review capabilities while 
 - Regex and LSP-backed symbol indexing with auto-detection when `symbol_index_lsp_command` is omitted.
 - LSP preflight command: `diffscope lsp-check` validates binaries, language IDs, and unmapped extensions.
 - Ready-to-copy LSP configs in `examples/lsp/` and setup guide in `docs/lsp.md`.
+
+## Signal And Context Controls
+
+- `strictness` levels (1-3) to control review depth and noise.
+- `comment_types` filtering (`logic`, `syntax`, `style`, `informational`) to focus output.
+- Scoped `custom_context` entries to inject path-specific notes and context files.
+- Adaptive suppression of repeated low-value comment types based on accepted/rejected feedback history.

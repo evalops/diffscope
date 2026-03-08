@@ -37,6 +37,22 @@ struct Cli {
     #[arg(
         long,
         global = true,
+        value_parser = clap::value_parser!(u8).range(1..=3),
+        help = "Review strictness (1=high-signal, 3=deep scan)"
+    )]
+    strictness: Option<u8>,
+
+    #[arg(
+        long,
+        global = true,
+        value_delimiter = ',',
+        help = "Comment types: logic,syntax,style,informational"
+    )]
+    comment_types: Option<Vec<String>>,
+
+    #[arg(
+        long,
+        global = true,
         value_parser = clap::value_parser!(bool),
         help = "Use OpenAI Responses API (true/false)"
     )]
@@ -192,6 +208,12 @@ async fn main() -> Result<()> {
     }
     if let Some(tokens) = cli.max_tokens {
         config.max_tokens = tokens;
+    }
+    if let Some(strictness) = cli.strictness {
+        config.strictness = strictness;
+    }
+    if let Some(comment_types) = cli.comment_types {
+        config.comment_types = comment_types;
     }
     if let Some(flag) = cli.openai_responses {
         config.openai_use_responses = Some(flag);
@@ -406,6 +428,7 @@ async fn review_command(
                 context_chunks.extend(extra_chunks);
             }
         }
+        inject_custom_context(&config, &context_fetcher, diff, &mut context_chunks).await?;
 
         if let Some(guidance) = build_review_guidance(&config, path_config) {
             local_prompt_config.system_prompt.push_str("\n\n");
@@ -455,10 +478,7 @@ async fn review_command(
     let processed_comments = plugin_manager
         .run_post_processors(all_comments, &repo_path_str)
         .await?;
-    let processed_comments = apply_confidence_threshold(processed_comments, config.min_confidence);
-    let processed_comments = apply_feedback_suppression(processed_comments, &feedback);
-    let processed_comments = apply_feedback_suppression(processed_comments, &feedback);
-    let processed_comments = apply_feedback_suppression(processed_comments, &feedback);
+    let processed_comments = apply_review_filters(processed_comments, &config, &feedback);
 
     let effective_format = if patch { OutputFormat::Patch } else { format };
     output_comments(&processed_comments, output_path, effective_format).await?;
@@ -976,6 +996,7 @@ async fn review_diff_content_raw(
     // Initialize plugin manager and load builtin plugins
     let mut plugin_manager = plugins::plugin::PluginManager::new();
     plugin_manager.load_builtin_plugins(&config.plugins).await?;
+    let feedback = load_feedback_store(&config);
 
     let model_config = adapters::llm::ModelConfig {
         model_name: config.model.clone(),
@@ -1070,6 +1091,7 @@ async fn review_diff_content_raw(
                 context_chunks.extend(extra_chunks);
             }
         }
+        inject_custom_context(&config, &context_fetcher, diff, &mut context_chunks).await?;
 
         // Create prompt builder with config
         let mut local_prompt_config = base_prompt_config.clone();
@@ -1129,7 +1151,7 @@ async fn review_diff_content_raw(
     let processed_comments = plugin_manager
         .run_post_processors(all_comments, &repo_path_str)
         .await?;
-    let processed_comments = apply_confidence_threshold(processed_comments, config.min_confidence);
+    let processed_comments = apply_review_filters(processed_comments, &config, &feedback);
 
     Ok(processed_comments)
 }
@@ -1406,6 +1428,7 @@ async fn smart_review_command(
         .unwrap_or_else(|| PathBuf::from("."));
     let repo_path_str = repo_root.to_string_lossy().to_string();
     let context_fetcher = core::ContextFetcher::new(repo_root.clone());
+    let feedback = load_feedback_store(&config);
 
     let mut plugin_manager = plugins::plugin::PluginManager::new();
     plugin_manager.load_builtin_plugins(&config.plugins).await?;
@@ -1546,6 +1569,7 @@ async fn smart_review_command(
                 context_chunks.extend(extra_chunks);
             }
         }
+        inject_custom_context(&config, &context_fetcher, diff, &mut context_chunks).await?;
 
         // Extract symbols and get definitions
         let symbols = extract_symbols_from_diff(diff);
@@ -1617,7 +1641,7 @@ async fn smart_review_command(
     let processed_comments = plugin_manager
         .run_post_processors(all_comments, &repo_path_str)
         .await?;
-    let processed_comments = apply_confidence_threshold(processed_comments, config.min_confidence);
+    let processed_comments = apply_review_filters(processed_comments, &config, &feedback);
 
     // Generate summary and output results
     let summary = core::CommentSynthesizer::generate_summary(&processed_comments);
@@ -2093,6 +2117,9 @@ async fn feedback_command(
                 updated += 1;
             }
             store.suppress.remove(&comment.id);
+            let key = classify_comment_type(comment).as_str().to_string();
+            let stats = store.by_comment_type.entry(key).or_default();
+            stats.accepted = stats.accepted.saturating_add(1);
         }
     } else {
         for comment in &comments {
@@ -2100,6 +2127,9 @@ async fn feedback_command(
                 updated += 1;
             }
             store.accept.remove(&comment.id);
+            let key = classify_comment_type(comment).as_str().to_string();
+            let stats = store.by_comment_type.entry(key).or_default();
+            stats.rejected = stats.rejected.saturating_add(1);
         }
     }
 
@@ -2184,6 +2214,24 @@ fn build_review_guidance(
 ) -> Option<String> {
     let mut sections = Vec::new();
 
+    let strictness_guidance = match config.strictness {
+        1 => "Prefer high-signal findings only. Avoid low-impact nitpicks and optional suggestions.",
+        3 => {
+            "Be exhaustive. Surface meaningful edge cases and maintainability concerns, including lower-severity findings."
+        }
+        _ => "Balance precision and coverage; prioritize clear, actionable findings.",
+    };
+    sections.push(format!(
+        "Strictness ({}): {}",
+        config.strictness, strictness_guidance
+    ));
+    if !config.comment_types.is_empty() {
+        sections.push(format!(
+            "Enabled comment types: {}. Do not emit findings outside these types.",
+            config.comment_types.join(", ")
+        ));
+    }
+
     if let Some(profile) = config.review_profile.as_deref() {
         let guidance = match profile {
             "chill" => Some(
@@ -2223,6 +2271,33 @@ fn build_review_guidance(
             sections.join("\n\n")
         ))
     }
+}
+
+async fn inject_custom_context(
+    config: &config::Config,
+    context_fetcher: &core::ContextFetcher,
+    diff: &core::UnifiedDiff,
+    context_chunks: &mut Vec<core::LLMContextChunk>,
+) -> Result<()> {
+    for entry in config.matching_custom_context(&diff.file_path) {
+        if !entry.notes.is_empty() {
+            context_chunks.push(core::LLMContextChunk {
+                content: format!("Custom context notes:\n{}", entry.notes.join("\n")),
+                context_type: core::ContextType::Documentation,
+                file_path: diff.file_path.clone(),
+                line_range: None,
+            });
+        }
+
+        if !entry.files.is_empty() {
+            let extra_chunks = context_fetcher
+                .fetch_additional_context(&entry.files)
+                .await?;
+            context_chunks.extend(extra_chunks);
+        }
+    }
+
+    Ok(())
 }
 
 fn build_change_walkthrough(diffs: &[core::UnifiedDiff]) -> String {
@@ -2412,12 +2487,97 @@ fn format_pr_summary_section(summary: &core::pr_summary::PRSummary) -> String {
     output
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ReviewCommentType {
+    Logic,
+    Syntax,
+    Style,
+    Informational,
+}
+
+impl ReviewCommentType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Logic => "logic",
+            Self::Syntax => "syntax",
+            Self::Style => "style",
+            Self::Informational => "informational",
+        }
+    }
+}
+
+fn classify_comment_type(comment: &core::Comment) -> ReviewCommentType {
+    if matches!(comment.category, core::comment::Category::Style) {
+        return ReviewCommentType::Style;
+    }
+
+    if matches!(
+        comment.category,
+        core::comment::Category::Documentation | core::comment::Category::BestPractice
+    ) {
+        return ReviewCommentType::Informational;
+    }
+
+    let content = comment.content.to_lowercase();
+    if content.contains("syntax")
+        || content.contains("parse error")
+        || content.contains("compilation")
+        || content.contains("compile")
+        || content.contains("token")
+    {
+        return ReviewCommentType::Syntax;
+    }
+
+    ReviewCommentType::Logic
+}
+
+fn apply_comment_type_filter(
+    comments: Vec<core::Comment>,
+    enabled_types: &[String],
+) -> Vec<core::Comment> {
+    if enabled_types.is_empty() {
+        return comments;
+    }
+
+    let enabled: HashSet<&str> = enabled_types.iter().map(String::as_str).collect();
+    let total = comments.len();
+    let mut kept = Vec::with_capacity(total);
+
+    for comment in comments {
+        let comment_type = classify_comment_type(&comment);
+        if enabled.contains(comment_type.as_str()) {
+            kept.push(comment);
+        }
+    }
+
+    if kept.len() != total {
+        let dropped = total.saturating_sub(kept.len());
+        info!(
+            "Dropped {} comment(s) due to comment type filters [{}]",
+            dropped,
+            enabled_types.join(", ")
+        );
+    }
+
+    kept
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct FeedbackTypeStats {
+    #[serde(default)]
+    accepted: usize,
+    #[serde(default)]
+    rejected: usize,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct FeedbackStore {
     #[serde(default)]
     suppress: HashSet<String>,
     #[serde(default)]
     accept: HashSet<String>,
+    #[serde(default)]
+    by_comment_type: HashMap<String, FeedbackTypeStats>,
 }
 
 fn load_feedback_store_from_path(path: &Path) -> FeedbackStore {
@@ -2437,29 +2597,68 @@ fn save_feedback_store(path: &Path, store: &FeedbackStore) -> Result<()> {
     Ok(())
 }
 
+fn apply_review_filters(
+    comments: Vec<core::Comment>,
+    config: &config::Config,
+    feedback: &FeedbackStore,
+) -> Vec<core::Comment> {
+    let comments = apply_confidence_threshold(comments, config.effective_min_confidence());
+    let comments = apply_comment_type_filter(comments, &config.comment_types);
+    apply_feedback_suppression(comments, feedback)
+}
+
+fn should_adaptively_suppress(comment: &core::Comment, feedback: &FeedbackStore) -> bool {
+    if matches!(
+        comment.severity,
+        core::comment::Severity::Error | core::comment::Severity::Warning
+    ) {
+        return false;
+    }
+
+    let key = classify_comment_type(comment).as_str();
+    let stats = match feedback.by_comment_type.get(key) {
+        Some(stats) => stats,
+        None => return false,
+    };
+
+    stats.rejected >= 3 && stats.rejected >= stats.accepted.saturating_add(2)
+}
+
 fn apply_feedback_suppression(
     comments: Vec<core::Comment>,
     feedback: &FeedbackStore,
 ) -> Vec<core::Comment> {
-    if feedback.suppress.is_empty() {
+    if feedback.suppress.is_empty() && feedback.by_comment_type.is_empty() {
         return comments;
     }
 
     let total = comments.len();
     let mut kept = Vec::with_capacity(total);
+    let mut explicit_dropped = 0usize;
+    let mut adaptive_dropped = 0usize;
 
     for comment in comments {
         if feedback.suppress.contains(&comment.id) {
+            explicit_dropped += 1;
+            continue;
+        }
+        if should_adaptively_suppress(&comment, feedback) {
+            adaptive_dropped += 1;
             continue;
         }
         kept.push(comment);
     }
 
-    if kept.len() != total {
-        let dropped = total.saturating_sub(kept.len());
+    if explicit_dropped > 0 {
         info!(
-            "Dropped {} comment(s) due to feedback suppression rules",
-            dropped
+            "Dropped {} comment(s) due to explicit feedback suppression rules",
+            explicit_dropped
+        );
+    }
+    if adaptive_dropped > 0 {
+        info!(
+            "Dropped {} low-priority comment(s) due to learned feedback preferences",
+            adaptive_dropped
         );
     }
 
@@ -2509,6 +2708,27 @@ fn is_line_in_diff(diff: &core::UnifiedDiff, line_number: usize) -> bool {
 mod tests {
     use super::*;
 
+    fn build_comment(
+        id: &str,
+        category: core::comment::Category,
+        severity: core::comment::Severity,
+        confidence: f32,
+    ) -> core::Comment {
+        core::Comment {
+            id: id.to_string(),
+            file_path: PathBuf::from("src/lib.rs"),
+            line_number: 10,
+            content: "test comment".to_string(),
+            severity,
+            category,
+            suggestion: None,
+            confidence,
+            code_suggestion: None,
+            tags: Vec::new(),
+            fix_effort: core::comment::FixEffort::Low,
+        }
+    }
+
     #[test]
     fn parse_smart_review_response_parses_fields() {
         let input = r#"
@@ -2546,5 +2766,79 @@ TAGS: auth, security
         let confidence = comment.confidence.unwrap_or(0.0);
         assert!((confidence - 0.85).abs() < 0.0001);
         assert_eq!(comment.fix_effort, Some(core::comment::FixEffort::High));
+    }
+
+    #[test]
+    fn comment_type_filter_keeps_only_enabled_types() {
+        let comments = vec![
+            build_comment(
+                "logic",
+                core::comment::Category::Bug,
+                core::comment::Severity::Info,
+                0.9,
+            ),
+            build_comment(
+                "style",
+                core::comment::Category::Style,
+                core::comment::Severity::Suggestion,
+                0.9,
+            ),
+        ];
+
+        let enabled = vec!["logic".to_string()];
+        let filtered = apply_comment_type_filter(comments, &enabled);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "logic");
+    }
+
+    #[test]
+    fn adaptive_feedback_suppresses_low_priority_comment_types() {
+        let feedback = FeedbackStore {
+            suppress: HashSet::new(),
+            accept: HashSet::new(),
+            by_comment_type: HashMap::from([(
+                "style".to_string(),
+                FeedbackTypeStats {
+                    accepted: 0,
+                    rejected: 3,
+                },
+            )]),
+        };
+
+        let comments = vec![
+            build_comment(
+                "style-low",
+                core::comment::Category::Style,
+                core::comment::Severity::Suggestion,
+                0.95,
+            ),
+            build_comment(
+                "style-high",
+                core::comment::Category::Style,
+                core::comment::Severity::Error,
+                0.95,
+            ),
+        ];
+
+        let filtered = apply_feedback_suppression(comments, &feedback);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "style-high");
+    }
+
+    #[test]
+    fn strictness_applies_minimum_confidence_floor() {
+        let config = config::Config::default();
+        let feedback = FeedbackStore::default();
+        let comments = vec![build_comment(
+            "low-confidence",
+            core::comment::Category::Bug,
+            core::comment::Severity::Info,
+            0.5,
+        )];
+
+        let filtered = apply_review_filters(comments, &config, &feedback);
+        assert!(filtered.is_empty());
     }
 }

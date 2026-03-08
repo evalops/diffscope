@@ -8,6 +8,12 @@ max_tokens: 4000
 max_context_chars: 20000  # 0 disables context truncation
 max_diff_chars: 40000     # 0 disables diff truncation
 min_confidence: 0.0       # Drop comments below this confidence (0.0-1.0)
+strictness: 2             # 1 = high-signal only, 2 = balanced, 3 = deep scan
+comment_types:            # logic | syntax | style | informational
+  - logic
+  - syntax
+  - style
+  - informational
 review_profile: balanced  # balanced | chill | assertive
 review_instructions: |
   Prioritize security and correctness issues. Avoid stylistic comments unless they impact maintainability.
@@ -27,6 +33,17 @@ symbol_index_max_files: 500
 symbol_index_max_bytes: 200000
 symbol_index_max_locations: 5
 feedback_path: ".diffscope.feedback.json"
+
+# Optional Greptile-like scoped context bundles.
+# notes become additional reviewer instructions, files are loaded as reference context.
+custom_context:
+  - scope: "src/api/**"
+    notes:
+      - "Auth endpoints must enforce tenant isolation and rate limits."
+      - "Prefer idempotent handlers for retries."
+    files:
+      - "docs/security/*.md"
+      - "src/config/**/*.yml"
 
 # API configuration (optional - can use environment variables)
 # api_key: your-api-key-here

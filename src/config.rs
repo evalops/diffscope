@@ -23,6 +23,12 @@ pub struct Config {
     #[serde(default = "default_min_confidence")]
     pub min_confidence: f32,
 
+    #[serde(default = "default_strictness")]
+    pub strictness: u8,
+
+    #[serde(default = "default_comment_types")]
+    pub comment_types: Vec<String>,
+
     #[serde(default)]
     pub review_profile: Option<String>,
 
@@ -74,6 +80,9 @@ pub struct Config {
 
     #[serde(default)]
     pub paths: HashMap<String, PathConfig>,
+
+    #[serde(default)]
+    pub custom_context: Vec<CustomContextConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -93,6 +102,18 @@ pub struct PathConfig {
 
     #[serde(default)]
     pub severity_overrides: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CustomContextConfig {
+    #[serde(default)]
+    pub scope: Option<String>,
+
+    #[serde(default)]
+    pub notes: Vec<String>,
+
+    #[serde(default)]
+    pub files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -116,6 +137,8 @@ impl Default for Config {
             max_context_chars: default_max_context_chars(),
             max_diff_chars: default_max_diff_chars(),
             min_confidence: default_min_confidence(),
+            strictness: default_strictness(),
+            comment_types: default_comment_types(),
             review_profile: None,
             review_instructions: None,
             smart_review_summary: true,
@@ -135,6 +158,7 @@ impl Default for Config {
             plugins: PluginConfig::default(),
             exclude_patterns: Vec::new(),
             paths: HashMap::new(),
+            custom_context: Vec::new(),
         }
     }
 }
@@ -225,6 +249,13 @@ impl Config {
         } else if !(0.0..=1.0).contains(&self.min_confidence) {
             self.min_confidence = self.min_confidence.clamp(0.0, 1.0);
         }
+        if self.strictness == 0 {
+            self.strictness = default_strictness();
+        } else if self.strictness > 3 {
+            self.strictness = 3;
+        }
+
+        self.comment_types = normalize_comment_types(&self.comment_types);
 
         if let Some(profile) = &self.review_profile {
             let normalized = profile.trim().to_lowercase();
@@ -242,6 +273,37 @@ impl Config {
                 self.review_instructions = None;
             }
         }
+
+        let mut normalized_custom_context = Vec::new();
+        for mut entry in std::mem::take(&mut self.custom_context) {
+            entry.scope = entry.scope.and_then(|scope| {
+                let trimmed = scope.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            });
+
+            entry.notes = entry
+                .notes
+                .into_iter()
+                .map(|note| note.trim().to_string())
+                .filter(|note| !note.is_empty())
+                .collect();
+            entry.files = entry
+                .files
+                .into_iter()
+                .map(|file| file.trim().to_string())
+                .filter(|file| !file.is_empty())
+                .collect();
+
+            if entry.notes.is_empty() && entry.files.is_empty() {
+                continue;
+            }
+            normalized_custom_context.push(entry);
+        }
+        self.custom_context = normalized_custom_context;
     }
 
     pub fn get_path_config(&self, file_path: &Path) -> Option<&PathConfig> {
@@ -284,6 +346,26 @@ impl Config {
         false
     }
 
+    pub fn matching_custom_context(&self, file_path: &Path) -> Vec<&CustomContextConfig> {
+        let file_path_str = file_path.to_string_lossy();
+        self.custom_context
+            .iter()
+            .filter(|entry| match entry.scope.as_deref() {
+                Some(scope) => self.path_matches(&file_path_str, scope),
+                None => true,
+            })
+            .collect()
+    }
+
+    pub fn effective_min_confidence(&self) -> f32 {
+        let strictness_floor = match self.strictness {
+            1 => 0.85,
+            2 => 0.65,
+            _ => 0.45,
+        };
+        self.min_confidence.max(strictness_floor).clamp(0.0, 1.0)
+    }
+
     fn path_matches(&self, path: &str, pattern: &str) -> bool {
         // Simple glob matching
         if pattern.contains('*') {
@@ -310,6 +392,7 @@ mod tests {
         config.temperature = 5.0;
         config.max_tokens = 0;
         config.min_confidence = 2.0;
+        config.strictness = 0;
         config.review_profile = Some("ASSERTIVE".to_string());
 
         config.normalize();
@@ -318,7 +401,23 @@ mod tests {
         assert_eq!(config.temperature, default_temperature());
         assert_eq!(config.max_tokens, default_max_tokens());
         assert_eq!(config.min_confidence, 1.0);
+        assert_eq!(config.strictness, default_strictness());
         assert_eq!(config.review_profile.as_deref(), Some("assertive"));
+    }
+
+    #[test]
+    fn normalize_comment_types_filters_unknown_values() {
+        let mut config = Config::default();
+        config.comment_types = vec![
+            " LOGIC ".to_string(),
+            "style".to_string(),
+            "unknown".to_string(),
+            "STYLE".to_string(),
+        ];
+
+        config.normalize();
+
+        assert_eq!(config.comment_types, vec!["logic", "style"]);
     }
 }
 
@@ -344,6 +443,19 @@ fn default_max_diff_chars() -> usize {
 
 fn default_min_confidence() -> f32 {
     0.0
+}
+
+fn default_strictness() -> u8 {
+    2
+}
+
+fn default_comment_types() -> Vec<String> {
+    vec![
+        "logic".to_string(),
+        "syntax".to_string(),
+        "style".to_string(),
+        "informational".to_string(),
+    ]
 }
 
 fn default_symbol_index_max_files() -> usize {
@@ -374,4 +486,30 @@ fn default_feedback_path() -> PathBuf {
 
 fn default_true() -> bool {
     true
+}
+
+fn normalize_comment_types(values: &[String]) -> Vec<String> {
+    if values.is_empty() {
+        return default_comment_types();
+    }
+
+    let mut normalized = Vec::new();
+    for value in values {
+        let value = value.trim().to_lowercase();
+        if !matches!(
+            value.as_str(),
+            "logic" | "syntax" | "style" | "informational"
+        ) {
+            continue;
+        }
+        if !normalized.contains(&value) {
+            normalized.push(value);
+        }
+    }
+
+    if normalized.is_empty() {
+        default_comment_types()
+    } else {
+        normalized
+    }
 }

@@ -15,6 +15,9 @@ A composable code review engine for automated diff analysis.
 - **CI/CD Ready**: GitHub Action, GitLab CI, and Docker support
 - **Smart Review**: Enhanced analysis with confidence scoring, fix effort estimation, and executive summaries
 - **Path-Based Configuration**: Customize review behavior for different parts of your codebase
+- **Signal Controls**: Tune strictness and comment types (`logic`, `syntax`, `style`, `informational`)
+- **Adaptive Learning**: Suppress low-value recurring feedback based on accepted/rejected review history
+- **Scoped Custom Context**: Attach rules and reference files to path scopes for higher-precision reviews
 - **Changelog Generation**: Generate changelogs and release notes from git history
 - **Interactive Commands**: Respond to PR comments with @diffscope commands
 
@@ -193,6 +196,12 @@ max_tokens: 4000
 max_context_chars: 20000  # 0 disables context truncation
 max_diff_chars: 40000     # 0 disables diff truncation
 min_confidence: 0.0       # Drop comments below this confidence (0.0-1.0)
+strictness: 2             # 1 = high-signal only, 2 = balanced, 3 = deep scan
+comment_types:
+  - logic
+  - syntax
+  - style
+  - informational
 review_profile: balanced  # balanced | chill | assertive
 review_instructions: |
   Prioritize security and correctness issues. Avoid stylistic comments unless they impact maintainability.
@@ -209,6 +218,14 @@ symbol_index_max_locations: 5
 feedback_path: ".diffscope.feedback.json"
 system_prompt: "Focus on security vulnerabilities, performance issues, and best practices"
 openai_use_responses: true  # Use OpenAI Responses API (recommended) instead of chat completions
+
+custom_context:
+  - scope: "src/api/**"
+    notes:
+      - "Auth flows must enforce tenant boundaries and rate limits."
+    files:
+      - "docs/security/*.md"
+      - "src/config/**/*.yml"
 
 # Built-in plugins (enabled by default)
 plugins:
