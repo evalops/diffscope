@@ -5,6 +5,26 @@ use std::path::{Path, PathBuf};
 use tracing::warn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for ProviderConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            base_url: None,
+            enabled: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_model")]
     pub model: String,
@@ -175,6 +195,12 @@ pub struct Config {
 
     #[serde(default)]
     pub rule_priority: Vec<String>,
+
+    #[serde(default)]
+    pub providers: HashMap<String, ProviderConfig>,
+
+    #[serde(default)]
+    pub github_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -299,6 +325,8 @@ impl Default for Config {
             rules_files: Vec::new(),
             max_active_rules: default_max_active_rules(),
             rule_priority: Vec::new(),
+            providers: HashMap::new(),
+            github_token: None,
         }
     }
 }
@@ -713,6 +741,70 @@ impl Config {
             max_retries: self.adapter_max_retries,
             retry_delay_ms: self.adapter_retry_delay_ms,
         }
+    }
+
+    /// Resolve which provider to use based on configuration.
+    ///
+    /// Returns `(api_key, base_url, adapter)` by checking:
+    /// 1. If `adapter` is explicitly set and a matching enabled provider exists, use it.
+    /// 2. If no adapter is set, infer from the model name.
+    /// 3. Fall back to top-level `api_key`/`base_url`.
+    pub fn resolve_provider(&self) -> (Option<String>, Option<String>, Option<String>) {
+        // If adapter is explicitly set, look for a matching provider
+        if let Some(ref adapter) = self.adapter {
+            let key = adapter.to_lowercase();
+            if let Some(provider) = self.providers.get(&key) {
+                if provider.enabled {
+                    let api_key = provider.api_key.clone().or_else(|| self.api_key.clone());
+                    let base_url = provider.base_url.clone().or_else(|| self.base_url.clone());
+                    return (api_key, base_url, Some(key));
+                }
+            }
+            // Adapter is set but no matching provider found; fall through to top-level
+            return (self.api_key.clone(), self.base_url.clone(), Some(key));
+        }
+
+        // No adapter set: try to detect provider from model name
+        let model_lower = self.model.to_lowercase();
+        let detected = if model_lower.starts_with("anthropic/")
+            || model_lower.starts_with("claude")
+        {
+            Some("anthropic")
+        } else if model_lower.starts_with("openai/")
+            || model_lower.starts_with("gpt")
+            || model_lower.starts_with("o1")
+            || model_lower.starts_with("o3")
+            || model_lower.starts_with("o4")
+        {
+            Some("openai")
+        } else if model_lower.starts_with("ollama:") {
+            Some("ollama")
+        } else {
+            // Default: check if openrouter provider is configured
+            if self.providers.get("openrouter").map_or(false, |p| p.enabled) {
+                Some("openrouter")
+            } else {
+                None
+            }
+        };
+
+        if let Some(provider_key) = detected {
+            if let Some(provider) = self.providers.get(provider_key) {
+                if provider.enabled {
+                    let api_key = provider.api_key.clone().or_else(|| self.api_key.clone());
+                    let base_url = provider.base_url.clone().or_else(|| self.base_url.clone());
+                    // Map openrouter to openai adapter (OpenRouter uses OpenAI-compatible API)
+                    let adapter = match provider_key {
+                        "openrouter" => Some("openai".to_string()),
+                        other => Some(other.to_string()),
+                    };
+                    return (api_key, base_url, adapter);
+                }
+            }
+        }
+
+        // Fall back to top-level fields
+        (self.api_key.clone(), self.base_url.clone(), self.adapter.clone())
     }
 
     /// Try to resolve the API key from Vault if Vault is configured and api_key is not set.

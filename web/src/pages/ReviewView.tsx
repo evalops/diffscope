@@ -1,6 +1,6 @@
 import { useParams } from 'react-router-dom'
 import { useState, useMemo } from 'react'
-import { Loader2, AlertTriangle, MessageSquare, FileCode, ChevronDown } from 'lucide-react'
+import { Loader2, AlertTriangle, MessageSquare, FileCode, ChevronDown, Activity, Clock, Cpu, GitBranch } from 'lucide-react'
 import { useReview, useSubmitFeedback } from '../api/hooks'
 import { DiffViewer } from '../components/DiffViewer'
 import { FileSidebar } from '../components/FileSidebar'
@@ -8,7 +8,7 @@ import { ScoreGauge } from '../components/ScoreGauge'
 import { SeverityBadge } from '../components/SeverityBadge'
 import { CommentCard } from '../components/CommentCard'
 import { parseDiff } from '../lib/parseDiff'
-import type { Severity } from '../api/types'
+import type { Severity, ReviewEvent } from '../api/types'
 
 type ViewMode = 'diff' | 'list'
 
@@ -20,6 +20,7 @@ export function ReviewView() {
   const [viewMode, setViewMode] = useState<ViewMode>('diff')
   const [severityFilter, setSeverityFilter] = useState<Set<Severity>>(new Set(['Error', 'Warning', 'Info', 'Suggestion']))
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
+  const [showEvent, setShowEvent] = useState(false)
 
   const diffFiles = useMemo(() => {
     if (!review?.diff_content) return []
@@ -167,8 +168,22 @@ export function ReviewView() {
                 <span className="font-code text-text-muted/50">{review.id.slice(0, 8)}</span>
               </div>
             </div>
+            {review.event && (
+              <button
+                onClick={() => setShowEvent(v => !v)}
+                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-text-muted hover:text-text-primary hover:bg-surface-2 transition-colors"
+                title="Toggle event details"
+              >
+                <Activity size={12} />
+                <span>{formatDuration(review.event.duration_ms)}</span>
+                <ChevronDown size={10} className={`transition-transform ${showEvent ? 'rotate-180' : ''}`} />
+              </button>
+            )}
           </div>
         )}
+
+        {/* Wide event panel */}
+        {showEvent && review.event && <EventPanel event={review.event} />}
 
         {/* Toolbar */}
         <div className="px-3 py-2 border-b border-border bg-surface flex items-center gap-2">
@@ -274,6 +289,89 @@ export function ReviewView() {
               )}
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+  return `${(ms / 60_000).toFixed(1)}m`
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function EventPanel({ event }: { event: ReviewEvent }) {
+  const stats = [
+    { icon: Clock, label: 'Total', value: formatDuration(event.duration_ms) },
+    ...(event.llm_total_ms != null
+      ? [{ icon: Cpu, label: 'LLM', value: formatDuration(event.llm_total_ms) }]
+      : []),
+    ...(event.diff_fetch_ms != null && event.diff_fetch_ms > 0
+      ? [{ icon: GitBranch, label: 'Diff fetch', value: formatDuration(event.diff_fetch_ms) }]
+      : []),
+  ]
+
+  return (
+    <div className="border-b border-border bg-surface-1/50 px-4 py-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-3 text-[11px]">
+        {/* Timing */}
+        <div>
+          <div className="text-text-muted mb-1.5 uppercase tracking-wider font-medium">Timing</div>
+          {stats.map(s => (
+            <div key={s.label} className="flex items-center gap-1.5 text-text-secondary mb-0.5">
+              <s.icon size={10} className="text-text-muted" />
+              <span className="text-text-muted">{s.label}</span>
+              <span className="font-code font-medium text-text-primary">{s.value}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Diff Stats */}
+        <div>
+          <div className="text-text-muted mb-1.5 uppercase tracking-wider font-medium">Diff</div>
+          <div className="text-text-secondary space-y-0.5">
+            <div><span className="text-text-muted">Size:</span> <span className="font-code text-text-primary">{formatBytes(event.diff_bytes)}</span></div>
+            <div><span className="text-text-muted">Files:</span> <span className="font-code text-text-primary">{event.diff_files_reviewed}/{event.diff_files_total}</span> reviewed</div>
+            {event.diff_files_skipped > 0 && (
+              <div><span className="text-text-muted">Skipped:</span> <span className="font-code text-text-primary">{event.diff_files_skipped}</span></div>
+            )}
+          </div>
+        </div>
+
+        {/* Model */}
+        <div>
+          <div className="text-text-muted mb-1.5 uppercase tracking-wider font-medium">Model</div>
+          <div className="text-text-secondary space-y-0.5">
+            <div className="font-code text-text-primary truncate" title={event.model}>{event.model}</div>
+            {event.provider && <div><span className="text-text-muted">via</span> {event.provider}</div>}
+            {event.base_url && <div className="font-code text-text-muted truncate text-[10px]" title={event.base_url}>{event.base_url}</div>}
+          </div>
+        </div>
+
+        {/* Results / GitHub */}
+        <div>
+          <div className="text-text-muted mb-1.5 uppercase tracking-wider font-medium">Results</div>
+          <div className="text-text-secondary space-y-0.5">
+            {Object.entries(event.comments_by_severity).map(([sev, n]) => (
+              <div key={sev} className="flex items-center gap-1">
+                <SeverityBadge severity={sev as Severity} />
+                <span className="font-code text-text-primary">{n}</span>
+              </div>
+            ))}
+            {event.github_posted && (
+              <div className="flex items-center gap-1 mt-1 text-accent">
+                <GitBranch size={10} />
+                <span>Posted to PR #{event.github_pr}</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

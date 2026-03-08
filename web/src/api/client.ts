@@ -40,4 +40,18 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(updates),
     }),
+
+  testProvider: (req: import('./types').TestProviderRequest) =>
+    request<import('./types').TestProviderResponse>('/providers/test', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+
+  getGhStatus: () => request<import('./types').GhStatusResponse>('/gh/status'),
+
+  reviewDiff: (diffContent: string, title?: string) =>
+    request<{ id: string; status: string }>('/review', {
+      method: 'POST',
+      body: JSON.stringify({ diff_source: 'raw', diff_content: diffContent, title }),
+    }),
 }

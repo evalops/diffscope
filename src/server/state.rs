@@ -7,8 +7,60 @@ use serde::{Serialize, Deserialize};
 use crate::config::Config;
 use crate::core::comment::{Comment, ReviewSummary};
 
+/// A "wide event" capturing the full lifecycle of a single review operation.
+/// Emitted once at completion as a single structured log entry and stored
+/// alongside the review session for frontend display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewEvent {
+    // --- identity ---
+    pub review_id: String,
+    pub event_type: String, // "review.completed" | "review.failed" | "review.timeout"
+
+    // --- request ---
+    pub diff_source: String,
+    pub title: Option<String>,
+    pub model: String,
+    pub provider: Option<String>,
+    pub base_url: Option<String>,
+
+    // --- timing (ms) ---
+    pub duration_ms: u64,
+    pub diff_fetch_ms: Option<u64>,
+    pub llm_total_ms: Option<u64>,
+
+    // --- diff stats ---
+    pub diff_bytes: usize,
+    pub diff_files_total: usize,
+    pub diff_files_reviewed: usize,
+    pub diff_files_skipped: usize,
+
+    // --- results ---
+    pub comments_total: usize,
+    pub comments_by_severity: HashMap<String, usize>,
+    pub comments_by_category: HashMap<String, usize>,
+    pub overall_score: Option<f32>,
+
+    // --- ensemble / multi-pass ---
+    pub hotspots_detected: usize,
+    pub high_risk_files: usize,
+
+    // --- GitHub integration ---
+    pub github_posted: bool,
+    pub github_repo: Option<String>,
+    pub github_pr: Option<u32>,
+
+    // --- errors ---
+    pub error: Option<String>,
+}
+
 /// Maximum number of reviews to keep in memory. Oldest completed reviews are pruned.
 const MAX_REVIEWS: usize = 200;
+
+/// Reviews older than this (in seconds) are pruned regardless of status.
+const MAX_REVIEW_AGE_SECS: i64 = 86_400; // 24 hours
+
+/// Maximum allowed diff size in bytes (50 MB).
+pub const MAX_DIFF_SIZE: usize = 50 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewSession {
@@ -23,6 +75,8 @@ pub struct ReviewSession {
     pub error: Option<String>,
     #[serde(default)]
     pub diff_content: Option<String>,
+    #[serde(default)]
+    pub event: Option<ReviewEvent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -39,6 +93,8 @@ pub struct AppState {
     pub reviews: Arc<RwLock<HashMap<String, ReviewSession>>>,
     pub storage_path: PathBuf,
     pub config_path: PathBuf,
+    /// Shared HTTP client for GitHub API and provider tests (connection pooling).
+    pub http_client: reqwest::Client,
 }
 
 impl AppState {
@@ -50,16 +106,24 @@ impl AppState {
         let storage_path = data_dir.join("reviews.json");
         let config_path = data_dir.join("config.json");
 
+        // Load persisted reviews before creating the RwLock (avoids blocking_write inside runtime)
+        let reviews = Self::load_reviews_from_disk(&storage_path);
+
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .user_agent("diffscope")
+            .pool_max_idle_per_host(5)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         let state = Self {
             config: Arc::new(RwLock::new(config)),
             repo_path,
-            reviews: Arc::new(RwLock::new(HashMap::new())),
+            reviews: Arc::new(RwLock::new(reviews)),
             storage_path,
             config_path,
+            http_client,
         };
-
-        // Load persisted reviews (blocking is fine during startup, before server accepts)
-        state.load_reviews();
 
         Ok(state)
     }
@@ -142,39 +206,61 @@ impl AppState {
         });
     }
 
-    fn load_reviews(&self) {
-        if self.storage_path.exists() {
-            match std::fs::read_to_string(&self.storage_path) {
-                Ok(data) => match serde_json::from_str::<HashMap<String, ReviewSession>>(&data) {
-                    Ok(loaded) => {
-                        let mut reviews = self.reviews.blocking_write();
-                        *reviews = loaded;
-                        eprintln!("Loaded {} reviews from disk", reviews.len());
-                    }
-                    Err(e) => eprintln!("Failed to parse reviews.json: {}", e),
-                },
-                Err(e) => eprintln!("Failed to read reviews.json: {}", e),
+    fn load_reviews_from_disk(path: &std::path::Path) -> HashMap<String, ReviewSession> {
+        if !path.exists() {
+            return HashMap::new();
+        }
+        match std::fs::read_to_string(path) {
+            Ok(data) => match serde_json::from_str::<HashMap<String, ReviewSession>>(&data) {
+                Ok(loaded) => {
+                    eprintln!("Loaded {} reviews from disk", loaded.len());
+                    loaded
+                }
+                Err(e) => {
+                    eprintln!("Failed to parse reviews.json: {}", e);
+                    HashMap::new()
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed to read reviews.json: {}", e);
+                HashMap::new()
             }
         }
     }
 
-    /// Prune oldest completed reviews when over the limit.
+    /// Prune old and excess reviews.
     pub async fn prune_old_reviews(state: &Arc<AppState>) {
         let mut reviews = state.reviews.write().await;
-        if reviews.len() <= MAX_REVIEWS {
-            return;
-        }
-        // Collect completed review IDs sorted by started_at ascending (oldest first)
-        let mut completed: Vec<(String, i64)> = reviews
-            .iter()
-            .filter(|(_, r)| r.status == ReviewStatus::Complete || r.status == ReviewStatus::Failed)
-            .map(|(id, r)| (id.clone(), r.started_at))
-            .collect();
-        completed.sort_by_key(|(_, ts)| *ts);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
 
-        let to_remove = reviews.len() - MAX_REVIEWS;
-        for (id, _) in completed.into_iter().take(to_remove) {
-            reviews.remove(&id);
+        // Phase 1: Remove reviews older than MAX_REVIEW_AGE_SECS (including zombie Running/Pending)
+        let expired: Vec<String> = reviews
+            .iter()
+            .filter(|(_, r)| now - r.started_at > MAX_REVIEW_AGE_SECS)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &expired {
+            reviews.remove(id);
+        }
+
+        // Phase 2: If still over limit, prune oldest completed/failed
+        if reviews.len() > MAX_REVIEWS {
+            let mut completed: Vec<(String, i64)> = reviews
+                .iter()
+                .filter(|(_, r)| {
+                    r.status == ReviewStatus::Complete || r.status == ReviewStatus::Failed
+                })
+                .map(|(id, r)| (id.clone(), r.started_at))
+                .collect();
+            completed.sort_by_key(|(_, ts)| *ts);
+
+            let to_remove = reviews.len() - MAX_REVIEWS;
+            for (id, _) in completed.into_iter().take(to_remove) {
+                reviews.remove(&id);
+            }
         }
     }
 }

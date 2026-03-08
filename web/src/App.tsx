@@ -8,6 +8,7 @@ import { History } from './pages/History'
 import { Analytics } from './pages/Analytics'
 import { Settings } from './pages/Settings'
 import { Doctor } from './pages/Doctor'
+import { Repos } from './pages/Repos'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,6 +31,7 @@ export default function App() {
               <Route path="/history" element={<History />} />
               <Route path="/analytics" element={<Analytics />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/repos" element={<Repos />} />
               <Route path="/doctor" element={<Doctor />} />
               <Route path="/docs" element={
                 <div className="p-6 max-w-3xl mx-auto">

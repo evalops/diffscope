@@ -91,6 +91,11 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .route("/doctor", get(api::get_doctor))
         .route("/config", get(api::get_config))
         .route("/config", put(api::update_config))
+        .route("/providers/test", post(api::test_provider))
+        .route("/gh/status", get(api::get_gh_status))
+        .route("/gh/repos", get(api::get_gh_repos))
+        .route("/gh/prs", get(api::get_gh_prs))
+        .route("/gh/review", post(api::start_pr_review))
         .with_state(state.clone());
 
     let app = Router::new()

@@ -35,6 +35,33 @@ export interface ReviewSummary {
   recommendations: string[]
 }
 
+export interface ReviewEvent {
+  review_id: string
+  event_type: string
+  diff_source: string
+  title?: string
+  model: string
+  provider?: string
+  base_url?: string
+  duration_ms: number
+  diff_fetch_ms?: number
+  llm_total_ms?: number
+  diff_bytes: number
+  diff_files_total: number
+  diff_files_reviewed: number
+  diff_files_skipped: number
+  comments_total: number
+  comments_by_severity: Record<string, number>
+  comments_by_category: Record<string, number>
+  overall_score?: number
+  hotspots_detected: number
+  high_risk_files: number
+  github_posted: boolean
+  github_repo?: string
+  github_pr?: number
+  error?: string
+}
+
 export interface ReviewSession {
   id: string
   status: ReviewStatus
@@ -46,6 +73,7 @@ export interface ReviewSession {
   files_reviewed: number
   error?: string
   diff_content?: string
+  event?: ReviewEvent
 }
 
 export interface StatusResponse {
@@ -106,4 +134,28 @@ export interface DiffLine {
   content: string
   oldNumber?: number
   newNumber?: number
+}
+
+export interface ProviderConfig {
+  api_key?: string
+  base_url?: string
+  enabled: boolean
+}
+
+export interface TestProviderRequest {
+  provider: string
+  api_key?: string
+  base_url?: string
+}
+
+export interface TestProviderResponse {
+  ok: boolean
+  message: string
+  models: string[]
+}
+
+export interface GhStatusResponse {
+  authenticated: boolean
+  username?: string
+  scopes: string[]
 }

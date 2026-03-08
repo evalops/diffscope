@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { Home, Settings, Stethoscope, ScrollText, GitCompareArrows, BarChart3, BookOpen } from 'lucide-react'
+import { Home, Settings, Stethoscope, ScrollText, GitCompareArrows, BarChart3, BookOpen, GitPullRequestDraft } from 'lucide-react'
 import { useStatus } from '../api/hooks'
 
 const sections = [
@@ -12,6 +12,7 @@ const sections = [
     label: 'REVIEW',
     items: [
       { to: '/history', icon: ScrollText, label: 'Logs' },
+      { to: '/repos', icon: GitPullRequestDraft, label: 'Repos' },
       { to: '/analytics', icon: BarChart3, label: 'Analytics' },
       { to: '/settings', icon: Settings, label: 'Settings' },
     ],
