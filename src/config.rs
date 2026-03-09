@@ -968,7 +968,7 @@ impl Config {
 }
 
 fn default_model() -> String {
-    "anthropic/claude-sonnet-4.6".to_string()
+    "claude-sonnet-4-6".to_string()
 }
 
 fn default_temperature() -> f32 {

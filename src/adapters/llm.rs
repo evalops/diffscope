@@ -26,7 +26,7 @@ pub struct ModelConfig {
 impl Default for ModelConfig {
     fn default() -> Self {
         Self {
-            model_name: "anthropic/claude-sonnet-4.6".to_string(),
+            model_name: "claude-sonnet-4-6".to_string(),
             api_key: None,
             base_url: None,
             temperature: 0.2,
@@ -98,13 +98,26 @@ pub fn create_adapter(config: &ModelConfig) -> Result<Box<dyn LLMAdapter>> {
         };
     }
 
-    // OpenRouter-style model IDs (vendor/model)
+    // Vendor-prefixed model IDs (vendor/model)
     if config.model_name.contains('/') {
-        let mut or_config = config;
-        if or_config.base_url.is_none() {
-            or_config.base_url = Some("https://openrouter.ai/api/v1".to_string());
+        let (vendor, model) = config.model_name.split_once('/').unwrap();
+        let model = model.to_string();
+        match vendor {
+            "anthropic" => {
+                // Route anthropic/ prefix directly to the Anthropic adapter
+                let mut anth_config = config;
+                anth_config.model_name = model;
+                return Ok(Box::new(crate::adapters::AnthropicAdapter::new(anth_config)?));
+            }
+            _ => {
+                // Other vendor prefixes (e.g. openai/, meta-llama/) → OpenRouter
+                let mut or_config = config;
+                if or_config.base_url.is_none() {
+                    or_config.base_url = Some("https://openrouter.ai/api/v1".to_string());
+                }
+                return Ok(Box::new(crate::adapters::OpenAIAdapter::new(or_config)?));
+            }
         }
-        return Ok(Box::new(crate::adapters::OpenAIAdapter::new(or_config)?));
     }
 
     // Model-name heuristic
@@ -307,9 +320,18 @@ mod tests {
     }
 
     #[test]
+    fn test_create_adapter_anthropic_vendor_prefix() {
+        // anthropic/ prefix should route to AnthropicAdapter, not OpenRouter
+        let config = local_config("anthropic/claude-sonnet-4-6");
+        let adapter = create_adapter(&config).unwrap();
+        // The adapter strips the vendor prefix
+        assert_eq!(adapter.model_name(), "claude-sonnet-4-6");
+    }
+
+    #[test]
     fn test_model_config_default() {
         let config = ModelConfig::default();
-        assert_eq!(config.model_name, "anthropic/claude-sonnet-4.6");
+        assert_eq!(config.model_name, "claude-sonnet-4-6");
         assert!(config.api_key.is_none());
         assert!(config.base_url.is_none());
         assert!((config.temperature - 0.2).abs() < f32::EPSILON);

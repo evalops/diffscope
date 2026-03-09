@@ -473,7 +473,7 @@ export function Settings() {
         </div>
 
         <div className="space-y-3 border-t border-border-subtle pt-3">
-          {field('Model name', 'model', 'text', 'anthropic/claude-sonnet-4.6', 'OpenRouter: vendor/model-name')}
+          {field('Model name', 'model', 'text', 'claude-sonnet-4-6', 'Direct: claude-*, gpt-* | OpenRouter: vendor/model')}
           {selectField('Adapter', 'adapter', [
             { value: '', label: 'Auto-detect' },
             { value: 'openai', label: 'OpenAI (direct)' },

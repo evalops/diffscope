@@ -26,7 +26,7 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    #[arg(long, global = true, default_value = "anthropic/claude-sonnet-4.6")]
+    #[arg(long, global = true, default_value = "claude-sonnet-4-6")]
     model: String,
 
     #[arg(

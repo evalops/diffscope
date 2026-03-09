@@ -33,7 +33,16 @@ FROM alpine:3.19
 
 RUN apk add --no-cache ca-certificates git
 
+RUN addgroup -g 1000 diffscope && \
+    adduser -u 1000 -G diffscope -h /home/diffscope -s /bin/sh -D diffscope && \
+    mkdir -p /home/diffscope/.local/share/diffscope \
+             /home/diffscope/.diffscope && \
+    chown -R diffscope:diffscope /home/diffscope
+
 COPY --from=builder /app/target/release/diffscope /usr/local/bin/diffscope
+
+USER diffscope
+WORKDIR /home/diffscope
 
 EXPOSE 3000
 
