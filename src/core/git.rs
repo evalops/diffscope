@@ -34,10 +34,7 @@ pub fn validate_ref_name(name: &str) -> Result<()> {
     }
 
     if name.ends_with('/') || name.ends_with('.') {
-        anyhow::bail!(
-            "Invalid ref name '{}': must not end with '/' or '.'",
-            name
-        );
+        anyhow::bail!("Invalid ref name '{}': must not end with '/' or '.'", name);
     }
 
     Ok(())

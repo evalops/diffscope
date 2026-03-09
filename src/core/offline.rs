@@ -177,11 +177,7 @@ impl OfflineModelManager {
         ];
 
         for preferred in &preferred_order {
-            if let Some(model) = self
-                .models
-                .iter()
-                .find(|m| m.name.contains(preferred))
-            {
+            if let Some(model) = self.models.iter().find(|m| m.name.contains(preferred)) {
                 return Some(model);
             }
         }
@@ -238,8 +234,7 @@ impl OfflineModelManager {
         });
 
         if let Some(ref quant) = config.quantization {
-            payload["options"]["quantization"] =
-                serde_json::Value::String(quant.clone());
+            payload["options"]["quantization"] = serde_json::Value::String(quant.clone());
         }
 
         if let Some(gpu) = config.gpu_layers {
@@ -272,8 +267,7 @@ impl OfflineModelManager {
         }
 
         if let Some(ref quant) = config.quantization {
-            payload["options"]["quantization"] =
-                serde_json::Value::String(quant.clone());
+            payload["options"]["quantization"] = serde_json::Value::String(quant.clone());
         }
 
         if let Some(gpu) = config.gpu_layers {
@@ -305,9 +299,7 @@ impl OfflineModelManager {
         }
 
         let body: serde_json::Value = response.json().await?;
-        let parameters = body
-            .get("parameters")
-            .and_then(|p| p.as_str());
+        let parameters = body.get("parameters").and_then(|p| p.as_str());
 
         Ok(parse_num_ctx_from_params(parameters))
     }
@@ -623,7 +615,10 @@ mod tests {
     #[test]
     fn test_generate_url() {
         let manager = OfflineModelManager::new("http://localhost:11434");
-        assert_eq!(manager.generate_url(), "http://localhost:11434/api/generate");
+        assert_eq!(
+            manager.generate_url(),
+            "http://localhost:11434/api/generate"
+        );
     }
 
     #[test]
@@ -774,7 +769,9 @@ mod tests {
         };
         let errors = config.validate();
         assert!(
-            errors.iter().any(|e| e.contains("URL") || e.contains("url")),
+            errors
+                .iter()
+                .any(|e| e.contains("URL") || e.contains("url")),
             "Should flag invalid URL format, got: {:?}",
             errors
         );
@@ -814,12 +811,8 @@ mod tests {
         let manager = OfflineModelManager::new("http://localhost:11434");
         let config = OfflineConfig::default();
 
-        let payload = manager.build_chat_request_payload(
-            "llama3.2",
-            "Review this code",
-            None,
-            &config,
-        );
+        let payload =
+            manager.build_chat_request_payload("llama3.2", "Review this code", None, &config);
 
         let messages = payload["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 1);

@@ -1182,7 +1182,12 @@ fn path_to_uri(path: &Path) -> Result<String> {
 fn url_encode(segment: &str) -> String {
     let mut out = String::new();
     for byte in segment.bytes() {
-        if byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' || byte == b'.' || byte == b'~' {
+        if byte.is_ascii_alphanumeric()
+            || byte == b'-'
+            || byte == b'_'
+            || byte == b'.'
+            || byte == b'~'
+        {
             out.push(byte as char);
         } else {
             out.push_str(&format!("%{:02X}", byte));

@@ -387,7 +387,6 @@ impl Config {
         // Return default config if no file found
         Ok(Config::default())
     }
-
 }
 
 /// CLI overrides collected from command-line arguments.
@@ -423,26 +422,56 @@ impl Config {
 
     /// Apply CLI overrides to config. Only overrides fields that are Some/provided.
     pub fn apply_cli_overrides(&mut self, cli: CliOverrides) {
-        if let Some(v) = cli.temperature { self.temperature = v; }
-        if let Some(v) = cli.max_tokens { self.max_tokens = v; }
-        if let Some(v) = cli.strictness { self.strictness = v; }
-        if let Some(v) = cli.comment_types { self.comment_types = v; }
-        if let Some(v) = cli.openai_responses { self.openai_use_responses = Some(v); }
-        if let Some(v) = cli.base_url { self.base_url = Some(v); }
-        if let Some(v) = cli.api_key { self.api_key = Some(v); }
-        if let Some(v) = cli.adapter { self.adapter = Some(v); }
+        if let Some(v) = cli.temperature {
+            self.temperature = v;
+        }
+        if let Some(v) = cli.max_tokens {
+            self.max_tokens = v;
+        }
+        if let Some(v) = cli.strictness {
+            self.strictness = v;
+        }
+        if let Some(v) = cli.comment_types {
+            self.comment_types = v;
+        }
+        if let Some(v) = cli.openai_responses {
+            self.openai_use_responses = Some(v);
+        }
+        if let Some(v) = cli.base_url {
+            self.base_url = Some(v);
+        }
+        if let Some(v) = cli.api_key {
+            self.api_key = Some(v);
+        }
+        if let Some(v) = cli.adapter {
+            self.adapter = Some(v);
+        }
         if let Some(command) = cli.lsp_command {
             self.symbol_index = true;
             self.symbol_index_provider = "lsp".to_string();
             self.symbol_index_lsp_command = Some(command);
         }
-        if let Some(v) = cli.timeout { self.adapter_timeout_secs = Some(v); }
-        if let Some(v) = cli.max_retries { self.adapter_max_retries = Some(v); }
-        if let Some(v) = cli.file_change_limit { self.file_change_limit = Some(v); }
-        if let Some(v) = cli.output_language { self.output_language = Some(v); }
-        if let Some(v) = cli.vault_addr { self.vault_addr = Some(v); }
-        if let Some(v) = cli.vault_path { self.vault_path = Some(v); }
-        if let Some(v) = cli.vault_key { self.vault_key = Some(v); }
+        if let Some(v) = cli.timeout {
+            self.adapter_timeout_secs = Some(v);
+        }
+        if let Some(v) = cli.max_retries {
+            self.adapter_max_retries = Some(v);
+        }
+        if let Some(v) = cli.file_change_limit {
+            self.file_change_limit = Some(v);
+        }
+        if let Some(v) = cli.output_language {
+            self.output_language = Some(v);
+        }
+        if let Some(v) = cli.vault_addr {
+            self.vault_addr = Some(v);
+        }
+        if let Some(v) = cli.vault_path {
+            self.vault_path = Some(v);
+        }
+        if let Some(v) = cli.vault_key {
+            self.vault_key = Some(v);
+        }
     }
 
     pub fn normalize(&mut self) {
@@ -471,10 +500,7 @@ impl Config {
                         );
                         self.base_url = None;
                     } else if parsed.host().is_none() {
-                        warn!(
-                            "base_url '{}' has no valid host, ignoring",
-                            raw_url
-                        );
+                        warn!("base_url '{}' has no valid host, ignoring", raw_url);
                         self.base_url = None;
                     }
                 }
@@ -512,7 +538,10 @@ impl Config {
         }
 
         if self.max_tokens == 0 {
-            warn!("max_tokens is 0, resetting to default {}", default_max_tokens());
+            warn!(
+                "max_tokens is 0, resetting to default {}",
+                default_max_tokens()
+            );
             self.max_tokens = default_max_tokens();
         } else if self.max_tokens > 128_000 {
             warn!(
@@ -840,8 +869,7 @@ impl Config {
 
         // No adapter set: try to detect provider from model name
         let model_lower = self.model.to_lowercase();
-        let detected = if model_lower.starts_with("anthropic/")
-            || model_lower.starts_with("claude")
+        let detected = if model_lower.starts_with("anthropic/") || model_lower.starts_with("claude")
         {
             Some("anthropic")
         } else if model_lower.starts_with("openai/")
@@ -878,7 +906,11 @@ impl Config {
         }
 
         // Fall back to top-level fields
-        (self.api_key.clone(), self.base_url.clone(), self.adapter.clone())
+        (
+            self.api_key.clone(),
+            self.base_url.clone(),
+            self.adapter.clone(),
+        )
     }
 
     /// Try to resolve the API key from Vault if Vault is configured and api_key is not set.
@@ -910,7 +942,9 @@ impl Config {
     pub fn is_local_endpoint(&self) -> bool {
         match self.base_url.as_deref() {
             Some(url) => {
-                url.contains("localhost") || url.contains("127.0.0.1") || url.contains("0.0.0.0")
+                url.contains("localhost")
+                    || url.contains("127.0.0.1")
+                    || url.contains("0.0.0.0")
                     || url.contains("[::1]")
                     || (!url.contains("openai.com") && !url.contains("anthropic.com"))
             }
@@ -928,8 +962,7 @@ impl Config {
             }
         } else {
             // Path prefix matching with component boundary check
-            path == pattern
-                || path.starts_with(&format!("{}/", pattern.trim_end_matches('/')))
+            path == pattern || path.starts_with(&format!("{}/", pattern.trim_end_matches('/')))
         }
     }
 }
@@ -1143,10 +1176,7 @@ mod tests {
             ..Config::default()
         };
         config.normalize();
-        assert_eq!(
-            config.base_url.as_deref(),
-            Some("http://localhost:11434")
-        );
+        assert_eq!(config.base_url.as_deref(), Some("http://localhost:11434"));
     }
 
     #[test]
@@ -1361,7 +1391,10 @@ mod tests {
             ..Config::default()
         };
         config.normalize();
-        assert_eq!(config.feedback_suppression_threshold, default_feedback_suppression_threshold());
+        assert_eq!(
+            config.feedback_suppression_threshold,
+            default_feedback_suppression_threshold()
+        );
     }
 
     #[test]
@@ -1415,6 +1448,9 @@ mod tests {
         });
         assert!(config.symbol_index);
         assert_eq!(config.symbol_index_provider, "lsp");
-        assert_eq!(config.symbol_index_lsp_command.as_deref(), Some("rust-analyzer"));
+        assert_eq!(
+            config.symbol_index_lsp_command.as_deref(),
+            Some("rust-analyzer")
+        );
     }
 }

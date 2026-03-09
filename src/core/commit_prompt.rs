@@ -143,7 +143,8 @@ mod tests {
 
     #[test]
     fn test_extract_commit_message_normal() {
-        let response = "<analysis>Changed auth</analysis>\n<commit>fix(auth): handle null token</commit>";
+        let response =
+            "<analysis>Changed auth</analysis>\n<commit>fix(auth): handle null token</commit>";
         assert_eq!(
             CommitPromptBuilder::extract_commit_message(response),
             "fix(auth): handle null token"

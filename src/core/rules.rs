@@ -186,8 +186,7 @@ fn path_matches(path: &str, pattern: &str) -> bool {
             .map(|pattern| pattern.matches(path))
             .unwrap_or(false)
     } else {
-        path == pattern
-            || path.starts_with(&format!("{}/", pattern.trim_end_matches('/')))
+        path == pattern || path.starts_with(&format!("{}/", pattern.trim_end_matches('/')))
     }
 }
 

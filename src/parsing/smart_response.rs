@@ -284,19 +284,43 @@ TAGS: auth, security
 
     #[test]
     fn parse_smart_severity_maps_correctly() {
-        assert_eq!(parse_smart_severity("CRITICAL"), Some(core::comment::Severity::Error));
-        assert_eq!(parse_smart_severity("high"), Some(core::comment::Severity::Warning));
-        assert_eq!(parse_smart_severity("Medium"), Some(core::comment::Severity::Info));
-        assert_eq!(parse_smart_severity("low"), Some(core::comment::Severity::Suggestion));
+        assert_eq!(
+            parse_smart_severity("CRITICAL"),
+            Some(core::comment::Severity::Error)
+        );
+        assert_eq!(
+            parse_smart_severity("high"),
+            Some(core::comment::Severity::Warning)
+        );
+        assert_eq!(
+            parse_smart_severity("Medium"),
+            Some(core::comment::Severity::Info)
+        );
+        assert_eq!(
+            parse_smart_severity("low"),
+            Some(core::comment::Severity::Suggestion)
+        );
         assert_eq!(parse_smart_severity("unknown"), None);
     }
 
     #[test]
     fn parse_smart_category_maps_correctly() {
-        assert_eq!(parse_smart_category("security"), Some(core::comment::Category::Security));
-        assert_eq!(parse_smart_category("Performance"), Some(core::comment::Category::Performance));
-        assert_eq!(parse_smart_category("BestPractice"), Some(core::comment::Category::BestPractice));
-        assert_eq!(parse_smart_category("best practice"), Some(core::comment::Category::BestPractice));
+        assert_eq!(
+            parse_smart_category("security"),
+            Some(core::comment::Category::Security)
+        );
+        assert_eq!(
+            parse_smart_category("Performance"),
+            Some(core::comment::Category::Performance)
+        );
+        assert_eq!(
+            parse_smart_category("BestPractice"),
+            Some(core::comment::Category::BestPractice)
+        );
+        assert_eq!(
+            parse_smart_category("best practice"),
+            Some(core::comment::Category::BestPractice)
+        );
         assert_eq!(parse_smart_category("unknown"), None);
     }
 
@@ -319,9 +343,18 @@ TAGS: auth, security
 
     #[test]
     fn parse_smart_effort_maps_correctly() {
-        assert_eq!(parse_smart_effort("low"), Some(core::comment::FixEffort::Low));
-        assert_eq!(parse_smart_effort("MEDIUM"), Some(core::comment::FixEffort::Medium));
-        assert_eq!(parse_smart_effort("High"), Some(core::comment::FixEffort::High));
+        assert_eq!(
+            parse_smart_effort("low"),
+            Some(core::comment::FixEffort::Low)
+        );
+        assert_eq!(
+            parse_smart_effort("MEDIUM"),
+            Some(core::comment::FixEffort::Medium)
+        );
+        assert_eq!(
+            parse_smart_effort("High"),
+            Some(core::comment::FixEffort::High)
+        );
         assert_eq!(parse_smart_effort("nope"), None);
     }
 

@@ -10,7 +10,10 @@ use crate::core;
 
 pub type PatternRepositoryMap = HashMap<String, PathBuf>;
 
-pub fn resolve_pattern_repositories(config: &config::Config, repo_root: &Path) -> PatternRepositoryMap {
+pub fn resolve_pattern_repositories(
+    config: &config::Config,
+    repo_root: &Path,
+) -> PatternRepositoryMap {
     let mut resolved = HashMap::new();
     if config.pattern_repositories.is_empty() {
         return resolved;

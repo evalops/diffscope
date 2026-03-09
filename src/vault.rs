@@ -44,10 +44,7 @@ pub async fn fetch_secret(config: &VaultConfig) -> Result<String> {
         request = request.header("X-Vault-Namespace", ns);
     }
 
-    let response = request
-        .send()
-        .await
-        .context("Failed to connect to Vault")?;
+    let response = request.send().await.context("Failed to connect to Vault")?;
 
     let status = response.status();
     if !status.is_success() {
@@ -70,17 +67,13 @@ pub async fn fetch_secret(config: &VaultConfig) -> Result<String> {
         .await
         .context("Failed to parse Vault KV v2 response")?;
 
-    let value = vault_response
-        .data
-        .data
-        .get(&config.key)
-        .with_context(|| {
-            let available: Vec<&String> = vault_response.data.data.keys().collect();
-            format!(
-                "Key '{}' not found in Vault secret at {}/{}. Available keys: {:?}",
-                config.key, config.mount, config.path, available
-            )
-        })?;
+    let value = vault_response.data.data.get(&config.key).with_context(|| {
+        let available: Vec<&String> = vault_response.data.data.keys().collect();
+        format!(
+            "Key '{}' not found in Vault secret at {}/{}. Available keys: {:?}",
+            config.key, config.mount, config.path, available
+        )
+    })?;
 
     match value.as_str() {
         Some(s) => Ok(s.to_string()),
@@ -158,8 +151,14 @@ mod tests {
     #[test]
     fn try_build_vault_config_returns_none_without_path() {
         std::env::remove_var("VAULT_PATH");
-        let result =
-            try_build_vault_config(Some("http://vault:8200"), Some("tok"), None, None, None, None);
+        let result = try_build_vault_config(
+            Some("http://vault:8200"),
+            Some("tok"),
+            None,
+            None,
+            None,
+            None,
+        );
         assert!(result.is_none());
     }
 
@@ -266,11 +265,7 @@ mod tests {
         assert!(result.is_err());
         let err = format!("{:#}", result.unwrap_err());
         assert!(err.contains("404"), "Should contain 404: {}", err);
-        assert!(
-            err.contains("not found"),
-            "Should contain hint: {}",
-            err
-        );
+        assert!(err.contains("not found"), "Should contain hint: {}", err);
         mock.assert_async().await;
     }
 

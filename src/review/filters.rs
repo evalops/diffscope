@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use tracing::info;
 
+use super::feedback::FeedbackStore;
 use crate::config;
 use crate::core;
-use super::feedback::FeedbackStore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReviewCommentType {
@@ -249,8 +249,18 @@ mod tests {
     #[test]
     fn comment_type_filter_empty_enabled_keeps_all() {
         let comments = vec![
-            build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Error, 0.9),
-            build_comment("c2", core::comment::Category::Style, core::comment::Severity::Info, 0.8),
+            build_comment(
+                "c1",
+                core::comment::Category::Bug,
+                core::comment::Severity::Error,
+                0.9,
+            ),
+            build_comment(
+                "c2",
+                core::comment::Category::Style,
+                core::comment::Severity::Info,
+                0.8,
+            ),
         ];
         let filtered = apply_comment_type_filter(comments, &[]);
         assert_eq!(filtered.len(), 2);
@@ -305,8 +315,15 @@ mod tests {
             )]),
         };
 
-        let comment = build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Error, 0.9);
-        assert!(!should_adaptively_suppress_with_thresholds(&comment, &feedback, 3, 2));
+        let comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.9,
+        );
+        assert!(!should_adaptively_suppress_with_thresholds(
+            &comment, &feedback, 3, 2
+        ));
     }
 
     #[test]
@@ -323,15 +340,32 @@ mod tests {
             )]),
         };
 
-        let comment = build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Warning, 0.9);
-        assert!(!should_adaptively_suppress_with_thresholds(&comment, &feedback, 3, 2));
+        let comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+        assert!(!should_adaptively_suppress_with_thresholds(
+            &comment, &feedback, 3, 2
+        ));
     }
 
     #[test]
     fn confidence_threshold_filters_low_confidence() {
         let comments = vec![
-            build_comment("high", core::comment::Category::Bug, core::comment::Severity::Error, 0.9),
-            build_comment("low", core::comment::Category::Bug, core::comment::Severity::Info, 0.3),
+            build_comment(
+                "high",
+                core::comment::Category::Bug,
+                core::comment::Severity::Error,
+                0.9,
+            ),
+            build_comment(
+                "low",
+                core::comment::Category::Bug,
+                core::comment::Severity::Info,
+                0.3,
+            ),
         ];
         let filtered = apply_confidence_threshold(comments, 0.5);
         assert_eq!(filtered.len(), 1);
@@ -340,9 +374,12 @@ mod tests {
 
     #[test]
     fn confidence_threshold_zero_keeps_all() {
-        let comments = vec![
-            build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Error, 0.1),
-        ];
+        let comments = vec![build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.1,
+        )];
         let filtered = apply_confidence_threshold(comments, 0.0);
         assert_eq!(filtered.len(), 1);
     }
@@ -364,26 +401,49 @@ mod tests {
 
     #[test]
     fn classify_comment_type_style() {
-        let comment = build_comment("c1", core::comment::Category::Style, core::comment::Severity::Info, 0.9);
+        let comment = build_comment(
+            "c1",
+            core::comment::Category::Style,
+            core::comment::Severity::Info,
+            0.9,
+        );
         assert_eq!(classify_comment_type(&comment), ReviewCommentType::Style);
     }
 
     #[test]
     fn classify_comment_type_informational() {
-        let comment = build_comment("c1", core::comment::Category::Documentation, core::comment::Severity::Info, 0.9);
-        assert_eq!(classify_comment_type(&comment), ReviewCommentType::Informational);
+        let comment = build_comment(
+            "c1",
+            core::comment::Category::Documentation,
+            core::comment::Severity::Info,
+            0.9,
+        );
+        assert_eq!(
+            classify_comment_type(&comment),
+            ReviewCommentType::Informational
+        );
     }
 
     #[test]
     fn classify_comment_type_syntax() {
-        let mut comment = build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Error, 0.9);
+        let mut comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.9,
+        );
         comment.content = "This has a syntax error".to_string();
         assert_eq!(classify_comment_type(&comment), ReviewCommentType::Syntax);
     }
 
     #[test]
     fn classify_comment_type_logic_default() {
-        let comment = build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Error, 0.9);
+        let comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.9,
+        );
         assert_eq!(classify_comment_type(&comment), ReviewCommentType::Logic);
     }
 
@@ -393,8 +453,18 @@ mod tests {
         feedback.suppress.insert("c1".to_string());
 
         let comments = vec![
-            build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Error, 0.9),
-            build_comment("c2", core::comment::Category::Bug, core::comment::Severity::Error, 0.9),
+            build_comment(
+                "c1",
+                core::comment::Category::Bug,
+                core::comment::Severity::Error,
+                0.9,
+            ),
+            build_comment(
+                "c2",
+                core::comment::Category::Bug,
+                core::comment::Severity::Error,
+                0.9,
+            ),
         ];
 
         let filtered = apply_feedback_suppression_with_thresholds(comments, &feedback, 3, 2);

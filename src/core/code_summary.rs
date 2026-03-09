@@ -114,7 +114,11 @@ pub fn summarize_code_heuristic(
     if !operations.is_empty() {
         summary_parts.push(format!(
             "performs: {}",
-            operations.into_iter().take(3).collect::<Vec<_>>().join(", ")
+            operations
+                .into_iter()
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
 
@@ -172,8 +176,7 @@ pub fn summarize_file_symbols(
             continue;
         }
 
-        let summary =
-            summarize_code_heuristic(&name, &code, file_path, (start_line, end_line));
+        let summary = summarize_code_heuristic(&name, &code, file_path, (start_line, end_line));
         cache.insert(summary.clone());
         summaries.push(summary);
     }
@@ -233,10 +236,8 @@ fn detect_symbol_kind(code: &str, language: &str) -> &'static str {
 
 static RUST_PARAMS: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"fn\s+\w+\s*(?:<[^>]*>)?\s*\(((?:[^()]*|\([^()]*\))*)\)").unwrap());
-static PY_PARAMS: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"def\s+\w+\s*\(([^)]*)\)").unwrap());
-static JS_PARAMS: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"function\s+\w+\s*\(([^)]*)\)").unwrap());
+static PY_PARAMS: Lazy<Regex> = Lazy::new(|| Regex::new(r"def\s+\w+\s*\(([^)]*)\)").unwrap());
+static JS_PARAMS: Lazy<Regex> = Lazy::new(|| Regex::new(r"function\s+\w+\s*\(([^)]*)\)").unwrap());
 
 fn extract_parameters(code: &str, language: &str) -> Vec<String> {
     let pattern = match language {
@@ -258,8 +259,7 @@ fn extract_parameters(code: &str, language: &str) -> Vec<String> {
     }
 }
 
-static RUST_RETURN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r".*->\s*([^\{]+)").unwrap());
+static RUST_RETURN: Lazy<Regex> = Lazy::new(|| Regex::new(r".*->\s*([^\{]+)").unwrap());
 
 fn extract_return_type(code: &str, language: &str) -> Option<String> {
     match language {
@@ -275,7 +275,9 @@ fn extract_return_type(code: &str, language: &str) -> Option<String> {
             let first_line = code.lines().next().unwrap_or("");
             if first_line.contains("->") {
                 let parts: Vec<&str> = first_line.split("->").collect();
-                parts.get(1).map(|s| s.trim().trim_end_matches(':').to_string())
+                parts
+                    .get(1)
+                    .map(|s| s.trim().trim_end_matches(':').to_string())
             } else {
                 None
             }
@@ -284,8 +286,7 @@ fn extract_return_type(code: &str, language: &str) -> Option<String> {
     }
 }
 
-static DOCSTRING_RUST: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"///\s*(.+)").unwrap());
+static DOCSTRING_RUST: Lazy<Regex> = Lazy::new(|| Regex::new(r"///\s*(.+)").unwrap());
 fn extract_docstring(code: &str, language: &str) -> Option<String> {
     match language {
         "rs" => {
@@ -334,8 +335,8 @@ fn estimate_complexity(code: &str) -> usize {
     let mut complexity = 1;
     let lower = code.to_lowercase();
     for keyword in &[
-        "if ", "else ", "for ", "while ", "match ", "loop ", "elif ", "except ",
-        "catch ", "case ", "&&", "||",
+        "if ", "else ", "for ", "while ", "match ", "loop ", "elif ", "except ", "catch ", "case ",
+        "&&", "||",
     ] {
         complexity += lower.matches(keyword).count();
     }
@@ -378,12 +379,10 @@ static RUST_BLOCK: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?m)^\s*(?:pub\s+)?(?:async\s+)?(?:fn|struct|enum|trait)\s+([A-Za-z_]\w*)")
         .unwrap()
 });
-static PY_BLOCK: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?m)^(?:def|class)\s+([A-Za-z_]\w*)").unwrap()
-});
+static PY_BLOCK: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?m)^(?:def|class)\s+([A-Za-z_]\w*)").unwrap());
 static JS_BLOCK: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?m)^(?:export\s+)?(?:async\s+)?(?:function|class)\s+([A-Za-z_$]\w*)")
-        .unwrap()
+    Regex::new(r"(?m)^(?:export\s+)?(?:async\s+)?(?:function|class)\s+([A-Za-z_$]\w*)").unwrap()
 });
 
 fn extract_code_blocks(content: &str, language: &str) -> Vec<(String, String, usize, usize)> {
@@ -434,12 +433,8 @@ mod tests {
     }
     token.len() > 10 && token.starts_with(secret)
 }"#;
-        let summary = summarize_code_heuristic(
-            "validate_token",
-            code,
-            Path::new("auth.rs"),
-            (1, 6),
-        );
+        let summary =
+            summarize_code_heuristic("validate_token", code, Path::new("auth.rs"), (1, 6));
 
         assert_eq!(summary.symbol_name, "validate_token");
         assert!(summary.summary.contains("Function"));
@@ -450,8 +445,7 @@ mod tests {
     #[test]
     fn test_summarize_rust_struct() {
         let code = "pub struct Config {\n    pub name: String,\n    pub value: usize,\n}";
-        let summary =
-            summarize_code_heuristic("Config", code, Path::new("config.rs"), (1, 4));
+        let summary = summarize_code_heuristic("Config", code, Path::new("config.rs"), (1, 4));
 
         assert!(summary.summary.contains("Struct"));
     }
@@ -459,8 +453,7 @@ mod tests {
     #[test]
     fn test_summarize_python_function() {
         let code = "def process_data(items, threshold=0.5):\n    \"\"\"Process items above threshold.\"\"\"\n    return [i for i in items if i > threshold]\n";
-        let summary =
-            summarize_code_heuristic("process_data", code, Path::new("utils.py"), (1, 3));
+        let summary = summarize_code_heuristic("process_data", code, Path::new("utils.py"), (1, 3));
 
         assert!(summary.summary.contains("Function"));
         assert!(summary.summary.contains("process_data"));
@@ -730,7 +723,11 @@ mod tests {
         let code = "pub fn process(items: Vec<String>, callback: fn(u32) -> bool) -> Result<()> {";
         let params = extract_parameters(code, "rs");
         // [^)]* stops at the `)` inside fn(u32), truncating the callback param's type
-        assert!(!params.is_empty(), "Should extract params, got: {:?}", params);
+        assert!(
+            !params.is_empty(),
+            "Should extract params, got: {:?}",
+            params
+        );
         // callback param should have its full type including -> bool
         let callback_param = params.iter().find(|p| p.contains("callback"));
         assert!(
@@ -764,7 +761,10 @@ mod tests {
     fn test_extract_return_type_complex() {
         let code = "pub fn query(\n    db: &Database,\n) -> Result<Vec<String>, Error> {\n";
         let ret = extract_return_type(code, "rs");
-        assert!(ret.is_some(), "Should extract return type from multi-line signature");
+        assert!(
+            ret.is_some(),
+            "Should extract return type from multi-line signature"
+        );
         let ret_str = ret.unwrap();
         assert!(ret_str.contains("Result"), "Return type was: {ret_str}");
     }

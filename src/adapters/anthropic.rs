@@ -81,7 +81,6 @@ impl AnthropicAdapter {
             retry_config,
         })
     }
-
 }
 
 #[async_trait]
@@ -407,4 +406,3 @@ mod tests {
         assert!(result.is_ok());
     }
 }
-

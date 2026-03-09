@@ -43,9 +43,7 @@ pub async fn doctor_command(config: Config) -> Result<()> {
 
     // Endpoint reachability
     print!("Checking endpoint {}... ", base_url);
-    let client = Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
+    let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
 
     // Try Ollama /api/tags first
     let ollama_url = format!("{}/api/tags", base_url);
@@ -136,7 +134,10 @@ pub async fn doctor_command(config: Config) -> Result<()> {
                 if let Some(ctx_size) =
                     detect_model_context_window(&client, &base_url, &recommended.name).await
                 {
-                    println!("  Context window: {} tokens (detected from model)", ctx_size);
+                    println!(
+                        "  Context window: {} tokens (detected from model)",
+                        ctx_size
+                    );
                 }
             }
 
@@ -154,9 +155,7 @@ pub async fn doctor_command(config: Config) -> Result<()> {
             // Test inference
             let recommended_name = recommended.name.clone();
             print!("\nTesting model {}... ", recommended_name);
-            let test_client = Client::builder()
-                .timeout(Duration::from_secs(10))
-                .build()?;
+            let test_client = Client::builder().timeout(Duration::from_secs(10)).build()?;
             let test_start = std::time::Instant::now();
             let test_result =
                 test_model_inference(&test_client, &base_url, &recommended_name, endpoint_type)
@@ -165,8 +164,7 @@ pub async fn doctor_command(config: Config) -> Result<()> {
 
             match test_result {
                 Ok(response) => {
-                    let tokens_per_sec =
-                        estimate_tokens(&response) as f64 / elapsed.as_secs_f64();
+                    let tokens_per_sec = estimate_tokens(&response) as f64 / elapsed.as_secs_f64();
                     println!(
                         "OK ({:.1}s, ~{:.0} tok/s)",
                         elapsed.as_secs_f64(),
@@ -369,7 +367,10 @@ fn check_system_resources() {
                 let cpu = String::from_utf8_lossy(&output.stdout);
                 let cpu = cpu.trim();
                 if cpu.contains("Apple") {
-                    println!("  Chip: {} (unified memory, GPU acceleration available)", cpu);
+                    println!(
+                        "  Chip: {} (unified memory, GPU acceleration available)",
+                        cpu
+                    );
                 }
             }
         }
@@ -592,7 +593,8 @@ mod tests {
     #[tokio::test]
     async fn test_detect_context_window_from_parameters() {
         // Simulate Ollama /api/show response with parameters field
-        let json = r#"{"parameters":"stop [INST]\nstop [/INST]\nnum_ctx 4096\nrepeat_penalty 1.1"}"#;
+        let json =
+            r#"{"parameters":"stop [INST]\nstop [/INST]\nnum_ctx 4096\nrepeat_penalty 1.1"}"#;
         let value: serde_json::Value = serde_json::from_str(json).unwrap();
         let mut result = None;
         if let Some(params) = value.get("parameters").and_then(|p| p.as_str()) {

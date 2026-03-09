@@ -12,9 +12,8 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use super::state::{
-    AppState, ReviewSession, ReviewStatus,
-    ReviewEventBuilder, current_timestamp, count_diff_files, count_reviewed_files,
-    emit_wide_event, build_progress_callback,
+    build_progress_callback, count_diff_files, count_reviewed_files, current_timestamp,
+    emit_wide_event, AppState, ReviewEventBuilder, ReviewSession, ReviewStatus,
 };
 
 // ── OAuth Device Flow ──────────────────────────────────────────────────
@@ -50,29 +49,39 @@ pub async fn start_device_flow(
         .http_client
         .post("https://github.com/login/device/code")
         .header("Accept", "application/json")
-        .form(&[
-            ("client_id", client_id.as_str()),
-            ("scope", "repo"),
-        ])
+        .form(&[("client_id", client_id.as_str()), ("scope", "repo")])
         .send()
         .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("GitHub request failed: {}", e)))?;
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("GitHub request failed: {}", e),
+            )
+        })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err((StatusCode::BAD_GATEWAY, format!("GitHub returned {}: {}", status, body)));
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("GitHub returned {}: {}", status, body),
+        ));
     }
 
-    let body: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Failed to parse response: {}", e)))?;
+    let body: serde_json::Value = resp.json().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to parse response: {}", e),
+        )
+    })?;
 
     Ok(Json(DeviceFlowResponse {
         device_code: body["device_code"].as_str().unwrap_or("").to_string(),
         user_code: body["user_code"].as_str().unwrap_or("").to_string(),
-        verification_uri: body["verification_uri"].as_str().unwrap_or("https://github.com/login/device").to_string(),
+        verification_uri: body["verification_uri"]
+            .as_str()
+            .unwrap_or("https://github.com/login/device")
+            .to_string(),
         expires_in: body["expires_in"].as_u64().unwrap_or(900),
         interval: body["interval"].as_u64().unwrap_or(5),
     }))
@@ -121,12 +130,19 @@ pub async fn poll_device_flow(
         ])
         .send()
         .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("GitHub request failed: {}", e)))?;
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("GitHub request failed: {}", e),
+            )
+        })?;
 
-    let body: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Failed to parse response: {}", e)))?;
+    let body: serde_json::Value = resp.json().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to parse response: {}", e),
+        )
+    })?;
 
     // Check for errors (authorization_pending, slow_down, expired_token, etc.)
     if let Some(error) = body.get("error").and_then(|v| v.as_str()) {
@@ -141,7 +157,12 @@ pub async fn poll_device_flow(
     // Got an access token
     let access_token = body["access_token"]
         .as_str()
-        .ok_or_else(|| (StatusCode::BAD_GATEWAY, "No access_token in response".to_string()))?
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_GATEWAY,
+                "No access_token in response".to_string(),
+            )
+        })?
         .to_string();
 
     // Fetch user info with the new token
@@ -153,12 +174,14 @@ pub async fn poll_device_flow(
         .header("User-Agent", "DiffScope")
         .send()
         .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Failed to fetch user: {}", e)))?;
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to fetch user: {}", e),
+            )
+        })?;
 
-    let user: serde_json::Value = user_resp
-        .json()
-        .await
-        .unwrap_or_default();
+    let user: serde_json::Value = user_resp.json().await.unwrap_or_default();
 
     let username = user["login"].as_str().map(|s| s.to_string());
     let avatar_url = user["avatar_url"].as_str().map(|s| s.to_string());
@@ -181,9 +204,7 @@ pub async fn poll_device_flow(
 }
 
 /// DELETE /api/gh/auth — disconnect GitHub (clear token).
-pub async fn disconnect_github(
-    State(state): State<Arc<AppState>>,
-) -> Json<serde_json::Value> {
+pub async fn disconnect_github(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     {
         let mut config = state.config.write().await;
         config.github_token = None;
@@ -202,11 +223,12 @@ pub struct WebhookStatusResponse {
 }
 
 /// GET /api/gh/webhook/status — return webhook configuration status.
-pub async fn get_webhook_status(
-    State(state): State<Arc<AppState>>,
-) -> Json<WebhookStatusResponse> {
+pub async fn get_webhook_status(State(state): State<Arc<AppState>>) -> Json<WebhookStatusResponse> {
     let config = state.config.read().await;
-    let configured = config.github_webhook_secret.as_ref().is_some_and(|s| !s.is_empty());
+    let configured = config
+        .github_webhook_secret
+        .as_ref()
+        .is_some_and(|s| !s.is_empty());
     Json(WebhookStatusResponse {
         configured,
         url: "/api/webhooks/github".to_string(),
@@ -228,7 +250,10 @@ pub async fn handle_webhook(
                 .get("x-hub-signature-256")
                 .and_then(|v| v.to_str().ok())
                 .ok_or_else(|| {
-                    (StatusCode::UNAUTHORIZED, "Missing webhook signature".to_string())
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        "Missing webhook signature".to_string(),
+                    )
                 })?;
 
             verify_webhook_signature(secret, &body, signature)
@@ -261,9 +286,7 @@ pub async fn handle_webhook(
                     .as_str()
                     .unwrap_or("")
                     .to_string();
-                let pr_number = payload["pull_request"]["number"]
-                    .as_u64()
-                    .unwrap_or(0) as u32;
+                let pr_number = payload["pull_request"]["number"].as_u64().unwrap_or(0) as u32;
                 let head_sha = payload["pull_request"]["head"]["sha"]
                     .as_str()
                     .unwrap_or("")
@@ -280,27 +303,31 @@ pub async fn handle_webhook(
                 info!(repo = %repo, pr = pr_number, action = %action, "Auto-reviewing PR");
 
                 // Determine token to use: installation token (if app) or user token
-                let auth_token = if let (Some(app_id), Some(ref pkey)) = (github_app_id, &private_key) {
-                    // Get installation token for this repo
-                    let installation_id = payload["installation"]["id"]
-                        .as_u64()
-                        .ok_or_else(|| {
-                            (StatusCode::BAD_REQUEST, "No installation ID in webhook payload".to_string())
-                        })?;
-                    get_installation_token(&state.http_client, app_id, pkey, installation_id)
-                        .await
-                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-                } else {
-                    token.ok_or_else(|| {
-                        (StatusCode::BAD_REQUEST, "No GitHub token configured".to_string())
-                    })?
-                };
+                let auth_token =
+                    if let (Some(app_id), Some(ref pkey)) = (github_app_id, &private_key) {
+                        // Get installation token for this repo
+                        let installation_id =
+                            payload["installation"]["id"].as_u64().ok_or_else(|| {
+                                (
+                                    StatusCode::BAD_REQUEST,
+                                    "No installation ID in webhook payload".to_string(),
+                                )
+                            })?;
+                        get_installation_token(&state.http_client, app_id, pkey, installation_id)
+                            .await
+                            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+                    } else {
+                        token.ok_or_else(|| {
+                            (
+                                StatusCode::BAD_REQUEST,
+                                "No GitHub token configured".to_string(),
+                            )
+                        })?
+                    };
 
                 // Fetch diff and start review
-                let diff_url = format!(
-                    "https://api.github.com/repos/{}/pulls/{}",
-                    repo, pr_number,
-                );
+                let diff_url =
+                    format!("https://api.github.com/repos/{}/pulls/{}", repo, pr_number,);
                 let diff_resp = state
                     .http_client
                     .get(&diff_url)
@@ -309,12 +336,20 @@ pub async fn handle_webhook(
                     .header("User-Agent", "DiffScope")
                     .send()
                     .await
-                    .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Failed to fetch diff: {}", e)))?;
+                    .map_err(|e| {
+                        (
+                            StatusCode::BAD_GATEWAY,
+                            format!("Failed to fetch diff: {}", e),
+                        )
+                    })?;
 
                 if !diff_resp.status().is_success() {
                     let status = diff_resp.status();
                     let body = diff_resp.text().await.unwrap_or_default();
-                    return Err((StatusCode::BAD_GATEWAY, format!("GitHub returned {}: {}", status, body)));
+                    return Err((
+                        StatusCode::BAD_GATEWAY,
+                        format!("GitHub returned {}: {}", status, body),
+                    ));
                 }
 
                 let diff_content = diff_resp.text().await.unwrap_or_default();
@@ -337,7 +372,11 @@ pub async fn handle_webhook(
                     progress: None,
                 };
 
-                state.reviews.write().await.insert(review_id.clone(), session);
+                state
+                    .reviews
+                    .write()
+                    .await
+                    .insert(review_id.clone(), session);
 
                 // Spawn review task with check run creation
                 let state_clone = state.clone();
@@ -403,7 +442,11 @@ fn verify_webhook_signature(secret: &str, body: &str, signature: &str) -> Result
 /// Hex-encode bytes (avoids adding hex crate).
 mod hex {
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes.as_ref().iter().map(|b| format!("{:02x}", b)).collect()
+        bytes
+            .as_ref()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect()
     }
 }
 
@@ -608,7 +651,13 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
     let _permit = match state.review_semaphore.clone().acquire_owned().await {
         Ok(permit) => permit,
         Err(_) => {
-            AppState::fail_review(&state, &review_id, "Review semaphore closed".to_string(), None).await;
+            AppState::fail_review(
+                &state,
+                &review_id,
+                "Review semaphore closed".to_string(),
+                None,
+            )
+            .await;
             return;
         }
     };
@@ -636,9 +685,14 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
             .build();
         emit_wide_event(&event);
         AppState::complete_review(
-            &state, &review_id, Vec::new(),
-            CommentSynthesizer::generate_summary(&[]), 0, event,
-        ).await;
+            &state,
+            &review_id,
+            Vec::new(),
+            CommentSynthesizer::generate_summary(&[]),
+            0,
+            event,
+        )
+        .await;
         AppState::save_reviews_async(&state);
         return;
     }
@@ -681,7 +735,10 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
 
             // Create Check Run
             let check_title = if pr_title.is_empty() {
-                format!("DiffScope: {}/{}", summary.total_comments, summary.overall_score)
+                format!(
+                    "DiffScope: {}/{}",
+                    summary.total_comments, summary.overall_score
+                )
             } else {
                 format!("DiffScope: {} — {:.1}/10", pr_title, summary.overall_score)
             };
@@ -696,18 +753,25 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
             )
             .await;
 
-            let event = ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
-                .provider(provider.as_deref())
-                .base_url(base_url.as_deref())
-                .duration_ms(task_start.elapsed().as_millis() as u64)
-                .llm_total_ms(llm_ms)
-                .diff_stats(diff_bytes, diff_files_total, files_reviewed, diff_files_total.saturating_sub(files_reviewed))
-                .comments(&comments, Some(&summary))
-                .github(&repo, pr_number)
-                .github_posted(github_posted)
-                .build();
+            let event =
+                ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
+                    .provider(provider.as_deref())
+                    .base_url(base_url.as_deref())
+                    .duration_ms(task_start.elapsed().as_millis() as u64)
+                    .llm_total_ms(llm_ms)
+                    .diff_stats(
+                        diff_bytes,
+                        diff_files_total,
+                        files_reviewed,
+                        diff_files_total.saturating_sub(files_reviewed),
+                    )
+                    .comments(&comments, Some(&summary))
+                    .github(&repo, pr_number)
+                    .github_posted(github_posted)
+                    .build();
             emit_wide_event(&event);
-            AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event).await;
+            AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
+                .await;
         }
         Ok(Err(e)) => {
             let err_msg = format!("Review failed: {}", e);
@@ -755,7 +819,10 @@ mod tests {
         assert_eq!(hex::encode([0x00]), "00");
         assert_eq!(hex::encode([0xff]), "ff");
         assert_eq!(hex::encode([0xde, 0xad, 0xbe, 0xef]), "deadbeef");
-        assert_eq!(hex::encode([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]), "0123456789abcdef");
+        assert_eq!(
+            hex::encode([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]),
+            "0123456789abcdef"
+        );
     }
 
     #[test]

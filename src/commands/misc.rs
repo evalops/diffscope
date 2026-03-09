@@ -211,10 +211,7 @@ pub async fn feedback_command(
     Ok(())
 }
 
-fn apply_feedback_accept(
-    store: &mut review::FeedbackStore,
-    comments: &[core::Comment],
-) -> usize {
+fn apply_feedback_accept(store: &mut review::FeedbackStore, comments: &[core::Comment]) -> usize {
     let mut updated = 0;
     for comment in comments {
         let is_new = store.accept.insert(comment.id.clone());
@@ -229,10 +226,7 @@ fn apply_feedback_accept(
     updated
 }
 
-fn apply_feedback_reject(
-    store: &mut review::FeedbackStore,
-    comments: &[core::Comment],
-) -> usize {
+fn apply_feedback_reject(store: &mut review::FeedbackStore, comments: &[core::Comment]) -> usize {
     let mut updated = 0;
     for comment in comments {
         let is_new = store.suppress.insert(comment.id.clone());
@@ -428,7 +422,9 @@ mod tests {
             apply_feedback_accept(&mut store, &comments);
         }
 
-        let key = review::classify_comment_type(&comments[0]).as_str().to_string();
+        let key = review::classify_comment_type(&comments[0])
+            .as_str()
+            .to_string();
         let stats = &store.by_comment_type[&key];
         assert_eq!(
             stats.accepted, 1,

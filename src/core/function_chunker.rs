@@ -42,7 +42,10 @@ pub struct FunctionBoundary {
 
 /// Chunk a unified diff by function boundaries.
 /// Each hunk's changes are attributed to the enclosing function.
-pub fn chunk_diff_by_functions(diff: &UnifiedDiff, file_content: Option<&str>) -> Vec<FunctionChunk> {
+pub fn chunk_diff_by_functions(
+    diff: &UnifiedDiff,
+    file_content: Option<&str>,
+) -> Vec<FunctionChunk> {
     let language = detect_language(&diff.file_path);
     let boundaries = if let Some(content) = file_content {
         detect_function_boundaries(content, &language)
@@ -78,10 +81,7 @@ pub fn chunk_diff_by_functions(diff: &UnifiedDiff, file_content: Option<&str>) -
 
     for hunk in &diff.hunks {
         for change in &hunk.changes {
-            let line_no = change
-                .new_line_no
-                .or(change.old_line_no)
-                .unwrap_or(0);
+            let line_no = change.new_line_no.or(change.old_line_no).unwrap_or(0);
 
             if let Some(func) = find_enclosing_function(&boundaries, line_no) {
                 // Find or create chunk for this function
@@ -96,8 +96,7 @@ pub fn chunk_diff_by_functions(diff: &UnifiedDiff, file_content: Option<&str>) -
                         chunk.end_line = line_no;
                     }
                 } else {
-                    let (added, removed, context) =
-                        count_single_change(&change.change_type);
+                    let (added, removed, context) = count_single_change(&change.change_type);
                     chunks.push(FunctionChunk {
                         function_name: func.name.clone(),
                         file_path: diff.file_path.clone(),
@@ -324,15 +323,12 @@ fn update_chunk_counts(chunk: &mut FunctionChunk, change_type: &ChangeType) {
 static RUST_FN_BOUNDARY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"^\s*(?:pub(?:\(crate\))?\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?(?:extern\s+(?:"[^"]*"\s+)?)?fn\s+([A-Za-z_]\w*)"#).unwrap()
 });
-static PY_FN_BOUNDARY: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)").unwrap()
-});
-static JS_FN_BOUNDARY: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$]\w*)").unwrap()
-});
-static GO_FN_BOUNDARY: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)").unwrap()
-});
+static PY_FN_BOUNDARY: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)").unwrap());
+static JS_FN_BOUNDARY: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$]\w*)").unwrap());
+static GO_FN_BOUNDARY: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)").unwrap());
 static JAVA_FN_BOUNDARY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^\s*(?:public|private|protected)?\s*(?:static\s+)?(?:\w+\s+)+([A-Za-z_]\w*)\s*\(")
         .unwrap()
@@ -617,7 +613,11 @@ pub fn beta() {
                 new_start: 2,
                 new_lines: 1,
                 context: "@@ -2,1 +2,1 @@ pub fn hello()".to_string(),
-                changes: vec![make_diff_line(2, ChangeType::Added, "    println!(\"hello\");")],
+                changes: vec![make_diff_line(
+                    2,
+                    ChangeType::Added,
+                    "    println!(\"hello\");",
+                )],
             }],
             is_binary: false,
             is_deleted: false,
@@ -763,7 +763,8 @@ fn second() {
 
     #[test]
     fn test_go_method_detection() {
-        let content = "func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {\n}\n";
+        let content =
+            "func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {\n}\n";
         let boundaries = detect_function_boundaries(content, "go");
         assert_eq!(boundaries.len(), 1);
         assert_eq!(boundaries[0].name, "handleRequest");
@@ -783,7 +784,12 @@ fn next_func() {
 }
 "#;
         let boundaries = detect_function_boundaries(content, "rs");
-        assert_eq!(boundaries.len(), 2, "Should find both functions: {:?}", boundaries);
+        assert_eq!(
+            boundaries.len(),
+            2,
+            "Should find both functions: {:?}",
+            boundaries
+        );
         // render() should end at the } on line 5 (before next_func)
         assert!(
             boundaries[0].end_line < boundaries[1].start_line,
@@ -805,7 +811,12 @@ fn next_func() {
         return request.upper()
 "#;
         let boundaries = detect_function_boundaries(content, "py");
-        assert_eq!(boundaries.len(), 2, "Should find both methods: {:?}", boundaries);
+        assert_eq!(
+            boundaries.len(),
+            2,
+            "Should find both methods: {:?}",
+            boundaries
+        );
         assert_eq!(boundaries[0].name, "handle_request");
         assert_eq!(boundaries[1].name, "process");
         // handle_request should end before process starts
@@ -846,10 +857,13 @@ fn next_func() {
         // The closing quote after "\\" terminates the string, so the closing brace
         // on the same line should be counted.
         let lines: Vec<&str> = vec![
-            r#"function foo() { let s = "\\"; }"#,  // line 0: open+close on same line
-            "function next() {",                      // line 1: next function
+            r#"function foo() { let s = "\\"; }"#, // line 0: open+close on same line
+            "function next() {",                   // line 1: next function
         ];
         let end = find_function_end(&lines, 0, "js");
-        assert_eq!(end, 0, "Function should end at line 0 (braces balanced on same line with escaped backslash)");
+        assert_eq!(
+            end, 0,
+            "Function should end at line 0 (braces balanced on same line with escaped backslash)"
+        );
     }
 }

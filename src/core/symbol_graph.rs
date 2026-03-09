@@ -95,10 +95,7 @@ impl SymbolGraph {
             .entry(node.file_path.clone())
             .or_default()
             .insert(node.name.clone());
-        self.nodes
-            .entry(node.name.clone())
-            .or_default()
-            .push(node);
+        self.nodes.entry(node.name.clone()).or_default().push(node);
     }
 
     /// Add a directed edge between two symbols.
@@ -166,7 +163,11 @@ impl SymbolGraph {
         }
 
         // Add colocation edges
-        let file_symbols_snapshot: Vec<Vec<String>> = graph.file_symbols.values().map(|v| v.iter().cloned().collect()).collect();
+        let file_symbols_snapshot: Vec<Vec<String>> = graph
+            .file_symbols
+            .values()
+            .map(|v| v.iter().cloned().collect())
+            .collect();
         for names in &file_symbols_snapshot {
             for i in 0..names.len() {
                 for j in (i + 1)..names.len() {
@@ -226,8 +227,8 @@ impl SymbolGraph {
                 for node in nodes {
                     for edge in &node.edges {
                         if visited.insert(edge.target.clone()) {
-                            let cost =
-                                accumulated_cost + edge.relation.relevance_weight() * (depth as f32 + 1.0);
+                            let cost = accumulated_cost
+                                + edge.relation.relevance_weight() * (depth as f32 + 1.0);
                             results.push(RankedSymbol {
                                 name: edge.target.clone(),
                                 file_path: edge.target_file.clone(),
@@ -309,9 +310,8 @@ pub struct RankedSymbol {
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-static RUST_FN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap()
-});
+static RUST_FN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap());
 static RUST_STRUCT: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\s*(?:pub\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap());
 static RUST_ENUM: Lazy<Regex> =
@@ -322,8 +322,7 @@ static RUST_IMPL_FOR: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^\s*impl(?:<[^>]*>)?\s+([A-Za-z_][A-Za-z0-9_]*)\s+for\s+([A-Za-z_][A-Za-z0-9_]*)")
         .unwrap()
 });
-static FN_CALL: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap());
+static FN_CALL: Lazy<Regex> = Lazy::new(|| Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap());
 static TYPE_REF: Lazy<Regex> =
     Lazy::new(|| Regex::new(r":\s*(?:&\s*)?(?:mut\s+)?([A-Z][A-Za-z0-9_]*)").unwrap());
 static PY_DEF: Lazy<Regex> =
@@ -377,10 +376,7 @@ fn detect_kind(line: &str, ext: &str) -> Option<(String, SymbolKind)> {
 }
 
 fn extract_symbol_definitions(path: &Path, content: &str) -> Vec<SymbolNode> {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let lines: Vec<&str> = content.lines().collect();
     let mut symbols = Vec::new();
 
@@ -419,7 +415,8 @@ fn find_block_end(lines: &[&str], start: usize) -> usize {
             return i;
         }
         // For languages without braces (Python), use indentation
-        if i > start && !line.trim().is_empty() && !line.starts_with(' ') && !line.starts_with('\t') {
+        if i > start && !line.trim().is_empty() && !line.starts_with(' ') && !line.starts_with('\t')
+        {
             return i.saturating_sub(1);
         }
     }
@@ -431,18 +428,11 @@ fn extract_relationships(
     content: &str,
     graph: &SymbolGraph,
 ) -> Vec<(String, String, SymbolRelation)> {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let mut relations = Vec::new();
 
     // Get symbols defined in this file
-    let file_symbols: HashSet<String> = graph
-        .file_symbols
-        .get(path)
-        .cloned()
-        .unwrap_or_default();
+    let file_symbols: HashSet<String> = graph.file_symbols.get(path).cloned().unwrap_or_default();
 
     let known_symbols: HashSet<&String> = graph.nodes.keys().collect();
 
@@ -505,10 +495,7 @@ fn extract_relationships(
             if file_symbols.contains(caller) {
                 for caps in FN_CALL.captures_iter(line) {
                     let callee = caps[1].to_string();
-                    if callee != *caller
-                        && known_symbols.contains(&callee)
-                        && callee.len() >= 2
-                    {
+                    if callee != *caller && known_symbols.contains(&callee) && callee.len() >= 2 {
                         relations.push((caller.clone(), callee, SymbolRelation::Calls));
                     }
                 }
@@ -697,8 +684,7 @@ impl Authenticator for AdminAuth {
         let mut files = HashMap::new();
         files.insert(
             PathBuf::from("lib.rs"),
-            "pub fn foo() {}\npub struct Bar {}\npub enum Baz {}\npub trait Qux {}"
-                .to_string(),
+            "pub fn foo() {}\npub struct Bar {}\npub enum Baz {}\npub trait Qux {}".to_string(),
         );
         let graph = SymbolGraph::build_from_source(&files);
 
@@ -747,7 +733,10 @@ impl Authenticator for AdminAuth {
     fn test_inverse_relations() {
         assert_eq!(SymbolRelation::Calls.inverse(), SymbolRelation::CalledBy);
         assert_eq!(SymbolRelation::CalledBy.inverse(), SymbolRelation::Calls);
-        assert_eq!(SymbolRelation::Inherits.inverse(), SymbolRelation::Implements);
+        assert_eq!(
+            SymbolRelation::Inherits.inverse(),
+            SymbolRelation::Implements
+        );
         assert_eq!(SymbolRelation::Uses.inverse(), SymbolRelation::UsedBy);
         assert_eq!(
             SymbolRelation::ColocatedWith.inverse(),

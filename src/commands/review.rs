@@ -150,7 +150,8 @@ pub async fn review_command(
                 context_chunks.extend(extra_chunks);
             }
         }
-        crate::review::inject_custom_context(&config, &context_fetcher, diff, &mut context_chunks).await?;
+        crate::review::inject_custom_context(&config, &context_fetcher, diff, &mut context_chunks)
+            .await?;
         crate::review::inject_pattern_repository_context(
             &config,
             &pattern_repositories,
@@ -187,16 +188,16 @@ pub async fn review_command(
 
         let response = adapter.complete(request).await?;
 
-        if let Ok(raw_comments) = crate::parsing::parse_llm_response(&response.content, &diff.file_path) {
+        if let Ok(raw_comments) =
+            crate::parsing::parse_llm_response(&response.content, &diff.file_path)
+        {
             let mut comments = core::CommentSynthesizer::synthesize(raw_comments)?;
 
             // Apply severity overrides if configured
             if let Some(pc) = path_config {
                 for comment in &mut comments {
                     for (category, severity) in &pc.severity_overrides {
-                        if comment.category.as_str()
-                            == category.to_lowercase()
-                        {
+                        if comment.category.as_str() == category.to_lowercase() {
                             comment.severity = match severity.to_lowercase().as_str() {
                                 "error" => core::comment::Severity::Error,
                                 "warning" => core::comment::Severity::Warning,
@@ -218,7 +219,8 @@ pub async fn review_command(
     let processed_comments = plugin_manager
         .run_post_processors(all_comments, &repo_path_str)
         .await?;
-    let processed_comments = crate::review::apply_review_filters(processed_comments, &config, &feedback);
+    let processed_comments =
+        crate::review::apply_review_filters(processed_comments, &config, &feedback);
 
     let effective_format = if patch { OutputFormat::Patch } else { format };
     crate::output::output_comments(
@@ -232,7 +234,11 @@ pub async fn review_command(
     Ok(())
 }
 
-pub async fn check_command(path: PathBuf, config: config::Config, format: OutputFormat) -> Result<()> {
+pub async fn check_command(
+    path: PathBuf,
+    config: config::Config,
+    format: OutputFormat,
+) -> Result<()> {
     info!("Checking repository at: {}", path.display());
     info!("Using model: {}", config.model);
 

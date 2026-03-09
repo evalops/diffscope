@@ -125,7 +125,6 @@ impl OpenAIAdapter {
             retry_config,
         })
     }
-
 }
 
 #[async_trait]

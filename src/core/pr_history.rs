@@ -66,14 +66,11 @@ impl PRHistoryAnalyzer {
     /// Ingest a batch of PR review comments.
     pub fn ingest_comments(&mut self, comments: Vec<PRReviewComment>) {
         for comment in &comments {
-            let stats = self
-                .author_stats
-                .entry(comment.author.clone())
-                .or_default();
+            let stats = self.author_stats.entry(comment.author.clone()).or_default();
             stats.comment_count += 1;
             let n = stats.comment_count as f32;
-            stats.avg_comment_length = stats.avg_comment_length * ((n - 1.0) / n)
-                + comment.body.len() as f32 / n;
+            stats.avg_comment_length =
+                stats.avg_comment_length * ((n - 1.0) / n) + comment.body.len() as f32 / n;
         }
         self.comments.extend(comments);
     }
@@ -131,8 +128,7 @@ impl PRHistoryAnalyzer {
             })
             .collect();
 
-        self.patterns
-            .sort_by(|a, b| b.frequency.cmp(&a.frequency));
+        self.patterns.sort_by(|a, b| b.frequency.cmp(&a.frequency));
 
         &self.patterns
     }
@@ -150,10 +146,7 @@ impl PRHistoryAnalyzer {
             })
             .collect();
 
-        scored.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         scored
             .into_iter()
@@ -289,13 +282,45 @@ fn extract_review_tokens(body: &str) -> Vec<String> {
 fn is_common_word(word: &str) -> bool {
     matches!(
         word,
-        "about" | "after" | "again" | "being" | "below" | "between"
-        | "could" | "doing" | "during" | "every" | "first" | "found"
-        | "going" | "great" | "having" | "here's" | "looks" | "maybe"
-        | "might" | "other" | "please" | "right" | "seems" | "since"
-        | "still" | "their" | "there" | "these" | "thing" | "think"
-        | "those" | "under" | "until" | "using" | "where" | "which"
-        | "while" | "would" | "should"
+        "about"
+            | "after"
+            | "again"
+            | "being"
+            | "below"
+            | "between"
+            | "could"
+            | "doing"
+            | "during"
+            | "every"
+            | "first"
+            | "found"
+            | "going"
+            | "great"
+            | "having"
+            | "here's"
+            | "looks"
+            | "maybe"
+            | "might"
+            | "other"
+            | "please"
+            | "right"
+            | "seems"
+            | "since"
+            | "still"
+            | "their"
+            | "there"
+            | "these"
+            | "thing"
+            | "think"
+            | "those"
+            | "under"
+            | "until"
+            | "using"
+            | "where"
+            | "which"
+            | "while"
+            | "would"
+            | "should"
     )
 }
 
@@ -303,9 +328,11 @@ fn is_common_word(word: &str) -> bool {
 fn classify_review_comment(body: &str) -> String {
     let lower = body.to_lowercase();
 
-    if lower.contains("security") || lower.contains("vulnerability") || lower.contains("injection") {
+    if lower.contains("security") || lower.contains("vulnerability") || lower.contains("injection")
+    {
         "security".to_string()
-    } else if lower.contains("performance") || lower.contains("slow") || lower.contains("optimize") {
+    } else if lower.contains("performance") || lower.contains("slow") || lower.contains("optimize")
+    {
         "performance".to_string()
     } else if lower.contains("bug") || lower.contains("crash") || lower.contains("error") {
         "bug".to_string()
@@ -325,10 +352,29 @@ fn estimate_sentiment(body: &str) -> f32 {
     let lower = body.to_lowercase();
     let mut score: f32 = 0.0;
 
-    let positive = ["good", "nice", "great", "excellent", "clean", "approve", "lgtm", "well done"];
+    let positive = [
+        "good",
+        "nice",
+        "great",
+        "excellent",
+        "clean",
+        "approve",
+        "lgtm",
+        "well done",
+    ];
     let negative = [
-        "bug", "issue", "problem", "wrong", "broken", "fix", "missing",
-        "incorrect", "fail", "error", "bad", "should not",
+        "bug",
+        "issue",
+        "problem",
+        "wrong",
+        "broken",
+        "fix",
+        "missing",
+        "incorrect",
+        "fail",
+        "error",
+        "bad",
+        "should not",
     ];
 
     for word in &positive {
@@ -440,7 +486,11 @@ mod tests {
         let mut analyzer = PRHistoryAnalyzer::new();
         for _ in 0..5 {
             analyzer.ingest_comments(vec![
-                make_comment("Error handling is missing here", "alice", Some("src/api.rs")),
+                make_comment(
+                    "Error handling is missing here",
+                    "alice",
+                    Some("src/api.rs"),
+                ),
                 make_comment("Error handling needed", "bob", Some("src/handler.rs")),
             ]);
         }
@@ -476,10 +526,22 @@ mod tests {
 
     #[test]
     fn test_classify_review_comment() {
-        assert_eq!(classify_review_comment("This is a security vulnerability"), "security");
-        assert_eq!(classify_review_comment("Performance is slow here"), "performance");
-        assert_eq!(classify_review_comment("This could crash the server"), "bug");
-        assert_eq!(classify_review_comment("Naming convention mismatch"), "style");
+        assert_eq!(
+            classify_review_comment("This is a security vulnerability"),
+            "security"
+        );
+        assert_eq!(
+            classify_review_comment("Performance is slow here"),
+            "performance"
+        );
+        assert_eq!(
+            classify_review_comment("This could crash the server"),
+            "bug"
+        );
+        assert_eq!(
+            classify_review_comment("Naming convention mismatch"),
+            "style"
+        );
     }
 
     #[test]

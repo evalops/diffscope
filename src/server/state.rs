@@ -1,8 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::{Serialize, Deserialize};
 use tracing::info;
 
 use crate::config::Config;
@@ -374,7 +374,11 @@ pub fn current_timestamp() -> i64 {
 /// Count the number of files in a unified diff string.
 pub fn count_diff_files(diff_content: &str) -> usize {
     diff_content.matches("\ndiff --git ").count()
-        + if diff_content.starts_with("diff --git ") { 1 } else { 0 }
+        + if diff_content.starts_with("diff --git ") {
+            1
+        } else {
+            0
+        }
 }
 
 /// Builder for constructing `ReviewEvent` instances without 17 positional parameters.
@@ -445,7 +449,13 @@ impl ReviewEventBuilder {
         self
     }
 
-    pub fn diff_stats(mut self, bytes: usize, files_total: usize, files_reviewed: usize, files_skipped: usize) -> Self {
+    pub fn diff_stats(
+        mut self,
+        bytes: usize,
+        files_total: usize,
+        files_reviewed: usize,
+        files_skipped: usize,
+    ) -> Self {
         self.event.diff_bytes = bytes;
         self.event.diff_files_total = files_total;
         self.event.diff_files_reviewed = files_reviewed;
@@ -549,8 +559,9 @@ pub fn build_progress_callback(
                 session.comments = update.comments_so_far.clone();
                 session.files_reviewed = update.files_completed;
                 if !session.comments.is_empty() {
-                    session.summary =
-                        Some(crate::core::CommentSynthesizer::generate_summary(&session.comments));
+                    session.summary = Some(crate::core::CommentSynthesizer::generate_summary(
+                        &session.comments,
+                    ));
                 }
             }
         });
@@ -569,7 +580,7 @@ pub fn count_reviewed_files(comments: &[Comment]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::comment::{Category, Severity, FixEffort};
+    use crate::core::comment::{Category, FixEffort, Severity};
     use std::path::PathBuf;
 
     #[test]
@@ -598,8 +609,7 @@ mod tests {
 
     #[test]
     fn test_review_event_builder_minimal() {
-        let event = ReviewEventBuilder::new("r1", "review.completed", "head", "gpt-4o")
-            .build();
+        let event = ReviewEventBuilder::new("r1", "review.completed", "head", "gpt-4o").build();
         assert_eq!(event.review_id, "r1");
         assert_eq!(event.event_type, "review.completed");
         assert_eq!(event.diff_source, "head");
@@ -612,37 +622,36 @@ mod tests {
 
     #[test]
     fn test_review_event_builder_full() {
-        let comments = vec![
-            Comment {
-                id: "c1".to_string(),
-                file_path: PathBuf::from("a.rs"),
-                line_number: 1,
-                content: "test".to_string(),
-                rule_id: None,
-                severity: Severity::Error,
-                category: Category::Bug,
-                suggestion: None,
-                confidence: 0.9,
-                code_suggestion: None,
-                tags: vec![],
-                fix_effort: FixEffort::Low,
-                feedback: None,
-            },
-        ];
+        let comments = vec![Comment {
+            id: "c1".to_string(),
+            file_path: PathBuf::from("a.rs"),
+            line_number: 1,
+            content: "test".to_string(),
+            rule_id: None,
+            severity: Severity::Error,
+            category: Category::Bug,
+            suggestion: None,
+            confidence: 0.9,
+            code_suggestion: None,
+            tags: vec![],
+            fix_effort: FixEffort::Low,
+            feedback: None,
+        }];
         let summary = crate::core::CommentSynthesizer::generate_summary(&comments);
 
-        let event = ReviewEventBuilder::new("r2", "review.completed", "staged", "claude-sonnet-4.6")
-            .title("Test PR")
-            .provider(Some("anthropic"))
-            .base_url(Some("https://api.anthropic.com"))
-            .duration_ms(5000)
-            .diff_fetch_ms(100)
-            .llm_total_ms(4500)
-            .diff_stats(1024, 3, 2, 1)
-            .comments(&comments, Some(&summary))
-            .github("owner/repo", 42)
-            .github_posted(true)
-            .build();
+        let event =
+            ReviewEventBuilder::new("r2", "review.completed", "staged", "claude-sonnet-4.6")
+                .title("Test PR")
+                .provider(Some("anthropic"))
+                .base_url(Some("https://api.anthropic.com"))
+                .duration_ms(5000)
+                .diff_fetch_ms(100)
+                .llm_total_ms(4500)
+                .diff_stats(1024, 3, 2, 1)
+                .comments(&comments, Some(&summary))
+                .github("owner/repo", 42)
+                .github_posted(true)
+                .build();
 
         assert_eq!(event.title.as_deref(), Some("Test PR"));
         assert_eq!(event.provider.as_deref(), Some("anthropic"));

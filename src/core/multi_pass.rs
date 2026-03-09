@@ -82,7 +82,10 @@ impl MultiPassReview {
     }
 
     /// Filter hotspots above threshold for deep analysis.
-    pub fn select_for_deep_analysis<'a>(&self, hotspots: &'a [HotspotResult]) -> Vec<&'a HotspotResult> {
+    pub fn select_for_deep_analysis<'a>(
+        &self,
+        hotspots: &'a [HotspotResult],
+    ) -> Vec<&'a HotspotResult> {
         hotspots
             .iter()
             .filter(|h| h.is_high_risk(self.config.hotspot_threshold))
@@ -91,10 +94,7 @@ impl MultiPassReview {
     }
 
     /// Build enhanced prompts for deep analysis pass based on hotspot results.
-    pub fn build_deep_analysis_guidance(
-        &self,
-        hotspot: &HotspotResult,
-    ) -> String {
+    pub fn build_deep_analysis_guidance(&self, hotspot: &HotspotResult) -> String {
         let mut guidance = String::new();
 
         guidance.push_str(&format!(
@@ -121,11 +121,7 @@ impl MultiPassReview {
     }
 
     /// Pass 2: Merge deep analysis results with first-pass results.
-    pub fn merge_results(
-        &self,
-        first_pass: Vec<Comment>,
-        deep_pass: Vec<Comment>,
-    ) -> Vec<Comment> {
+    pub fn merge_results(&self, first_pass: Vec<Comment>, deep_pass: Vec<Comment>) -> Vec<Comment> {
         let mut merged = first_pass;
 
         for deep_comment in deep_pass {
@@ -279,12 +275,7 @@ fn analyze_file_risk(diff: &UnifiedDiff) -> HotspotResult {
     }
 
     // Compute line range
-    let min_line = diff
-        .hunks
-        .iter()
-        .map(|h| h.new_start)
-        .min()
-        .unwrap_or(1);
+    let min_line = diff.hunks.iter().map(|h| h.new_start).min().unwrap_or(1);
     let max_line = diff
         .hunks
         .iter()
@@ -388,10 +379,7 @@ mod tests {
         let hotspots = review.detect_hotspots(&diffs);
         assert_eq!(hotspots.len(), 1);
         assert!(hotspots[0].risk_score > 0.3);
-        assert!(hotspots[0]
-            .reasons
-            .iter()
-            .any(|r| r.contains("Security")));
+        assert!(hotspots[0].reasons.iter().any(|r| r.contains("Security")));
     }
 
     #[test]
@@ -404,10 +392,7 @@ mod tests {
 
         let hotspots = review.detect_hotspots(&diffs);
         assert!(!hotspots.is_empty());
-        assert!(hotspots[0]
-            .reasons
-            .iter()
-            .any(|r| r.contains("unsafe")));
+        assert!(hotspots[0].reasons.iter().any(|r| r.contains("unsafe")));
     }
 
     #[test]
@@ -489,9 +474,7 @@ mod tests {
             line_range: (10, 50),
             risk_score: 0.85,
             reasons: vec!["Security-sensitive file path".to_string()],
-            suggested_focus: vec![
-                "Check for authentication vulnerabilities".to_string(),
-            ],
+            suggested_focus: vec!["Check for authentication vulnerabilities".to_string()],
         };
 
         let guidance = review.build_deep_analysis_guidance(&hotspot);
@@ -660,7 +643,9 @@ mod tests {
         let review = MultiPassReview::with_defaults();
         let diffs = vec![make_diff(
             "src/deleted.rs",
-            (0..15).map(|i| make_removed_line(i + 1, "deleted line")).collect(),
+            (0..15)
+                .map(|i| make_removed_line(i + 1, "deleted line"))
+                .collect(),
         )];
         let hotspots = review.detect_hotspots(&diffs);
         assert!(!hotspots.is_empty());
@@ -764,6 +749,10 @@ mod tests {
         let deep = vec![make_comment("test.rs", 1, "")];
         // Two identical empty comments at the same location should be deduped
         let merged = review.merge_results(existing, deep);
-        assert_eq!(merged.len(), 1, "Empty duplicate comments should be deduped");
+        assert_eq!(
+            merged.len(),
+            1,
+            "Empty duplicate comments should be deduped"
+        );
     }
 }

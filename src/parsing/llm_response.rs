@@ -5,7 +5,10 @@ use std::path::Path;
 
 use crate::core;
 
-pub fn parse_llm_response(content: &str, file_path: &Path) -> Result<Vec<core::comment::RawComment>> {
+pub fn parse_llm_response(
+    content: &str,
+    file_path: &Path,
+) -> Result<Vec<core::comment::RawComment>> {
     let mut comments = Vec::new();
     static LINE_PATTERN: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)line\s+(\d+)((?:\s*(?:\[[^\]]+\]|\([^)]+\)))*)\s*:\s*(.+)").unwrap()

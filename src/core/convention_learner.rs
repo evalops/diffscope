@@ -220,7 +220,10 @@ impl ConventionStore {
                 .collect();
 
             if !boost.is_empty() {
-                guidance.push_str(&format!("\nHigh-value {} patterns (team accepts these):\n", category));
+                guidance.push_str(&format!(
+                    "\nHigh-value {} patterns (team accepts these):\n",
+                    category
+                ));
                 for p in boost.iter().take(5) {
                     guidance.push_str(&format!(
                         "- {} (accepted {}x)\n",
@@ -230,7 +233,10 @@ impl ConventionStore {
             }
 
             if !suppress.is_empty() {
-                guidance.push_str(&format!("\nLow-value {} patterns (team rejects these):\n", category));
+                guidance.push_str(&format!(
+                    "\nLow-value {} patterns (team rejects these):\n",
+                    category
+                ));
                 for p in suppress.iter().take(5) {
                     guidance.push_str(&format!(
                         "- {} (rejected {}x)\n",
@@ -277,12 +283,11 @@ fn extract_tokens(text: &str) -> Vec<String> {
 }
 
 const STOPWORDS: &[&str] = &[
-    "the", "and", "for", "are", "but", "not", "you", "all", "can", "has",
-    "her", "was", "one", "our", "out", "its", "his", "how", "man", "new",
-    "now", "old", "see", "way", "who", "did", "get", "let", "say", "she",
-    "too", "use", "this", "that", "with", "have", "from", "they", "been",
-    "will", "more", "when", "some", "them", "than", "here", "into",
-    "should", "could", "would", "which", "there", "their", "about",
+    "the", "and", "for", "are", "but", "not", "you", "all", "can", "has", "her", "was", "one",
+    "our", "out", "its", "his", "how", "man", "new", "now", "old", "see", "way", "who", "did",
+    "get", "let", "say", "she", "too", "use", "this", "that", "with", "have", "from", "they",
+    "been", "will", "more", "when", "some", "them", "than", "here", "into", "should", "could",
+    "would", "which", "there", "their", "about",
 ];
 
 #[cfg(test)]
@@ -577,7 +582,10 @@ mod tests {
             last_seen: "2024-01-01".to_string(),
         };
         let conf = pattern.confidence();
-        assert!(conf > 0.5, "High acceptance should yield high confidence: {conf}");
+        assert!(
+            conf > 0.5,
+            "High acceptance should yield high confidence: {conf}"
+        );
     }
 
     #[test]
@@ -592,7 +600,10 @@ mod tests {
             last_seen: "2024-01-01".to_string(),
         };
         let conf = pattern.confidence();
-        assert!(conf < 0.1, "All rejected should yield low confidence: {conf}");
+        assert!(
+            conf < 0.1,
+            "All rejected should yield low confidence: {conf}"
+        );
     }
 
     #[test]
@@ -642,7 +653,10 @@ mod tests {
         }
         // Score with matching category — should get boost
         let bug_score = store.score_comment("important security check", "Bug");
-        assert!(bug_score > 0.0, "Bug category should get boost, got {bug_score}");
+        assert!(
+            bug_score > 0.0,
+            "Bug category should get boost, got {bug_score}"
+        );
 
         // Score with wrong category — should NOT get pattern boost of 0.2
         // Falls through to token-based scoring instead
@@ -653,7 +667,10 @@ mod tests {
             "Wrong category should get at most token-based score, got {style_score}"
         );
         // The pattern boost for Bug (0.2) should NOT equal the token score
-        assert_ne!(style_score, bug_score, "Different categories should score differently");
+        assert_ne!(
+            style_score, bug_score,
+            "Different categories should score differently"
+        );
     }
 
     // Regression: record_feedback must count both feedbacks even with different categories

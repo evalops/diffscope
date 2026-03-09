@@ -832,8 +832,18 @@ mod tests {
             recommendations: vec!["Fix bugs".to_string()],
         };
         let comments = vec![
-            build_test_comment("c1", core::comment::Category::Bug, core::comment::Severity::Error, 0.9),
-            build_test_comment("c2", core::comment::Category::Bug, core::comment::Severity::Warning, 0.8),
+            build_test_comment(
+                "c1",
+                core::comment::Category::Bug,
+                core::comment::Severity::Error,
+                0.9,
+            ),
+            build_test_comment(
+                "c2",
+                core::comment::Category::Bug,
+                core::comment::Severity::Warning,
+                0.8,
+            ),
         ];
         let output = format_smart_review_output(&comments, &summary, None, "", &[]);
         assert!(output.contains("Smart Review Analysis"));
@@ -876,13 +886,22 @@ mod tests {
         // Run multiple times — should always produce the same output
         for _ in 0..5 {
             let output2 = format_as_markdown(&comments, &[]);
-            assert_eq!(output, output2, "Markdown output should be deterministic across runs");
+            assert_eq!(
+                output, output2,
+                "Markdown output should be deterministic across runs"
+            );
         }
 
         // File sections should appear in sorted order
-        let z_pos = output.find("src/z_last.rs").expect("should contain z_last.rs");
-        let a_pos = output.find("src/a_first.rs").expect("should contain a_first.rs");
-        let m_pos = output.find("src/m_middle.rs").expect("should contain m_middle.rs");
+        let z_pos = output
+            .find("src/z_last.rs")
+            .expect("should contain z_last.rs");
+        let a_pos = output
+            .find("src/a_first.rs")
+            .expect("should contain a_first.rs");
+        let m_pos = output
+            .find("src/m_middle.rs")
+            .expect("should contain m_middle.rs");
         assert!(
             a_pos < m_pos && m_pos < z_pos,
             "Files should appear in sorted order: a_first({a_pos}) < m_middle({m_pos}) < z_last({z_pos})"

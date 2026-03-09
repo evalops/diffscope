@@ -29,13 +29,21 @@ struct Cli {
     #[arg(long, global = true, default_value = "anthropic/claude-sonnet-4.6")]
     model: String,
 
-    #[arg(long, global = true, help = "LLM API base URL (e.g. http://localhost:11434)")]
+    #[arg(
+        long,
+        global = true,
+        help = "LLM API base URL (e.g. http://localhost:11434)"
+    )]
     base_url: Option<String>,
 
     #[arg(long, global = true, help = "API key (optional for local servers)")]
     api_key: Option<String>,
 
-    #[arg(long, global = true, help = "Force adapter: openai, anthropic, or ollama")]
+    #[arg(
+        long,
+        global = true,
+        help = "Force adapter: openai, anthropic, or ollama"
+    )]
     adapter: Option<String>,
 
     #[arg(long, global = true)]
@@ -83,13 +91,21 @@ struct Cli {
     #[arg(long, global = true, help = "Output language (e.g., en, ja, de)")]
     output_language: Option<String>,
 
-    #[arg(long, global = true, help = "Vault server address (e.g., https://vault:8200)")]
+    #[arg(
+        long,
+        global = true,
+        help = "Vault server address (e.g., https://vault:8200)"
+    )]
     vault_addr: Option<String>,
 
     #[arg(long, global = true, help = "Vault secret path (e.g., diffscope)")]
     vault_path: Option<String>,
 
-    #[arg(long, global = true, help = "Key within Vault secret to use as API key (default: api_key)")]
+    #[arg(
+        long,
+        global = true,
+        help = "Key within Vault secret to use as API key (default: api_key)"
+    )]
     vault_key: Option<String>,
 
     #[arg(long, global = true, default_value = "json")]
@@ -223,7 +239,9 @@ enum Commands {
         #[arg(long, help = "Interactive discussion mode")]
         interactive: bool,
     },
-    #[command(about = "Check self-hosted LLM setup: endpoint reachability, models, and recommendations")]
+    #[command(
+        about = "Check self-hosted LLM setup: endpoint reachability, models, and recommendations"
+    )]
     Doctor,
     /// Start the web UI server
     Serve {

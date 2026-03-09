@@ -336,8 +336,7 @@ pub fn compare_results(
     max_regression: f32,
 ) -> ComparisonResult {
     let f1_delta = current.aggregate.micro_f1 - baseline.aggregate.micro_f1;
-    let precision_delta =
-        current.aggregate.micro_precision - baseline.aggregate.micro_precision;
+    let precision_delta = current.aggregate.micro_precision - baseline.aggregate.micro_precision;
     let recall_delta = current.aggregate.micro_recall - baseline.aggregate.micro_recall;
 
     let mut regressions = Vec::new();
@@ -348,10 +347,7 @@ pub fn compare_results(
         ));
     }
     if precision_delta < -max_regression {
-        regressions.push(format!(
-            "Precision regressed by {:.3}",
-            -precision_delta
-        ));
+        regressions.push(format!("Precision regressed by {:.3}", -precision_delta));
     }
     if recall_delta < -max_regression {
         regressions.push(format!("Recall regressed by {:.3}", -recall_delta));
@@ -378,10 +374,7 @@ pub fn compare_results(
         ));
     }
     if precision_delta > max_regression {
-        improvements.push(format!(
-            "Precision improved by {:.3}",
-            precision_delta
-        ));
+        improvements.push(format!("Precision improved by {:.3}", precision_delta));
     }
     if recall_delta > max_regression {
         improvements.push(format!("Recall improved by {:.3}", recall_delta));
@@ -920,7 +913,8 @@ mod tests {
         assert!(
             (agg.weighted_score - agg.macro_f1).abs() < 0.05,
             "Mismatched weights should fall back to macro_f1, got weighted={:.3} vs macro={:.3}",
-            agg.weighted_score, agg.macro_f1
+            agg.weighted_score,
+            agg.macro_f1
         );
     }
 

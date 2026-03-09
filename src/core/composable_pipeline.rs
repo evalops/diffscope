@@ -88,9 +88,7 @@ pub struct Pipeline {
 
 impl Pipeline {
     pub fn new() -> Self {
-        Self {
-            stages: Vec::new(),
-        }
+        Self { stages: Vec::new() }
     }
 
     pub fn add_stage(&mut self, stage: Box<dyn PipelineStage>) {
@@ -151,9 +149,7 @@ pub struct PipelineBuilder {
 
 impl PipelineBuilder {
     pub fn new() -> Self {
-        Self {
-            stages: Vec::new(),
-        }
+        Self { stages: Vec::new() }
     }
 
     pub fn add(mut self, stage: Box<dyn PipelineStage>) -> Self {
@@ -197,8 +193,7 @@ impl PipelineStage for ConfidenceFilterStage {
     }
 
     fn execute(&self, ctx: &mut PipelineContext) -> Result<()> {
-        ctx.comments
-            .retain(|c| c.confidence >= self.min_confidence);
+        ctx.comments.retain(|c| c.confidence >= self.min_confidence);
         Ok(())
     }
 }
@@ -223,9 +218,7 @@ impl PipelineStage for DeduplicateStage {
                 .then(a.content.cmp(&b.content))
         });
         ctx.comments.dedup_by(|a, b| {
-            a.file_path == b.file_path
-                && a.line_number == b.line_number
-                && a.content == b.content
+            a.file_path == b.file_path && a.line_number == b.line_number && a.content == b.content
         });
         Ok(())
     }
@@ -304,13 +297,10 @@ impl PipelineStage for TaggingStage {
             if lower.contains("security") && !comment.tags.contains(&"security".to_string()) {
                 comment.tags.push("security".to_string());
             }
-            if lower.contains("performance")
-                && !comment.tags.contains(&"performance".to_string())
-            {
+            if lower.contains("performance") && !comment.tags.contains(&"performance".to_string()) {
                 comment.tags.push("performance".to_string());
             }
-            if lower.contains("breaking")
-                && !comment.tags.contains(&"breaking-change".to_string())
+            if lower.contains("breaking") && !comment.tags.contains(&"breaking-change".to_string())
             {
                 comment.tags.push("breaking-change".to_string());
             }
@@ -461,9 +451,7 @@ mod tests {
 
     #[test]
     fn test_tagging_stage() {
-        let pipeline = PipelineBuilder::new()
-            .add(Box::new(TaggingStage))
-            .build();
+        let pipeline = PipelineBuilder::new().add(Box::new(TaggingStage)).build();
 
         let mut ctx = PipelineContext::new();
         ctx.comments = vec![
@@ -592,7 +580,10 @@ mod tests {
             .build();
 
         let names = pipeline.stage_names();
-        assert_eq!(names, vec!["auto-tagger", "deduplicate", "sort-by-severity"]);
+        assert_eq!(
+            names,
+            vec!["auto-tagger", "deduplicate", "sort-by-severity"]
+        );
     }
 
     #[test]
@@ -660,7 +651,8 @@ mod tests {
     fn test_max_comments_truncates() {
         let mut ctx = PipelineContext::new();
         for i in 0..10 {
-            ctx.comments.push(make_comment("test.rs", i + 1, &format!("comment {i}"), 0.8));
+            ctx.comments
+                .push(make_comment("test.rs", i + 1, &format!("comment {i}"), 0.8));
         }
 
         let stage = MaxCommentsStage::new(5);
@@ -671,8 +663,10 @@ mod tests {
     #[test]
     fn test_confidence_filter_removes_low() {
         let mut ctx = PipelineContext::new();
-        ctx.comments.push(make_comment("test.rs", 1, "low confidence", 0.3));
-        ctx.comments.push(make_comment("test.rs", 2, "high confidence", 0.9));
+        ctx.comments
+            .push(make_comment("test.rs", 1, "low confidence", 0.3));
+        ctx.comments
+            .push(make_comment("test.rs", 2, "high confidence", 0.9));
 
         let stage = ConfidenceFilterStage::new(0.5);
         stage.execute(&mut ctx).unwrap();
@@ -683,8 +677,10 @@ mod tests {
     #[test]
     fn test_deduplicate_preserves_different_content_same_line() {
         let mut ctx = PipelineContext::new();
-        ctx.comments.push(make_comment("test.rs", 5, "Missing null check", 0.8));
-        ctx.comments.push(make_comment("test.rs", 5, "Potential memory leak", 0.9));
+        ctx.comments
+            .push(make_comment("test.rs", 5, "Missing null check", 0.8));
+        ctx.comments
+            .push(make_comment("test.rs", 5, "Potential memory leak", 0.9));
 
         let stage = DeduplicateStage;
         stage.execute(&mut ctx).unwrap();

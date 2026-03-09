@@ -28,7 +28,7 @@ pub use commit_prompt::CommitPromptBuilder;
 pub use context::{ContextFetcher, ContextType, LLMContextChunk};
 pub use diff_parser::{DiffParser, UnifiedDiff};
 pub use enhanced_review::{
-    build_enhanced_context, apply_enhanced_filters, generate_enhanced_guidance,
+    apply_enhanced_filters, build_enhanced_context, generate_enhanced_guidance,
 };
 pub use git::{validate_ref_name, GitIntegration};
 pub use pr_summary::{PRSummaryGenerator, SummaryOptions};

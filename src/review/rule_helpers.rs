@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use tracing::{info, warn};
 
+use super::context_helpers::PatternRepositoryMap;
 use crate::config;
 use crate::core;
 use crate::parsing::parse_smart_category;
-use super::context_helpers::PatternRepositoryMap;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RuleHitBreakdown {
@@ -137,7 +137,10 @@ pub fn format_top_findings_by_file(
     out
 }
 
-pub fn build_pr_summary_comment_body(comments: &[core::Comment], rule_priority: &[String]) -> String {
+pub fn build_pr_summary_comment_body(
+    comments: &[core::Comment],
+    rule_priority: &[String],
+) -> String {
     let summary = core::CommentSynthesizer::generate_summary(comments);
     let mut body = String::new();
     body.push_str("## DiffScope Review Summary\n\n");
@@ -389,18 +392,36 @@ mod tests {
 
     #[test]
     fn normalize_rule_id_trims_and_lowercases() {
-        assert_eq!(normalize_rule_id(Some(" SEC.XSS ")), Some("sec.xss".to_string()));
+        assert_eq!(
+            normalize_rule_id(Some(" SEC.XSS ")),
+            Some("sec.xss".to_string())
+        );
         assert_eq!(normalize_rule_id(Some("")), None);
         assert_eq!(normalize_rule_id(None), None);
     }
 
     #[test]
     fn summarize_rule_hits_orders_by_volume() {
-        let mut c1 = build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Error, 0.9);
+        let mut c1 = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.9,
+        );
         c1.rule_id = Some("rule.alpha".to_string());
-        let mut c2 = build_comment("c2", core::comment::Category::Bug, core::comment::Severity::Warning, 0.9);
+        let mut c2 = build_comment(
+            "c2",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
         c2.rule_id = Some("rule.alpha".to_string());
-        let mut c3 = build_comment("c3", core::comment::Category::Security, core::comment::Severity::Warning, 0.9);
+        let mut c3 = build_comment(
+            "c3",
+            core::comment::Category::Security,
+            core::comment::Severity::Warning,
+            0.9,
+        );
         c3.rule_id = Some("rule.beta".to_string());
 
         let hits = summarize_rule_hits(&[c1, c2, c3], 8, &[]);
@@ -412,11 +433,26 @@ mod tests {
 
     #[test]
     fn summarize_rule_hits_respects_priority_order() {
-        let mut c1 = build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Warning, 0.9);
+        let mut c1 = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
         c1.rule_id = Some("rule.alpha".to_string());
-        let mut c2 = build_comment("c2", core::comment::Category::Bug, core::comment::Severity::Warning, 0.9);
+        let mut c2 = build_comment(
+            "c2",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
         c2.rule_id = Some("rule.alpha".to_string());
-        let mut c3 = build_comment("c3", core::comment::Category::Security, core::comment::Severity::Error, 0.9);
+        let mut c3 = build_comment(
+            "c3",
+            core::comment::Category::Security,
+            core::comment::Severity::Error,
+            0.9,
+        );
         c3.rule_id = Some("rule.beta".to_string());
 
         let hits = summarize_rule_hits(
@@ -430,23 +466,43 @@ mod tests {
 
     #[test]
     fn summarize_rule_hits_skips_comments_without_rules() {
-        let c1 = build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Error, 0.9);
+        let c1 = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.9,
+        );
         let hits = summarize_rule_hits(&[c1], 8, &[]);
         assert!(hits.is_empty());
     }
 
     #[test]
     fn top_findings_summary_groups_by_file() {
-        let mut c1 = build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Error, 0.9);
+        let mut c1 = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.9,
+        );
         c1.file_path = PathBuf::from("src/a.rs");
         c1.line_number = 11;
         c1.rule_id = Some("rule.alpha".to_string());
 
-        let mut c2 = build_comment("c2", core::comment::Category::Bug, core::comment::Severity::Warning, 0.9);
+        let mut c2 = build_comment(
+            "c2",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
         c2.file_path = PathBuf::from("src/a.rs");
         c2.line_number = 20;
 
-        let mut c3 = build_comment("c3", core::comment::Category::Security, core::comment::Severity::Warning, 0.9);
+        let mut c3 = build_comment(
+            "c3",
+            core::comment::Category::Security,
+            core::comment::Severity::Warning,
+            0.9,
+        );
         c3.file_path = PathBuf::from("src/b.rs");
         c3.line_number = 5;
 
@@ -478,14 +534,28 @@ mod tests {
 
     #[test]
     fn severity_rank_order() {
-        assert!(severity_rank(&core::comment::Severity::Error) < severity_rank(&core::comment::Severity::Warning));
-        assert!(severity_rank(&core::comment::Severity::Warning) < severity_rank(&core::comment::Severity::Info));
-        assert!(severity_rank(&core::comment::Severity::Info) < severity_rank(&core::comment::Severity::Suggestion));
+        assert!(
+            severity_rank(&core::comment::Severity::Error)
+                < severity_rank(&core::comment::Severity::Warning)
+        );
+        assert!(
+            severity_rank(&core::comment::Severity::Warning)
+                < severity_rank(&core::comment::Severity::Info)
+        );
+        assert!(
+            severity_rank(&core::comment::Severity::Info)
+                < severity_rank(&core::comment::Severity::Suggestion)
+        );
     }
 
     #[test]
     fn apply_rule_overrides_sets_severity_and_category() {
-        let mut comment = build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Info, 0.5);
+        let mut comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Info,
+            0.5,
+        );
         comment.rule_id = Some("sec.xss".to_string());
 
         let rules = vec![core::ReviewRule {
@@ -508,7 +578,12 @@ mod tests {
 
     #[test]
     fn apply_rule_overrides_no_matching_rule() {
-        let mut comment = build_comment("c1", core::comment::Category::Bug, core::comment::Severity::Info, 0.5);
+        let mut comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Info,
+            0.5,
+        );
         comment.rule_id = Some("other.rule".to_string());
 
         let rules = vec![core::ReviewRule {
@@ -527,7 +602,12 @@ mod tests {
 
     #[test]
     fn pr_summary_body_includes_key_sections() {
-        let mut c = build_comment("c1", core::comment::Category::Security, core::comment::Severity::Error, 0.9);
+        let mut c = build_comment(
+            "c1",
+            core::comment::Category::Security,
+            core::comment::Severity::Error,
+            0.9,
+        );
         c.rule_id = Some("sec.xss".to_string());
         let body = build_pr_summary_comment_body(&[c], &[]);
         assert!(body.contains("DiffScope Review Summary"));

@@ -120,8 +120,7 @@ impl GitHistoryAnalyzer {
                 }
 
                 if info.last_modified.as_ref().is_none_or(|d| {
-                    parse_date_for_comparison(&entry.date)
-                        > parse_date_for_comparison(d)
+                    parse_date_for_comparison(&entry.date) > parse_date_for_comparison(d)
                 }) {
                     info.last_modified = Some(entry.date.clone());
                 }
@@ -355,7 +354,12 @@ fn is_bug_fix_commit(message: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn make_entry(hash: &str, author: &str, msg: &str, files: Vec<(&str, usize, usize)>) -> GitLogEntry {
+    fn make_entry(
+        hash: &str,
+        author: &str,
+        msg: &str,
+        files: Vec<(&str, usize, usize)>,
+    ) -> GitLogEntry {
         GitLogEntry {
             hash: hash.to_string(),
             author: author.to_string(),
@@ -453,9 +457,12 @@ mod tests {
     #[test]
     fn test_ranked_by_risk() {
         let mut analyzer = GitHistoryAnalyzer::new();
-        analyzer.ingest_log(vec![
-            make_entry("a", "alice", "Fix critical bug", vec![("src/hot.rs", 100, 50)]),
-        ]);
+        analyzer.ingest_log(vec![make_entry(
+            "a",
+            "alice",
+            "Fix critical bug",
+            vec![("src/hot.rs", 100, 50)],
+        )]);
         // Add more commits to hot.rs
         for i in 0..20 {
             analyzer.ingest_log(vec![make_entry(
@@ -481,11 +488,7 @@ mod tests {
     fn test_bug_prone_files() {
         let mut analyzer = GitHistoryAnalyzer::new();
         for i in 0..10 {
-            let msg = if i % 2 == 0 {
-                "Fix bug"
-            } else {
-                "Add feature"
-            };
+            let msg = if i % 2 == 0 { "Fix bug" } else { "Add feature" };
             analyzer.ingest_log(vec![make_entry(
                 &format!("c{}", i),
                 "alice",
@@ -511,8 +514,7 @@ mod tests {
             )]);
         }
 
-        let context =
-            analyzer.generate_history_context(&[PathBuf::from("src/risky.rs")]);
+        let context = analyzer.generate_history_context(&[PathBuf::from("src/risky.rs")]);
         assert!(context.contains("High-churn"));
         assert!(context.contains("Bug-prone"));
     }

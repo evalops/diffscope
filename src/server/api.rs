@@ -8,9 +8,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::state::{
-    AppState, ReviewListItem, ReviewSession, ReviewStatus, MAX_DIFF_SIZE,
-    ReviewEventBuilder, current_timestamp, count_diff_files, count_reviewed_files,
-    emit_wide_event, build_progress_callback,
+    build_progress_callback, count_diff_files, count_reviewed_files, current_timestamp,
+    emit_wide_event, AppState, ReviewEventBuilder, ReviewListItem, ReviewSession, ReviewStatus,
+    MAX_DIFF_SIZE,
 };
 use crate::core::comment::CommentSynthesizer;
 use tracing::{info, warn};
@@ -106,21 +106,37 @@ pub async fn start_review(
     // Validate diff_source
     let diff_source = match request.diff_source.as_str() {
         "head" | "staged" | "branch" | "raw" => request.diff_source.clone(),
-        _ => return Err((StatusCode::BAD_REQUEST, "Invalid diff_source: must be head, staged, branch, or raw".to_string())),
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Invalid diff_source: must be head, staged, branch, or raw".to_string(),
+            ))
+        }
     };
 
     // "raw" requires diff_content
-    if diff_source == "raw" && request.diff_content.as_ref().is_none_or(|c| c.trim().is_empty()) {
-        return Err((StatusCode::BAD_REQUEST, "diff_content is required when diff_source is 'raw'".to_string()));
+    if diff_source == "raw"
+        && request
+            .diff_content
+            .as_ref()
+            .is_none_or(|c| c.trim().is_empty())
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "diff_content is required when diff_source is 'raw'".to_string(),
+        ));
     }
 
     // Reject oversized diffs
     if let Some(ref content) = request.diff_content {
         if content.len() > MAX_DIFF_SIZE {
-            return Err((StatusCode::PAYLOAD_TOO_LARGE, format!(
-                "Diff content exceeds maximum size of {} MB",
-                MAX_DIFF_SIZE / (1024 * 1024)
-            )));
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!(
+                    "Diff content exceeds maximum size of {} MB",
+                    MAX_DIFF_SIZE / (1024 * 1024)
+                ),
+            ));
         }
     }
 
@@ -128,8 +144,11 @@ pub async fn start_review(
 
     // Validate branch name if provided
     if let Some(ref branch) = request.base_branch {
-        if branch.is_empty() || branch.len() > 200
-            || !branch.chars().all(|c| c.is_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'))
+        if branch.is_empty()
+            || branch.len() > 200
+            || !branch
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'))
         {
             return Err((StatusCode::BAD_REQUEST, "Invalid branch name".to_string()));
         }
@@ -171,7 +190,15 @@ pub async fn start_review(
     };
 
     tokio::spawn(async move {
-        run_review_task(state_clone, review_id, diff_source, base_branch, raw_diff, overrides).await;
+        run_review_task(
+            state_clone,
+            review_id,
+            diff_source,
+            base_branch,
+            raw_diff,
+            overrides,
+        )
+        .await;
     });
 
     Ok(Json(StartReviewResponse {
@@ -192,7 +219,13 @@ async fn run_review_task(
     let _permit = match state.review_semaphore.clone().acquire_owned().await {
         Ok(permit) => permit,
         Err(_) => {
-            AppState::fail_review(&state, &review_id, "Review semaphore closed".to_string(), None).await;
+            AppState::fail_review(
+                &state,
+                &review_id,
+                "Review semaphore closed".to_string(),
+                None,
+            )
+            .await;
             return;
         }
     };
@@ -272,9 +305,14 @@ async fn run_review_task(
             .build();
         emit_wide_event(&event);
         AppState::complete_review(
-            &state, &review_id, Vec::new(),
-            CommentSynthesizer::generate_summary(&[]), 0, event,
-        ).await;
+            &state,
+            &review_id,
+            Vec::new(),
+            CommentSynthesizer::generate_summary(&[]),
+            0,
+            event,
+        )
+        .await;
         AppState::save_reviews_async(&state);
         return;
     }
@@ -285,7 +323,12 @@ async fn run_review_task(
     let llm_start = std::time::Instant::now();
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(300),
-        crate::review::review_diff_content_raw_with_progress(&diff_content, config, &repo_path, on_progress),
+        crate::review::review_diff_content_raw_with_progress(
+            &diff_content,
+            config,
+            &repo_path,
+            on_progress,
+        ),
     )
     .await;
     let llm_ms = llm_start.elapsed().as_millis() as u64;
@@ -294,17 +337,24 @@ async fn run_review_task(
         Ok(Ok(comments)) => {
             let summary = CommentSynthesizer::generate_summary(&comments);
             let files_reviewed = count_reviewed_files(&comments);
-            let event = ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
-                .provider(provider.as_deref())
-                .base_url(base_url.as_deref())
-                .duration_ms(task_start.elapsed().as_millis() as u64)
-                .diff_fetch_ms(diff_fetch_ms)
-                .llm_total_ms(llm_ms)
-                .diff_stats(diff_bytes, diff_files_total, files_reviewed, diff_files_total.saturating_sub(files_reviewed))
-                .comments(&comments, Some(&summary))
-                .build();
+            let event =
+                ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
+                    .provider(provider.as_deref())
+                    .base_url(base_url.as_deref())
+                    .duration_ms(task_start.elapsed().as_millis() as u64)
+                    .diff_fetch_ms(diff_fetch_ms)
+                    .llm_total_ms(llm_ms)
+                    .diff_stats(
+                        diff_bytes,
+                        diff_files_total,
+                        files_reviewed,
+                        diff_files_total.saturating_sub(files_reviewed),
+                    )
+                    .comments(&comments, Some(&summary))
+                    .build();
             emit_wide_event(&event);
-            AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event).await;
+            AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
+                .await;
         }
         Ok(Err(e)) => {
             let err_msg = format!("Review failed: {}", e);
@@ -390,10 +440,8 @@ pub async fn list_reviews(
     Query(params): Query<ListReviewsParams>,
 ) -> Json<Vec<ReviewListItem>> {
     let reviews = state.reviews.read().await;
-    let mut list: Vec<ReviewListItem> = reviews
-        .values()
-        .map(ReviewListItem::from_session)
-        .collect();
+    let mut list: Vec<ReviewListItem> =
+        reviews.values().map(ReviewListItem::from_session).collect();
     list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
 
     let page = params.page.unwrap_or(1).clamp(1, 10_000);
@@ -490,8 +538,7 @@ pub async fn get_doctor(State(state): State<Arc<AppState>>) -> Json<serde_json::
                         .collect();
                     result["models"] = serde_json::json!(model_names);
 
-                    let mut manager =
-                        crate::core::offline::OfflineModelManager::new(&base_url);
+                    let mut manager = crate::core::offline::OfflineModelManager::new(&base_url);
                     manager.set_models(models);
                     if let Some(rec) = manager.recommend_review_model() {
                         result["recommended_model"] = serde_json::json!(rec.name);
@@ -563,7 +610,13 @@ pub async fn update_config(
 
 /// Mask all secret fields in a config object for safe serialization.
 fn mask_config_secrets(obj: &mut serde_json::Map<String, serde_json::Value>) {
-    for key in &["api_key", "github_token", "github_client_secret", "github_private_key", "github_webhook_secret"] {
+    for key in &[
+        "api_key",
+        "github_token",
+        "github_client_secret",
+        "github_private_key",
+        "github_webhook_secret",
+    ] {
         if obj.get(*key).and_then(|v| v.as_str()).is_some() {
             obj.insert(key.to_string(), serde_json::json!("***"));
         }
@@ -600,9 +653,7 @@ pub struct TestProviderResponse {
     pub models: Vec<String>,
 }
 
-pub async fn test_provider(
-    Json(request): Json<TestProviderRequest>,
-) -> Json<TestProviderResponse> {
+pub async fn test_provider(Json(request): Json<TestProviderRequest>) -> Json<TestProviderResponse> {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -889,9 +940,7 @@ pub struct GhStatusResponse {
     pub scopes: Vec<String>,
 }
 
-pub async fn get_gh_status(
-    State(state): State<Arc<AppState>>,
-) -> Json<GhStatusResponse> {
+pub async fn get_gh_status(State(state): State<Arc<AppState>>) -> Json<GhStatusResponse> {
     let config = state.config.read().await;
     let token = match config.github_token.as_deref() {
         Some(t) if !t.is_empty() => t.to_string(),
@@ -906,7 +955,8 @@ pub async fn get_gh_status(
     };
     drop(config);
 
-    let resp = match github_api_get(&state.http_client, &token, "https://api.github.com/user").await {
+    let resp = match github_api_get(&state.http_client, &token, "https://api.github.com/user").await
+    {
         Ok(r) => r,
         Err(_) => {
             return Json(GhStatusResponse {
@@ -1012,7 +1062,9 @@ pub async fn get_gh_repos(
 
     if let Some(ref search) = params.search {
         // First, get the authenticated user's login for the search query
-        let username = get_github_username(&state.http_client, &token).await.unwrap_or_default();
+        let username = get_github_username(&state.http_client, &token)
+            .await
+            .unwrap_or_default();
         let user_qualifier = if username.is_empty() {
             String::new()
         } else {
@@ -1038,10 +1090,12 @@ pub async fn get_gh_repos(
             ));
         }
 
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Failed to parse response: {}", e)))?;
+        let body: serde_json::Value = resp.json().await.map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to parse response: {}", e),
+            )
+        })?;
 
         let items = body
             .get("items")
@@ -1107,10 +1161,12 @@ pub async fn get_gh_repos(
             ));
         }
 
-        let items: Vec<serde_json::Value> = resp
-            .json()
-            .await
-            .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Failed to parse response: {}", e)))?;
+        let items: Vec<serde_json::Value> = resp.json().await.map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to parse response: {}", e),
+            )
+        })?;
 
         let repos: Vec<GhRepo> = items
             .into_iter()
@@ -1281,19 +1337,19 @@ pub async fn get_gh_prs(
         ));
     }
 
-    let items: Vec<serde_json::Value> = resp
-        .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Failed to parse response: {}", e)))?;
+    let items: Vec<serde_json::Value> = resp.json().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to parse response: {}", e),
+        )
+    })?;
 
     let prs: Vec<GhPullRequest> = items
         .into_iter()
         .filter(|item| {
             // If the user asked for "merged", only include PRs that have merged_at set
             if pr_state == "merged" {
-                item.get("merged_at")
-                    .map(|v| !v.is_null())
-                    .unwrap_or(false)
+                item.get("merged_at").map(|v| !v.is_null()).unwrap_or(false)
             } else {
                 true
             }
@@ -1313,11 +1369,7 @@ pub async fn get_gh_prs(
                 })
                 .unwrap_or_default();
 
-            let state_str = if item
-                .get("merged_at")
-                .map(|v| !v.is_null())
-                .unwrap_or(false)
-            {
+            let state_str = if item.get("merged_at").map(|v| !v.is_null()).unwrap_or(false) {
                 "merged".to_string()
             } else {
                 item.get("state")
@@ -1327,10 +1379,7 @@ pub async fn get_gh_prs(
             };
 
             GhPullRequest {
-                number: item
-                    .get("number")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32,
+                number: item.get("number").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
                 title: item
                     .get("title")
                     .and_then(|v| v.as_str())
@@ -1369,10 +1418,7 @@ pub async fn get_gh_prs(
                     .unwrap_or("")
                     .to_string(),
                 labels,
-                draft: item
-                    .get("draft")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
+                draft: item.get("draft").and_then(|v| v.as_bool()).unwrap_or(false),
             }
         })
         .collect();
@@ -1403,10 +1449,7 @@ pub async fn start_pr_review(
     }
 
     if request.pr_number == 0 || request.pr_number > 999_999_999 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Invalid PR number.".to_string(),
-        ));
+        return Err((StatusCode::BAD_REQUEST, "Invalid PR number.".to_string()));
     }
 
     let config = state.config.read().await;
@@ -1487,7 +1530,13 @@ async fn run_pr_review_task(
     let _permit = match state.review_semaphore.clone().acquire_owned().await {
         Ok(permit) => permit,
         Err(_) => {
-            AppState::fail_review(&state, &review_id, "Review semaphore closed".to_string(), None).await;
+            AppState::fail_review(
+                &state,
+                &review_id,
+                "Review semaphore closed".to_string(),
+                None,
+            )
+            .await;
             return;
         }
     };
@@ -1515,9 +1564,14 @@ async fn run_pr_review_task(
             .build();
         emit_wide_event(&event);
         AppState::complete_review(
-            &state, &review_id, Vec::new(),
-            CommentSynthesizer::generate_summary(&[]), 0, event,
-        ).await;
+            &state,
+            &review_id,
+            Vec::new(),
+            CommentSynthesizer::generate_summary(&[]),
+            0,
+            event,
+        )
+        .await;
         AppState::save_reviews_async(&state);
         return;
     }
@@ -1539,7 +1593,11 @@ async fn run_pr_review_task(
             if post_results && !comments.is_empty() {
                 if let Some(ref token) = github_token {
                     github_posted = post_pr_review_comments(
-                        &state.http_client, token, &repo, pr_number, &comments,
+                        &state.http_client,
+                        token,
+                        &repo,
+                        pr_number,
+                        &comments,
                         Some(&summary),
                     )
                     .await
@@ -1547,18 +1605,25 @@ async fn run_pr_review_task(
                 }
             }
 
-            let event = ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
-                .provider(provider.as_deref())
-                .base_url(base_url.as_deref())
-                .duration_ms(task_start.elapsed().as_millis() as u64)
-                .llm_total_ms(llm_ms)
-                .diff_stats(diff_bytes, diff_files_total, files_reviewed, diff_files_total.saturating_sub(files_reviewed))
-                .comments(&comments, Some(&summary))
-                .github(&repo, pr_number)
-                .github_posted(github_posted)
-                .build();
+            let event =
+                ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
+                    .provider(provider.as_deref())
+                    .base_url(base_url.as_deref())
+                    .duration_ms(task_start.elapsed().as_millis() as u64)
+                    .llm_total_ms(llm_ms)
+                    .diff_stats(
+                        diff_bytes,
+                        diff_files_total,
+                        files_reviewed,
+                        diff_files_total.saturating_sub(files_reviewed),
+                    )
+                    .comments(&comments, Some(&summary))
+                    .github(&repo, pr_number)
+                    .github_posted(github_posted)
+                    .build();
             emit_wide_event(&event);
-            AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event).await;
+            AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
+                .await;
         }
         Ok(Err(e)) => {
             let err_msg = format!("Review failed: {}", e);
@@ -1603,17 +1668,16 @@ pub(super) async fn post_pr_review_comments(
     summary: Option<&crate::core::comment::ReviewSummary>,
 ) -> Result<(), String> {
     // Fetch PR head SHA (required for inline comments)
-    let pr_url = format!(
-        "https://api.github.com/repos/{}/pulls/{}",
-        repo, pr_number,
-    );
+    let pr_url = format!("https://api.github.com/repos/{}/pulls/{}", repo, pr_number,);
     let pr_resp = github_api_get(client, token, &pr_url).await?;
     if !pr_resp.status().is_success() {
         let status = pr_resp.status();
         let body = pr_resp.text().await.unwrap_or_default();
         return Err(format!("Failed to get PR info {}: {}", status, body));
     }
-    let pr_data: serde_json::Value = pr_resp.json().await
+    let pr_data: serde_json::Value = pr_resp
+        .json()
+        .await
         .map_err(|e| format!("Failed to parse PR response: {}", e))?;
     let commit_id = pr_data
         .get("head")
@@ -1632,10 +1696,7 @@ pub(super) async fn post_pr_review_comments(
             crate::core::comment::Severity::Suggestion => ":bulb:",
         };
 
-        let mut comment_body = format!(
-            "{} **{}** | {}",
-            severity_icon, c.severity, c.category
-        );
+        let mut comment_body = format!("{} **{}** | {}", severity_icon, c.severity, c.category);
         if c.confidence > 0.0 {
             comment_body.push_str(&format!(
                 " | confidence: {}%",
@@ -1692,11 +1753,18 @@ pub(super) async fn post_pr_review_comments(
             if comments.len() == 1 { "" } else { "s" }
         ));
     }
-    review_body_text.push_str("_Automated review by [DiffScope](https://github.com/haasonsaas/diffscope)_");
+    review_body_text
+        .push_str("_Automated review by [DiffScope](https://github.com/haasonsaas/diffscope)_");
 
     // Determine event type based on severity
-    let has_errors = comments.iter().any(|c| matches!(c.severity, crate::core::comment::Severity::Error));
-    let event = if has_errors { "REQUEST_CHANGES" } else { "COMMENT" };
+    let has_errors = comments
+        .iter()
+        .any(|c| matches!(c.severity, crate::core::comment::Severity::Error));
+    let event = if has_errors {
+        "REQUEST_CHANGES"
+    } else {
+        "COMMENT"
+    };
 
     let review_payload = serde_json::json!({
         "commit_id": commit_id,

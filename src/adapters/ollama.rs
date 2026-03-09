@@ -138,7 +138,13 @@ impl OllamaAdapter {
             name: self.model_name_bare().to_string(),
         };
 
-        let response = self.client.post(&url).json(&show_request).send().await.ok()?;
+        let response = self
+            .client
+            .post(&url)
+            .json(&show_request)
+            .send()
+            .await
+            .ok()?;
 
         if !response.status().is_success() {
             return None;
@@ -296,7 +302,12 @@ mod tests {
             .mock("POST", "/api/chat")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(chat_response_body_with_usage("test response", "codellama", 10, 5))
+            .with_body(chat_response_body_with_usage(
+                "test response",
+                "codellama",
+                10,
+                5,
+            ))
             .create_async()
             .await;
 
@@ -328,8 +339,7 @@ mod tests {
             .create_async()
             .await;
 
-        let adapter =
-            OllamaAdapter::new(test_config(&server.url(), "ollama:codellama")).unwrap();
+        let adapter = OllamaAdapter::new(test_config(&server.url(), "ollama:codellama")).unwrap();
         let result = adapter.complete(test_request()).await;
 
         assert!(result.is_ok());
@@ -599,8 +609,7 @@ mod tests {
             .create_async()
             .await;
 
-        let adapter =
-            OllamaAdapter::new(test_config(&server.url(), "ollama:codellama")).unwrap();
+        let adapter = OllamaAdapter::new(test_config(&server.url(), "ollama:codellama")).unwrap();
         let result = adapter.detect_context_window().await;
 
         assert_eq!(result, Some(8192));
@@ -723,10 +732,7 @@ mod tests {
 
     #[test]
     fn test_parse_num_ctx_missing() {
-        assert_eq!(
-            parse_num_ctx(Some("temperature 0.8\nstop [INST]")),
-            None
-        );
+        assert_eq!(parse_num_ctx(Some("temperature 0.8\nstop [INST]")), None);
     }
 
     #[test]

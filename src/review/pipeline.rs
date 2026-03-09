@@ -32,8 +32,8 @@ pub struct ProgressUpdate {
 /// Callback invoked before each file's LLM call and after completion.
 pub type ProgressCallback = Arc<dyn Fn(ProgressUpdate) + Send + Sync>;
 use super::context_helpers::{
-    inject_custom_context, inject_pattern_repository_context,
-    rank_and_trim_context_chunks, resolve_pattern_repositories,
+    inject_custom_context, inject_pattern_repository_context, rank_and_trim_context_chunks,
+    resolve_pattern_repositories,
 };
 use super::feedback::load_feedback_store;
 use super::filters::apply_review_filters;
@@ -87,7 +87,14 @@ pub async fn review_diff_content_raw_with_progress(
             let mut all_comments = Vec::new();
             for (i, chunk) in chunks.iter().enumerate() {
                 eprintln!("Processing chunk {}/{}...", i + 1, chunks.len());
-                match review_diff_content_raw_inner(chunk, config.clone(), repo_path, on_progress.clone()).await {
+                match review_diff_content_raw_inner(
+                    chunk,
+                    config.clone(),
+                    repo_path,
+                    on_progress.clone(),
+                )
+                .await
+                {
                     Ok(comments) => all_comments.extend(comments),
                     Err(e) => {
                         eprintln!("Warning: chunk {} failed: {}", i + 1, e);
@@ -128,34 +135,32 @@ async fn review_diff_content_raw_inner(
     }
 
     // Build enhanced review context from the new modules
-    let mut enhanced_ctx = core::build_enhanced_context(
-        &diffs,
-        &HashMap::new(),
-        None,
-        None,
-        None,
-        None,
-    );
+    let mut enhanced_ctx =
+        core::build_enhanced_context(&diffs, &HashMap::new(), None, None, None, None);
     let enhanced_guidance = core::generate_enhanced_guidance(&enhanced_ctx, "rs");
     if !enhanced_guidance.is_empty() {
-        info!("Enhanced guidance generated ({} chars)", enhanced_guidance.len());
+        info!(
+            "Enhanced guidance generated ({} chars)",
+            enhanced_guidance.len()
+        );
     }
 
     // Auto-detect instruction files (.cursorrules, CLAUDE.md, agents.md, etc.)
-    let auto_instructions = if config.auto_detect_instructions && config.review_instructions.is_none() {
-        let detected = detect_instruction_files(repo_path);
-        if !detected.is_empty() {
-            let combined: Vec<String> = detected
-                .iter()
-                .map(|(name, content)| format!("# From {}\n{}", name, content))
-                .collect();
-            Some(combined.join("\n\n"))
+    let auto_instructions =
+        if config.auto_detect_instructions && config.review_instructions.is_none() {
+            let detected = detect_instruction_files(repo_path);
+            if !detected.is_empty() {
+                let combined: Vec<String> = detected
+                    .iter()
+                    .map(|(name, content)| format!("# From {}\n{}", name, content))
+                    .collect();
+                Some(combined.join("\n\n"))
+            } else {
+                None
+            }
         } else {
             None
-        }
-    } else {
-        None
-    };
+        };
 
     let symbol_index = build_symbol_index(&config, repo_path);
     let pattern_repositories = resolve_pattern_repositories(&config, repo_path);
@@ -317,7 +322,9 @@ async fn review_diff_content_raw_inner(
         // Inject enhanced guidance from the new modules
         if !enhanced_guidance.is_empty() {
             local_prompt_config.system_prompt.push_str("\n\n");
-            local_prompt_config.system_prompt.push_str(&enhanced_guidance);
+            local_prompt_config
+                .system_prompt
+                .push_str(&enhanced_guidance);
         }
         // Inject auto-detected instruction files
         if let Some(ref instructions) = auto_instructions {
@@ -384,7 +391,13 @@ async fn review_diff_content_raw_inner(
                         elapsed.as_secs_f64()
                     );
                 }
-                (job.diff_index, job.active_rules, job.path_config, job.file_path, response)
+                (
+                    job.diff_index,
+                    job.active_rules,
+                    job.path_config,
+                    job.file_path,
+                    response,
+                )
             }
         })
         .buffer_unordered(concurrency)
@@ -406,7 +419,11 @@ async fn review_diff_content_raw_inner(
             Ok(response) => {
                 // Validate LLM response before parsing
                 if let Err(validation_err) = validate_llm_response(&response.content) {
-                    eprintln!("Warning: LLM response validation failed for {}: {}", file_path.display(), validation_err);
+                    eprintln!(
+                        "Warning: LLM response validation failed for {}: {}",
+                        file_path.display(),
+                        validation_err
+                    );
                     if is_local {
                         eprintln!(
                             "Hint: Try a larger model or reduce diff size for better results with local models."
@@ -422,9 +439,7 @@ async fn review_diff_content_raw_inner(
                     if let Some(ref pc) = path_config {
                         for comment in &mut comments {
                             for (category, severity) in &pc.severity_overrides {
-                                if comment.category.as_str()
-                                    == category.to_lowercase()
-                                {
+                                if comment.category.as_str() == category.to_lowercase() {
                                     comment.severity = match severity.to_lowercase().as_str() {
                                         "error" => core::comment::Severity::Error,
                                         "warning" => core::comment::Severity::Warning,
@@ -611,9 +626,7 @@ pub fn build_review_guidance(
 
     // Fix suggestions toggle
     if !config.include_fix_suggestions {
-        sections.push(
-            "Do not include code fix suggestions. Only describe the issue.".to_string(),
-        );
+        sections.push("Do not include code fix suggestions. Only describe the issue.".to_string());
     }
 
     if sections.is_empty() {
@@ -1156,7 +1169,11 @@ mod tests {
         let diff = "diff --git a/a.rs b/a.rs\n+line1\n\ndiff --git a/b.rs b/b.rs\n+line2\n\ndiff --git a/c.rs b/c.rs\n+line3\n";
         // Set max_chars small enough to force splits
         let chunks = chunk_diff_for_context(diff, 40);
-        assert!(chunks.len() >= 2, "Expected at least 2 chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() >= 2,
+            "Expected at least 2 chunks, got {}",
+            chunks.len()
+        );
         // Each chunk should start with diff --git (or be the first chunk which inherits it)
         for (i, chunk) in chunks.iter().enumerate() {
             assert!(

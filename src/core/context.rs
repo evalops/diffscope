@@ -287,8 +287,8 @@ mod tests {
         // max_chars=10 means truncate at 10 - 20 = 0 (saturating), but
         // let's use a value where the truncation point lands mid-character.
         let content = "€€€€€€€€€€".to_string(); // 10 euros = 30 bytes
-        // max_chars=25: truncate at 25-20=5, but byte 5 is mid-char (€ boundaries: 0,3,6,9,...)
-        // This should NOT panic
+                                                // max_chars=25: truncate at 25-20=5, but byte 5 is mid-char (€ boundaries: 0,3,6,9,...)
+                                                // This should NOT panic
         let result = truncate_with_notice(content, 25);
         assert!(result.contains("[Truncated]"));
         // Verify the result is valid UTF-8 (it is since it's a String, but

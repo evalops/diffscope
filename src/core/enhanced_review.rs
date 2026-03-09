@@ -12,36 +12,26 @@ use crate::core::code_summary::{
     SummaryCache,
 };
 use crate::core::composable_pipeline::{
-    ConfidenceFilterStage, DeduplicateStage, FnStage, MaxCommentsStage, Pipeline,
-    PipelineBuilder, PipelineContext, SortBySeverityStage, StageType,
-    TaggingStage,
+    ConfidenceFilterStage, DeduplicateStage, FnStage, MaxCommentsStage, Pipeline, PipelineBuilder,
+    PipelineContext, SortBySeverityStage, StageType, TaggingStage,
 };
 use crate::core::convention_learner::ConventionStore;
 use crate::core::diff_parser::UnifiedDiff;
 use crate::core::eval_benchmarks::{
     compare_results, evaluate_against_thresholds, AggregateMetrics, BenchmarkFixture,
-    BenchmarkResult, BenchmarkSuite, BenchmarkThresholds, CommunityFixturePack,
-    Difficulty, ExpectedFinding, FixtureResult, NegativeFinding, QualityTrend, TrendDirection,
-    TrendEntry,
+    BenchmarkResult, BenchmarkSuite, BenchmarkThresholds, CommunityFixturePack, Difficulty,
+    ExpectedFinding, FixtureResult, NegativeFinding, QualityTrend, TrendDirection, TrendEntry,
 };
 use crate::core::function_chunker::{
     chunk_diff_by_functions, detect_function_boundaries, FunctionBoundary, FunctionChunk,
 };
-use crate::core::git_history::{
-    FileChange, FileChurnInfo, GitHistoryAnalyzer, GitLogEntry,
-};
-use crate::core::multi_pass::{
-    HotspotResult, MultiPassConfig, MultiPassReview, MultiPassSummary,
-};
+use crate::core::git_history::{FileChange, FileChurnInfo, GitHistoryAnalyzer, GitLogEntry};
+use crate::core::multi_pass::{HotspotResult, MultiPassConfig, MultiPassReview, MultiPassSummary};
 use crate::core::offline::{
     check_readiness, optimize_prompt_for_local, LocalModel, OfflineConfig, OfflineModelManager,
 };
-use crate::core::pr_history::{
-    AuthorStats, PRCommentPattern, PRHistoryAnalyzer, PRReviewComment,
-};
-use crate::core::symbol_graph::{
-    SymbolEdge, SymbolGraph, SymbolKind, SymbolNode, SymbolRelation,
-};
+use crate::core::pr_history::{AuthorStats, PRCommentPattern, PRHistoryAnalyzer, PRReviewComment};
+use crate::core::symbol_graph::{SymbolEdge, SymbolGraph, SymbolKind, SymbolNode, SymbolRelation};
 
 use crate::core::comment::Comment;
 
@@ -225,10 +215,7 @@ fn exercise_symbol_graph(graph: &mut SymbolGraph, diffs: &[UnifiedDiff]) {
 }
 
 /// Wire code_summary types: CodeSummary, SummaryCache and all their methods/fields.
-fn exercise_code_summary(
-    source_files: &HashMap<PathBuf, String>,
-    cache: &mut SummaryCache,
-) {
+fn exercise_code_summary(source_files: &HashMap<PathBuf, String>, cache: &mut SummaryCache) {
     // Summarize symbols from source files
     let mut all_summaries: Vec<CodeSummary> = Vec::new();
     for (path, content) in source_files {
@@ -393,7 +380,13 @@ fn exercise_convention_learner(convention_json: Option<&str>) -> ConventionStore
     let _sc = store.score_comment("test comment", "Bug");
     let _guidance = store.generate_guidance(&["Bug", "Style", "Security"]);
 
-    store.record_feedback("placeholder feedback", "BestPractice", true, Some("*.rs"), "2025-01-01");
+    store.record_feedback(
+        "placeholder feedback",
+        "BestPractice",
+        true,
+        Some("*.rs"),
+        "2025-01-01",
+    );
 
     // Exercise all ConventionPattern methods and fields via boost/suppression patterns
     for pat in store.boost_patterns() {
@@ -476,10 +469,7 @@ fn exercise_pr_history(
 
 /// Wire git_history types: GitHistoryAnalyzer, GitLogEntry, FileChange,
 /// FileChurnInfo and all methods/fields.
-fn exercise_git_history(
-    git_log_output: Option<&str>,
-    diffs: &[UnifiedDiff],
-) -> GitHistoryAnalyzer {
+fn exercise_git_history(git_log_output: Option<&str>, diffs: &[UnifiedDiff]) -> GitHistoryAnalyzer {
     let mut analyzer = GitHistoryAnalyzer::new();
     if let Some(log_output) = git_log_output {
         let entries = GitHistoryAnalyzer::parse_git_log_numstat(log_output);
@@ -660,12 +650,8 @@ fn exercise_offline() -> (OfflineConfig, OfflineModelManager) {
     let _all_models = manager.available_models();
     let _url = manager.generate_url();
     let _chat_url = manager.chat_url();
-    let _payload = manager.build_request_payload(
-        &config.model_name,
-        "test prompt",
-        Some("system"),
-        &config,
-    );
+    let _payload =
+        manager.build_request_payload(&config.model_name, "test prompt", Some("system"), &config);
     let _chat_payload = manager.build_chat_request_payload(
         &config.model_name,
         "test prompt",
@@ -757,7 +743,12 @@ fn exercise_eval_benchmarks(quality_trend_json: Option<&str>) -> QualityTrend {
     let _fc = suite.fixture_count();
 
     // Exercise all Difficulty variants and weight method
-    let difficulties = [Difficulty::Easy, Difficulty::Medium, Difficulty::Hard, Difficulty::Expert];
+    let difficulties = [
+        Difficulty::Easy,
+        Difficulty::Medium,
+        Difficulty::Hard,
+        Difficulty::Expert,
+    ];
     for d in &difficulties {
         let _w = d.weight();
     }
@@ -911,7 +902,9 @@ pub fn apply_enhanced_filters(
     // Apply convention-based scoring to adjust confidence
     for comment in &mut comments {
         let category_str = comment.category.to_string();
-        let adjustment = ctx.convention_store.score_comment(&comment.content, &category_str);
+        let adjustment = ctx
+            .convention_store
+            .score_comment(&comment.content, &category_str);
         comment.confidence = (comment.confidence + adjustment).clamp(0.0, 1.0);
     }
 
@@ -949,7 +942,11 @@ pub fn generate_enhanced_guidance(ctx: &EnhancedReviewContext, file_ext: &str) -
     let mut guidance = String::new();
 
     // Git history context
-    let changed_files: Vec<PathBuf> = ctx.function_chunks.iter().map(|c| c.file_path.clone()).collect();
+    let changed_files: Vec<PathBuf> = ctx
+        .function_chunks
+        .iter()
+        .map(|c| c.file_path.clone())
+        .collect();
     let history_ctx = ctx.git_analyzer.generate_history_context(&changed_files);
     if !history_ctx.is_empty() {
         guidance.push_str(&history_ctx);
