@@ -4,7 +4,6 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;
-#[cfg(test)]
 use std::path::PathBuf;
 use std::time::Instant;
 use tracing::{info, warn};
@@ -14,6 +13,7 @@ use std::sync::Arc;
 use crate::adapters;
 use crate::config;
 use crate::core;
+use crate::core::convention_learner::ConventionStore;
 use crate::core::offline::optimize_prompt_for_local;
 use crate::output::OutputFormat;
 use crate::parsing::parse_llm_response;
@@ -135,9 +135,24 @@ async fn review_diff_content_raw_inner(
         }
     }
 
-    // Build enhanced review context from the new modules
-    let mut enhanced_ctx =
-        core::build_enhanced_context(&diffs, &HashMap::new(), None, None, None, None);
+    // Gather git history for enhanced context
+    let git_log_output = gather_git_log(repo_path);
+
+    // Load convention store for learned review patterns
+    let convention_store_path = resolve_convention_store_path(&config);
+    let convention_json = convention_store_path
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok());
+
+    // Build enhanced review context with real data from the repository
+    let mut enhanced_ctx = core::build_enhanced_context(
+        &diffs,
+        &HashMap::new(),
+        git_log_output.as_deref(),
+        None,
+        convention_json.as_deref(),
+        None,
+    );
     let enhanced_guidance = core::generate_enhanced_guidance(&enhanced_ctx, "rs");
     if !enhanced_guidance.is_empty() {
         info!(
@@ -266,6 +281,12 @@ async fn review_diff_content_raw_inner(
                     .await?;
                 context_chunks.extend(index_chunks);
             }
+        }
+
+        // Include related files: reverse dependencies (callers) and test files
+        if let Some(ref index) = symbol_index {
+            let caller_chunks = gather_related_file_context(index, &diff.file_path, repo_path);
+            context_chunks.extend(caller_chunks);
         }
 
         // Get path-specific configuration
@@ -568,6 +589,15 @@ async fn review_diff_content_raw_inner(
 
     // Apply enhanced filters from convention learning and composable pipeline
     let processed_comments = core::apply_enhanced_filters(&mut enhanced_ctx, processed_comments);
+
+    // Apply convention-based suppression: filter out comments matching suppression patterns
+    let processed_comments =
+        apply_convention_suppression(processed_comments, &enhanced_ctx.convention_store);
+
+    // Save updated convention store back to disk
+    if let Some(ref store_path) = convention_store_path {
+        save_convention_store(&enhanced_ctx.convention_store, store_path);
+    }
 
     Ok(processed_comments)
 }
@@ -991,6 +1021,181 @@ fn should_optimize_for_local(config: &config::Config) -> bool {
     }
     // Optimize if base_url points to localhost
     config.is_local_endpoint()
+}
+
+/// Run `git log --numstat` against repo_path to gather commit history.
+/// Returns None if the command fails (e.g., not a git repo).
+fn gather_git_log(repo_path: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args([
+            "log",
+            "--numstat",
+            "--format=commit %H%nAuthor: %an <%ae>%nDate:   %ai%n%n    %s%n",
+            "-100",
+        ])
+        .current_dir(repo_path)
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let log_text = String::from_utf8_lossy(&out.stdout).to_string();
+            if log_text.trim().is_empty() {
+                None
+            } else {
+                info!("Gathered git log ({} bytes)", log_text.len());
+                Some(log_text)
+            }
+        }
+        _ => {
+            info!("Git log unavailable (not a git repo or git not found)");
+            None
+        }
+    }
+}
+
+/// Resolve the convention store path from config or default location.
+fn resolve_convention_store_path(config: &config::Config) -> Option<PathBuf> {
+    if let Some(ref path) = config.convention_store_path {
+        return Some(PathBuf::from(path));
+    }
+    // Default: ~/.local/share/diffscope/conventions.json
+    dirs::data_local_dir().map(|d| d.join("diffscope").join("conventions.json"))
+}
+
+/// Save the convention store to the given path, creating directories if needed.
+fn save_convention_store(store: &ConventionStore, path: &PathBuf) {
+    if let Ok(json) = store.to_json() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = std::fs::write(path, json) {
+            warn!(
+                "Failed to save convention store to {}: {}",
+                path.display(),
+                e
+            );
+        }
+    }
+}
+
+/// Gather related file context: reverse dependencies (callers) and test files.
+/// These are included as Reference context chunks for the LLM.
+fn gather_related_file_context(
+    index: &core::SymbolIndex,
+    file_path: &Path,
+    repo_path: &Path,
+) -> Vec<core::LLMContextChunk> {
+    let mut chunks: Vec<core::LLMContextChunk> = Vec::new();
+
+    // 1. Reverse dependencies (files that import/depend on this file)
+    let callers = index.reverse_deps(file_path);
+    for caller_path in callers.iter().take(3) {
+        if let Some(summary) = index.file_summary(caller_path) {
+            let truncated: String = if summary.len() > 2000 {
+                format!("{}...[truncated]", &summary[..2000])
+            } else {
+                summary.to_string()
+            };
+            chunks.push(core::LLMContextChunk {
+                file_path: caller_path.clone(),
+                content: format!("[Caller/dependent file]\n{}", truncated),
+                context_type: core::ContextType::Reference,
+                line_range: None,
+            });
+        }
+    }
+
+    // 2. Look for matching test files
+    let test_files = find_test_files(file_path, repo_path);
+    for test_path in test_files.iter().take(2) {
+        let relative: &Path = test_path.strip_prefix(repo_path).unwrap_or(test_path);
+        // Read first 60 lines of the test file for context
+        if let Ok(content) = std::fs::read_to_string(test_path) {
+            let snippet: String = content.lines().take(60).collect::<Vec<_>>().join("\n");
+            if !snippet.is_empty() {
+                chunks.push(core::LLMContextChunk {
+                    file_path: relative.to_path_buf(),
+                    content: format!("[Test file]\n{}", snippet),
+                    context_type: core::ContextType::Reference,
+                    line_range: None,
+                });
+            }
+        }
+    }
+
+    chunks
+}
+
+/// Find test files that correspond to a given source file.
+/// Looks for patterns like test_<stem>, <stem>_test, <stem>.test, tests/<stem>.
+fn find_test_files(file_path: &Path, repo_path: &Path) -> Vec<PathBuf> {
+    let stem = match file_path.file_stem().and_then(|s| s.to_str()) {
+        Some(s) => s.to_string(),
+        None => return Vec::new(),
+    };
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let parent = file_path.parent().unwrap_or(Path::new(""));
+
+    let candidates: Vec<PathBuf> = vec![
+        repo_path
+            .join(parent)
+            .join(format!("test_{}.{}", stem, ext)),
+        repo_path
+            .join(parent)
+            .join(format!("{}_test.{}", stem, ext)),
+        repo_path
+            .join(parent)
+            .join(format!("{}.test.{}", stem, ext)),
+        repo_path
+            .join(parent)
+            .join(format!("{}.spec.{}", stem, ext)),
+        repo_path
+            .join(parent)
+            .join("tests")
+            .join(format!("{}.{}", stem, ext)),
+        repo_path
+            .join(parent)
+            .join("__tests__")
+            .join(format!("{}.{}", stem, ext)),
+    ];
+
+    candidates
+        .into_iter()
+        .filter(|p: &PathBuf| p.is_file())
+        .collect()
+}
+
+/// Apply convention-based suppression: filter out comments whose content
+/// matches learned suppression patterns with high confidence.
+fn apply_convention_suppression(
+    comments: Vec<core::Comment>,
+    convention_store: &ConventionStore,
+) -> Vec<core::Comment> {
+    let suppression_patterns = convention_store.suppression_patterns();
+    if suppression_patterns.is_empty() {
+        return comments;
+    }
+
+    let before_count = comments.len();
+    let filtered: Vec<core::Comment> = comments
+        .into_iter()
+        .filter(|comment| {
+            let category_str = comment.category.to_string();
+            let score = convention_store.score_comment(&comment.content, &category_str);
+            // Only suppress if the convention store strongly indicates suppression
+            // (score <= -0.25 means the team has consistently rejected similar comments)
+            score > -0.25
+        })
+        .collect();
+
+    let suppressed = before_count.saturating_sub(filtered.len());
+    if suppressed > 0 {
+        info!(
+            "Convention learning suppressed {} comment(s) based on team feedback patterns",
+            suppressed
+        );
+    }
+
+    filtered
 }
 
 #[cfg(test)]

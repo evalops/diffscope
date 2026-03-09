@@ -488,6 +488,19 @@ impl SymbolIndex {
         }
     }
 
+    /// Get files that depend on the given file (reverse dependencies / callers).
+    pub fn reverse_deps(&self, file: &Path) -> Vec<PathBuf> {
+        self.reverse_dependency_graph
+            .get(file)
+            .map(|deps| deps.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get a file summary snippet (first ~40 lines) if the file was indexed.
+    pub fn file_summary(&self, file: &Path) -> Option<&str> {
+        self.file_summaries.get(file).map(|s| s.snippet.as_str())
+    }
+
     fn neighbor_files(&self, file: &Path) -> HashSet<PathBuf> {
         let mut neighbors = HashSet::new();
         if let Some(deps) = self.dependency_graph.get(file) {

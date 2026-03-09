@@ -11,12 +11,12 @@ mod vault;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
-use tracing_subscriber::EnvFilter;
 #[cfg(feature = "otel")]
 use opentelemetry::trace::TracerProvider as _;
+use std::path::PathBuf;
 #[cfg(feature = "otel")]
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::EnvFilter;
 
 use commands::{EvalRunOptions, GitCommands};
 use config::CliOverrides;

@@ -826,13 +826,8 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
 
             // Generate AI-powered PR summary and post it as a comment if enabled
             if let Some(ref cfg) = summary_config {
-                super::api::generate_and_store_pr_summary(
-                    &state,
-                    &review_id,
-                    &diff_content,
-                    cfg,
-                )
-                .await;
+                super::api::generate_and_store_pr_summary(&state, &review_id, &diff_content, cfg)
+                    .await;
 
                 // Post the summary as a PR comment
                 let pr_summary_text = {

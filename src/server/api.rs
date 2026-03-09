@@ -13,6 +13,7 @@ use super::state::{
     MAX_DIFF_SIZE,
 };
 use crate::core::comment::CommentSynthesizer;
+use crate::core::convention_learner::ConventionStore;
 use tracing::{info, warn};
 
 // === Request/Response types ===
@@ -491,10 +492,57 @@ pub async fn submit_feedback(
         .find(|c| c.id == request.comment_id)
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    // Capture comment data for convention store before mutating
+    let comment_content = comment.content.clone();
+    let comment_category = comment.category.to_string();
+    let comment_ext = comment
+        .file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_string();
+    let is_accepted = request.action == "accept";
+
     comment.feedback = Some(request.action);
     drop(reviews);
 
     AppState::save_reviews_async(&state);
+
+    // Record in convention store for learned patterns
+    let config = state.config.read().await;
+    let convention_path = config
+        .convention_store_path
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::data_local_dir().map(|d| d.join("diffscope").join("conventions.json")));
+    drop(config);
+
+    if let Some(ref cpath) = convention_path {
+        let json = std::fs::read_to_string(cpath).ok();
+        let mut cstore = json
+            .as_deref()
+            .and_then(|j| ConventionStore::from_json(j).ok())
+            .unwrap_or_default();
+        let now = chrono::Utc::now().to_rfc3339();
+        let file_pattern = if comment_ext.is_empty() {
+            None
+        } else {
+            Some(format!("*.{}", comment_ext))
+        };
+        cstore.record_feedback(
+            &comment_content,
+            &comment_category,
+            is_accepted,
+            file_pattern.as_deref(),
+            &now,
+        );
+        if let Ok(out_json) = cstore.to_json() {
+            if let Some(parent) = cpath.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(cpath, out_json);
+        }
+    }
 
     Ok(Json(FeedbackResponse { ok: true }))
 }

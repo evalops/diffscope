@@ -7,6 +7,7 @@ use tracing::info;
 use crate::adapters;
 use crate::config;
 use crate::core;
+use crate::core::convention_learner::ConventionStore;
 use crate::review;
 
 pub async fn changelog_command(
@@ -208,6 +209,38 @@ pub async fn feedback_command(
         action
     );
 
+    // Also record in the convention store for learned suppression/boost patterns
+    let convention_path = resolve_convention_store_path_for_feedback(&config);
+    if let Some(ref cpath) = convention_path {
+        let json = std::fs::read_to_string(cpath).ok();
+        let mut cstore = json
+            .as_deref()
+            .and_then(|j| ConventionStore::from_json(j).ok())
+            .unwrap_or_default();
+        let now = chrono::Utc::now().to_rfc3339();
+        let is_accepted = action == "accept";
+        for comment in &comments {
+            let ext = comment
+                .file_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!("*.{}", e));
+            cstore.record_feedback(
+                &comment.content,
+                &comment.category.to_string(),
+                is_accepted,
+                ext.as_deref(),
+                &now,
+            );
+        }
+        if let Ok(out_json) = cstore.to_json() {
+            if let Some(parent) = cpath.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(cpath, out_json);
+        }
+    }
+
     Ok(())
 }
 
@@ -361,6 +394,14 @@ fn select_discussion_comment(
         .first()
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("No comments available"))
+}
+
+/// Resolve the convention store path from config or default location.
+fn resolve_convention_store_path_for_feedback(config: &config::Config) -> Option<PathBuf> {
+    if let Some(ref path) = config.convention_store_path {
+        return Some(PathBuf::from(path));
+    }
+    dirs::data_local_dir().map(|d| d.join("diffscope").join("conventions.json"))
 }
 
 #[cfg(test)]
