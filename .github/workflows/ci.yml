@@ -28,6 +28,17 @@ jobs:
       - name: Clippy
         run: cargo clippy -- -D warnings
 
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit dependencies
+        run: cargo audit
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:

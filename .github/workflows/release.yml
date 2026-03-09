@@ -249,3 +249,15 @@ jobs:
         env:
           IMAGE_REF: ghcr.io/haasonsaas/diffscope@${{ steps.build-and-push.outputs.digest }}
         run: cosign sign --yes "${IMAGE_REF}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/haasonsaas/diffscope@${{ steps.build-and-push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-diffscope.spdx.json
+
+      - name: Upload SBOM to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload ${{ github.ref_name }} sbom-diffscope.spdx.json --clobber || true
