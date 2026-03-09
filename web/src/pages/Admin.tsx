@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
 import { useEvents } from '../api/hooks'
-import { Loader2, AlertTriangle, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, DollarSign, Clock, ToggleLeft, ToggleRight } from 'lucide-react'
+import { Loader2, AlertTriangle, ArrowUpRight, ArrowDownRight, DollarSign, ToggleLeft, ToggleRight } from 'lucide-react'
 import { CHART_THEME, SEV_COLORS } from '../lib/constants'
 import { estimateCost, formatCost, totalCost } from '../lib/cost'
 import type { ReviewEvent } from '../api/types'
@@ -487,7 +487,7 @@ export function Admin() {
                       />
                       <Tooltip
                         {...tooltipStyle}
-                        formatter={(value: number) => [formatCost(value), 'Cumulative Cost']}
+                        formatter={(value) => [formatCost(Number(value)), 'Cumulative Cost']}
                       />
                       <Area type="monotone" dataKey="cost" stroke={CHART_THEME.accent} fill="url(#costGrad)" strokeWidth={1.5} dot={false} name="Cumulative Cost" />
                     </AreaChart>
