@@ -1,0 +1,4 @@
+[advisories]
+# rsa: Marvin Attack timing sidechannel - no fix available.
+# Dependency comes from sqlx-mysql which we don't use (postgres only).
+ignore = ["RUSTSEC-2023-0071"]
