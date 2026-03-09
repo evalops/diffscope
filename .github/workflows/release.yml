@@ -11,6 +11,7 @@ env:
 permissions:
   contents: write
   packages: write
+  id-token: write
 
 jobs:
   create-release:
@@ -229,6 +230,7 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
+        id: build-and-push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -240,5 +242,10 @@ jobs:
             ghcr.io/haasonsaas/diffscope:latest
             ghcr.io/haasonsaas/diffscope:${{ steps.get_version.outputs.VERSION }}
 
-  # Homebrew formula update can be added later when tap repository is created
-  # For now, users can use the install script or download binaries directly
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image (keyless)
+        env:
+          IMAGE_REF: ghcr.io/haasonsaas/diffscope@${{ steps.build-and-push.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_REF}"
