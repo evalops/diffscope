@@ -100,11 +100,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build frontend
+        run: cd web && npm ci && npm run build
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      
+
       - name: Install cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
@@ -206,29 +214,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Extract version from tag
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-      
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
             ghcr.io/haasonsaas/diffscope:latest
             ghcr.io/haasonsaas/diffscope:${{ steps.get_version.outputs.VERSION }}
