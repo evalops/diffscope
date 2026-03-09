@@ -111,6 +111,19 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# -- Network policy to restrict pod traffic
+networkPolicy:
+  enabled: false
+  # Additional ingress sources (e.g., namespaceSelector, podSelector)
+  ingressFrom: []
+  # Additional egress rules beyond DNS and HTTPS
+  extraEgress: []
+
+# -- Pod disruption budget for high-availability
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
 # -- Ollama for local LLM inference
 ollama:
   enabled: false
