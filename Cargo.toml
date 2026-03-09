@@ -39,7 +39,7 @@ uuid = { version = "1", features = ["v4"] }
 mime_guess = "2"
 hmac = "0.12"
 sha2 = "0.10"
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 base64 = "0.22"
 futures = "0.3"
 opentelemetry = { version = "0.27", features = ["trace"], optional = true }
