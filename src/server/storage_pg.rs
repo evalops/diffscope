@@ -3,13 +3,11 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::info;
 
-use super::state::{
-    ReviewEvent, ReviewSession, ReviewStatus,
-};
-use crate::core::comment::ReviewSummary;
+use super::state::{ReviewEvent, ReviewSession, ReviewStatus};
 use super::storage::{
     DailyCount, EventFilters, EventStats, ModelStats, RepoStats, SourceStats, StorageBackend,
 };
+use crate::core::comment::ReviewSummary;
 use crate::core::comment::{Category, CodeSuggestion, Comment, FixEffort, Severity};
 
 /// PostgreSQL storage backend implementation.
@@ -83,8 +81,13 @@ impl StorageBackend for PgStorageBackend {
     async fn save_review(&self, session: &ReviewSession) -> anyhow::Result<()> {
         let status_str = format!("{:?}", session.status);
         let started_at = chrono::DateTime::from_timestamp(session.started_at, 0);
-        let completed_at = session.completed_at.and_then(|t| chrono::DateTime::from_timestamp(t, 0));
-        let summary_json = session.summary.as_ref().map(|s| serde_json::to_value(s).unwrap_or_default());
+        let completed_at = session
+            .completed_at
+            .and_then(|t| chrono::DateTime::from_timestamp(t, 0));
+        let summary_json = session
+            .summary
+            .as_ref()
+            .map(|s| serde_json::to_value(s).unwrap_or_default());
 
         sqlx::query(
             r#"
@@ -115,7 +118,10 @@ impl StorageBackend for PgStorageBackend {
         // Upsert comments
         if !session.comments.is_empty() {
             for c in &session.comments {
-                let code_suggestion_json = c.code_suggestion.as_ref().map(|cs| serde_json::to_value(cs).unwrap_or_default());
+                let code_suggestion_json = c
+                    .code_suggestion
+                    .as_ref()
+                    .map(|cs| serde_json::to_value(cs).unwrap_or_default());
                 let tags: Vec<&str> = c.tags.iter().map(|t| t.as_str()).collect();
 
                 sqlx::query(
@@ -227,8 +233,14 @@ impl StorageBackend for PgStorageBackend {
     async fn save_event(&self, event: &ReviewEvent) -> anyhow::Result<()> {
         let comments_by_severity = serde_json::to_value(&event.comments_by_severity)?;
         let comments_by_category = serde_json::to_value(&event.comments_by_category)?;
-        let file_metrics = event.file_metrics.as_ref().map(|fm| serde_json::to_value(fm).unwrap_or_default());
-        let hotspot_details = event.hotspot_details.as_ref().map(|hd| serde_json::to_value(hd).unwrap_or_default());
+        let file_metrics = event
+            .file_metrics
+            .as_ref()
+            .map(|fm| serde_json::to_value(fm).unwrap_or_default());
+        let hotspot_details = event
+            .hotspot_details
+            .as_ref()
+            .map(|hd| serde_json::to_value(hd).unwrap_or_default());
         let comments_by_pass = serde_json::to_value(&event.comments_by_pass)?;
 
         sqlx::query(
@@ -317,7 +329,9 @@ impl StorageBackend for PgStorageBackend {
         }
         if filters.status.is_some() {
             param_idx += 1;
-            conditions.push(format!("LOWER(event_type) = LOWER('review.' || ${param_idx})"));
+            conditions.push(format!(
+                "LOWER(event_type) = LOWER('review.' || ${param_idx})"
+            ));
         }
         if filters.time_from.is_some() {
             param_idx += 1;
@@ -383,9 +397,8 @@ impl StorageBackend for PgStorageBackend {
         let where_clause = self.build_time_where(filters);
 
         // Aggregate stats
-        let agg = sqlx::query_as::<_, (i64, i64, i64, i64, f64, Option<f64>)>(
-            &format!(
-                "SELECT \
+        let agg = sqlx::query_as::<_, (i64, i64, i64, i64, f64, Option<f64>)>(&format!(
+            "SELECT \
                  COUNT(*), \
                  COUNT(*) FILTER (WHERE event_type = 'review.completed'), \
                  COUNT(*) FILTER (WHERE event_type != 'review.completed'), \
@@ -393,26 +406,27 @@ impl StorageBackend for PgStorageBackend {
                  COALESCE(AVG(duration_ms), 0), \
                  AVG(overall_score) FILTER (WHERE overall_score IS NOT NULL) \
                  FROM review_events {where_clause}"
-            )
-        )
+        ))
         .fetch_one(&self.pool)
         .await?;
 
         let total = agg.0;
         let completed = agg.1;
         let failed = agg.2;
-        let error_rate = if total > 0 { failed as f64 / total as f64 } else { 0.0 };
+        let error_rate = if total > 0 {
+            failed as f64 / total as f64
+        } else {
+            0.0
+        };
 
         // Latency percentiles
-        let latency = sqlx::query_as::<_, (i64, i64, i64)>(
-            &format!(
-                "SELECT \
+        let latency = sqlx::query_as::<_, (i64, i64, i64)>(&format!(
+            "SELECT \
                  COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms)::BIGINT, 0), \
                  COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)::BIGINT, 0), \
                  COALESCE(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_ms)::BIGINT, 0) \
                  FROM review_events {where_clause}"
-            )
-        )
+        ))
         .fetch_one(&self.pool)
         .await
         .unwrap_or((0, 0, 0));
@@ -458,24 +472,20 @@ impl StorageBackend for PgStorageBackend {
         .collect();
 
         // Severity totals - aggregate from JSONB
-        let severity_rows = sqlx::query_as::<_, (String, i64)>(
-            &format!(
-                "SELECT key, SUM(value::int)::BIGINT FROM review_events, \
+        let severity_rows = sqlx::query_as::<_, (String, i64)>(&format!(
+            "SELECT key, SUM(value::int)::BIGINT FROM review_events, \
                  jsonb_each_text(comments_by_severity) {where_clause} GROUP BY key"
-            )
-        )
+        ))
         .fetch_all(&self.pool)
         .await
         .unwrap_or_default();
         let severity_totals: HashMap<String, i64> = severity_rows.into_iter().collect();
 
         // Category totals
-        let category_rows = sqlx::query_as::<_, (String, i64)>(
-            &format!(
-                "SELECT key, SUM(value::int)::BIGINT FROM review_events, \
+        let category_rows = sqlx::query_as::<_, (String, i64)>(&format!(
+            "SELECT key, SUM(value::int)::BIGINT FROM review_events, \
                  jsonb_each_text(comments_by_category) {where_clause} GROUP BY key"
-            )
-        )
+        ))
         .fetch_all(&self.pool)
         .await
         .unwrap_or_default();
@@ -536,7 +546,7 @@ impl StorageBackend for PgStorageBackend {
         let cutoff = chrono::Utc::now() - chrono::Duration::seconds(max_age_secs);
         // Only prune Pending/Running reviews that are stale (completed reviews are kept forever in PG)
         let result = sqlx::query(
-            "DELETE FROM reviews WHERE status IN ('Pending', 'Running') AND started_at < $1"
+            "DELETE FROM reviews WHERE status IN ('Pending', 'Running') AND started_at < $1",
         )
         .bind(cutoff)
         .execute(&self.pool)
@@ -547,36 +557,54 @@ impl StorageBackend for PgStorageBackend {
 
 impl PgStorageBackend {
     async fn load_comments(&self, review_id: &str) -> anyhow::Result<Vec<Comment>> {
-        let rows = sqlx::query_as::<_, (
-            String, String, i32, String, Option<String>, String, String,
-            Option<String>, f32, Option<serde_json::Value>, Vec<String>, String, Option<String>,
-        )>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                i32,
+                String,
+                Option<String>,
+                String,
+                String,
+                Option<String>,
+                f32,
+                Option<serde_json::Value>,
+                Vec<String>,
+                String,
+                Option<String>,
+            ),
+        >(
             "SELECT id, file_path, line_number, content, rule_id, severity, category, \
              suggestion, confidence, code_suggestion, tags, fix_effort, feedback \
-             FROM comments WHERE review_id = $1 ORDER BY created_at"
+             FROM comments WHERE review_id = $1 ORDER BY created_at",
         )
         .bind(review_id)
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(rows.into_iter().map(|r| {
-            let code_suggestion: Option<CodeSuggestion> = r.9.and_then(|v| serde_json::from_value(v).ok());
-            Comment {
-                id: r.0,
-                file_path: std::path::PathBuf::from(r.1),
-                line_number: r.2 as usize,
-                content: r.3,
-                rule_id: r.4,
-                severity: parse_severity(&r.5),
-                category: parse_category(&r.6),
-                suggestion: r.7,
-                confidence: r.8,
-                code_suggestion,
-                tags: r.10,
-                fix_effort: parse_fix_effort(&r.11),
-                feedback: r.12,
-            }
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let code_suggestion: Option<CodeSuggestion> =
+                    r.9.and_then(|v| serde_json::from_value(v).ok());
+                Comment {
+                    id: r.0,
+                    file_path: std::path::PathBuf::from(r.1),
+                    line_number: r.2 as usize,
+                    content: r.3,
+                    rule_id: r.4,
+                    severity: parse_severity(&r.5),
+                    category: parse_category(&r.6),
+                    suggestion: r.7,
+                    confidence: r.8,
+                    code_suggestion,
+                    tags: r.10,
+                    fix_effort: parse_fix_effort(&r.11),
+                    feedback: r.12,
+                }
+            })
+            .collect())
     }
 
     async fn load_event(&self, review_id: &str) -> anyhow::Result<Option<ReviewEvent>> {
@@ -589,7 +617,7 @@ impl PgStorageBackend {
              tokens_prompt, tokens_completion, tokens_total, \
              file_metrics, hotspot_details, convention_suppressed, comments_by_pass, \
              github_posted, github_repo, github_pr, error, created_at \
-             FROM review_events WHERE review_id = $1"
+             FROM review_events WHERE review_id = $1",
         )
         .bind(review_id)
         .fetch_optional(&self.pool)
@@ -653,9 +681,12 @@ struct EventRow {
 
 impl EventRow {
     fn into_event(self) -> ReviewEvent {
-        let comments_by_severity: HashMap<String, usize> = serde_json::from_value(self.comments_by_severity).unwrap_or_default();
-        let comments_by_category: HashMap<String, usize> = serde_json::from_value(self.comments_by_category).unwrap_or_default();
-        let comments_by_pass: HashMap<String, usize> = serde_json::from_value(self.comments_by_pass).unwrap_or_default();
+        let comments_by_severity: HashMap<String, usize> =
+            serde_json::from_value(self.comments_by_severity).unwrap_or_default();
+        let comments_by_category: HashMap<String, usize> =
+            serde_json::from_value(self.comments_by_category).unwrap_or_default();
+        let comments_by_pass: HashMap<String, usize> =
+            serde_json::from_value(self.comments_by_pass).unwrap_or_default();
 
         ReviewEvent {
             review_id: self.review_id,
@@ -681,8 +712,12 @@ impl EventRow {
             tokens_prompt: self.tokens_prompt.map(|v| v as usize),
             tokens_completion: self.tokens_completion.map(|v| v as usize),
             tokens_total: self.tokens_total.map(|v| v as usize),
-            file_metrics: self.file_metrics.and_then(|v| serde_json::from_value(v).ok()),
-            hotspot_details: self.hotspot_details.and_then(|v| serde_json::from_value(v).ok()),
+            file_metrics: self
+                .file_metrics
+                .and_then(|v| serde_json::from_value(v).ok()),
+            hotspot_details: self
+                .hotspot_details
+                .and_then(|v| serde_json::from_value(v).ok()),
             convention_suppressed: self.convention_suppressed.map(|v| v as usize),
             comments_by_pass,
             github_posted: self.github_posted,

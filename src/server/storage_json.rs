@@ -106,12 +106,7 @@ impl StorageBackend for JsonStorageBackend {
         list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
         let offset = offset as usize;
         let limit = limit as usize;
-        Ok(list
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .cloned()
-            .collect())
+        Ok(list.into_iter().skip(offset).take(limit).cloned().collect())
     }
 
     async fn delete_review(&self, id: &str) -> anyhow::Result<()> {
@@ -143,16 +138,17 @@ impl StorageBackend for JsonStorageBackend {
                     .as_ref()
                     .map_or(true, |f| e.model.eq_ignore_ascii_case(f));
                 let status_ok = filters.status.as_ref().map_or(true, |f| {
-                    e.event_type
-                        .eq_ignore_ascii_case(&format!("review.{}", f))
+                    e.event_type.eq_ignore_ascii_case(&format!("review.{}", f))
                 });
                 // Time filters (best-effort for JSON backend using created_at if available)
-                let time_from_ok = filters.time_from.as_ref().map_or(true, |from| {
-                    e.created_at.map_or(true, |t| t >= *from)
-                });
-                let time_to_ok = filters.time_to.as_ref().map_or(true, |to| {
-                    e.created_at.map_or(true, |t| t <= *to)
-                });
+                let time_from_ok = filters
+                    .time_from
+                    .as_ref()
+                    .map_or(true, |from| e.created_at.map_or(true, |t| t >= *from));
+                let time_to_ok = filters
+                    .time_to
+                    .as_ref()
+                    .map_or(true, |to| e.created_at.map_or(true, |t| t <= *to));
                 source_ok && model_ok && status_ok && time_from_ok && time_to_ok
             })
             .collect();
@@ -176,9 +172,16 @@ impl StorageBackend for JsonStorageBackend {
         let events = self.list_events(filters).await?;
 
         let total = events.len() as i64;
-        let completed = events.iter().filter(|e| e.event_type == "review.completed").count() as i64;
+        let completed = events
+            .iter()
+            .filter(|e| e.event_type == "review.completed")
+            .count() as i64;
         let failed = total - completed;
-        let error_rate = if total > 0 { failed as f64 / total as f64 } else { 0.0 };
+        let error_rate = if total > 0 {
+            failed as f64 / total as f64
+        } else {
+            0.0
+        };
 
         let total_tokens: i64 = events.iter().filter_map(|e| e.tokens_total).sum::<usize>() as i64;
         let avg_duration_ms = if total > 0 {
@@ -198,7 +201,9 @@ impl StorageBackend for JsonStorageBackend {
         let mut durations: Vec<u64> = events.iter().map(|e| e.duration_ms).collect();
         durations.sort();
         let percentile = |p: f64| -> i64 {
-            if durations.is_empty() { return 0; }
+            if durations.is_empty() {
+                return 0;
+            }
             let idx = ((p / 100.0) * (durations.len() as f64 - 1.0)).round() as usize;
             durations[idx.min(durations.len() - 1)] as i64
         };
@@ -210,19 +215,37 @@ impl StorageBackend for JsonStorageBackend {
             entry.0 += 1;
             entry.1 += e.duration_ms as f64;
             entry.2 += e.tokens_total.unwrap_or(0) as i64;
-            if let Some(s) = e.overall_score { entry.3.push(s); }
+            if let Some(s) = e.overall_score {
+                entry.3.push(s);
+            }
         }
-        let by_model: Vec<ModelStats> = model_map.into_iter().map(|(model, (count, dur, tok, scores))| {
-            let avg_s = if scores.is_empty() { None } else { Some(scores.iter().sum::<f32>() as f64 / scores.len() as f64) };
-            ModelStats { model, count, avg_duration_ms: dur / count as f64, total_tokens: tok, avg_score: avg_s }
-        }).collect();
+        let by_model: Vec<ModelStats> = model_map
+            .into_iter()
+            .map(|(model, (count, dur, tok, scores))| {
+                let avg_s = if scores.is_empty() {
+                    None
+                } else {
+                    Some(scores.iter().sum::<f32>() as f64 / scores.len() as f64)
+                };
+                ModelStats {
+                    model,
+                    count,
+                    avg_duration_ms: dur / count as f64,
+                    total_tokens: tok,
+                    avg_score: avg_s,
+                }
+            })
+            .collect();
 
         // By source
         let mut source_map: HashMap<String, i64> = HashMap::new();
         for e in &events {
             *source_map.entry(e.diff_source.clone()).or_default() += 1;
         }
-        let by_source: Vec<SourceStats> = source_map.into_iter().map(|(source, count)| SourceStats { source, count }).collect();
+        let by_source: Vec<SourceStats> = source_map
+            .into_iter()
+            .map(|(source, count)| SourceStats { source, count })
+            .collect();
 
         // By repo
         let mut repo_map: HashMap<String, (i64, Vec<f32>)> = HashMap::new();
@@ -230,13 +253,26 @@ impl StorageBackend for JsonStorageBackend {
             if let Some(ref repo) = e.github_repo {
                 let entry = repo_map.entry(repo.clone()).or_default();
                 entry.0 += 1;
-                if let Some(s) = e.overall_score { entry.1.push(s); }
+                if let Some(s) = e.overall_score {
+                    entry.1.push(s);
+                }
             }
         }
-        let by_repo: Vec<RepoStats> = repo_map.into_iter().map(|(repo, (count, scores))| {
-            let avg_s = if scores.is_empty() { None } else { Some(scores.iter().sum::<f32>() as f64 / scores.len() as f64) };
-            RepoStats { repo, count, avg_score: avg_s }
-        }).collect();
+        let by_repo: Vec<RepoStats> = repo_map
+            .into_iter()
+            .map(|(repo, (count, scores))| {
+                let avg_s = if scores.is_empty() {
+                    None
+                } else {
+                    Some(scores.iter().sum::<f32>() as f64 / scores.len() as f64)
+                };
+                RepoStats {
+                    repo,
+                    count,
+                    avg_score: avg_s,
+                }
+            })
+            .collect();
 
         // Severity totals
         let mut severity_totals: HashMap<String, i64> = HashMap::new();

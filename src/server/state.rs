@@ -185,7 +185,10 @@ impl AppState {
             if pg.is_empty().await? && storage_path.exists() {
                 let json_reviews = Self::load_reviews_from_disk(&storage_path);
                 if !json_reviews.is_empty() {
-                    info!("Migrating {} reviews from JSON to PostgreSQL...", json_reviews.len());
+                    info!(
+                        "Migrating {} reviews from JSON to PostgreSQL...",
+                        json_reviews.len()
+                    );
                     for (_id, session) in &json_reviews {
                         if let Err(e) = pg.save_review(session).await {
                             tracing::warn!("Failed to migrate review {}: {}", session.id, e);

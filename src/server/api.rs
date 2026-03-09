@@ -94,8 +94,16 @@ impl ListEventsParams {
             source: self.source,
             model: self.model,
             status: self.status,
-            time_from: self.time_from.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|t| t.with_timezone(&chrono::Utc))),
-            time_to: self.time_to.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|t| t.with_timezone(&chrono::Utc))),
+            time_from: self.time_from.and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|t| t.with_timezone(&chrono::Utc))
+            }),
+            time_to: self.time_to.and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|t| t.with_timezone(&chrono::Utc))
+            }),
             github_repo: self.github_repo,
             limit: self.limit,
             offset: self.offset,
@@ -625,7 +633,14 @@ pub async fn submit_feedback(
     AppState::save_reviews_async(&state);
 
     // Persist feedback to storage backend
-    let _ = state.storage.update_comment_feedback(&id, &comment_id_for_storage, if is_accepted { "accept" } else { "reject" }).await;
+    let _ = state
+        .storage
+        .update_comment_feedback(
+            &id,
+            &comment_id_for_storage,
+            if is_accepted { "accept" } else { "reject" },
+        )
+        .await;
 
     // Record in convention store for learned patterns
     let config = state.config.read().await;
