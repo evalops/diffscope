@@ -107,7 +107,9 @@ pub fn create_adapter(config: &ModelConfig) -> Result<Box<dyn LLMAdapter>> {
                 // Route anthropic/ prefix directly to the Anthropic adapter
                 let mut anth_config = config;
                 anth_config.model_name = model;
-                return Ok(Box::new(crate::adapters::AnthropicAdapter::new(anth_config)?));
+                return Ok(Box::new(crate::adapters::AnthropicAdapter::new(
+                    anth_config,
+                )?));
             }
             _ => {
                 // Other vendor prefixes (e.g. openai/, meta-llama/) → OpenRouter
