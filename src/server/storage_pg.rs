@@ -403,8 +403,8 @@ impl StorageBackend for PgStorageBackend {
                  COUNT(*) FILTER (WHERE event_type = 'review.completed'), \
                  COUNT(*) FILTER (WHERE event_type != 'review.completed'), \
                  COALESCE(SUM(COALESCE(tokens_total, 0)), 0), \
-                 COALESCE(AVG(duration_ms), 0), \
-                 AVG(overall_score) FILTER (WHERE overall_score IS NOT NULL) \
+                 COALESCE(AVG(duration_ms)::FLOAT8, 0), \
+                 (AVG(overall_score) FILTER (WHERE overall_score IS NOT NULL))::FLOAT8 \
                  FROM review_events {where_clause}"
         ))
         .fetch_one(&self.pool)
@@ -422,9 +422,9 @@ impl StorageBackend for PgStorageBackend {
         // Latency percentiles
         let latency = sqlx::query_as::<_, (i64, i64, i64)>(&format!(
             "SELECT \
-                 COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms)::BIGINT, 0), \
-                 COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)::BIGINT, 0), \
-                 COALESCE(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_ms)::BIGINT, 0) \
+                 COALESCE((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms))::BIGINT, 0), \
+                 COALESCE((PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms))::BIGINT, 0), \
+                 COALESCE((PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_ms))::BIGINT, 0) \
                  FROM review_events {where_clause}"
         ))
         .fetch_one(&self.pool)
@@ -434,8 +434,8 @@ impl StorageBackend for PgStorageBackend {
         // By model
         let by_model = sqlx::query_as::<_, (String, i64, f64, i64, Option<f64>)>(
             &format!(
-                "SELECT model, COUNT(*), AVG(duration_ms), COALESCE(SUM(COALESCE(tokens_total, 0)), 0), \
-                 AVG(overall_score) FILTER (WHERE overall_score IS NOT NULL) \
+                "SELECT model, COUNT(*), AVG(duration_ms)::FLOAT8, COALESCE(SUM(COALESCE(tokens_total, 0)), 0), \
+                 (AVG(overall_score) FILTER (WHERE overall_score IS NOT NULL))::FLOAT8 \
                  FROM review_events {where_clause} GROUP BY model ORDER BY COUNT(*) DESC"
             )
         )
@@ -458,10 +458,15 @@ impl StorageBackend for PgStorageBackend {
         .collect();
 
         // By repo
+        let repo_where = if where_clause.is_empty() {
+            "WHERE github_repo IS NOT NULL".to_string()
+        } else {
+            format!("{where_clause} AND github_repo IS NOT NULL")
+        };
         let by_repo = sqlx::query_as::<_, (String, i64, Option<f64>)>(
             &format!(
-                "SELECT github_repo, COUNT(*), AVG(overall_score) FILTER (WHERE overall_score IS NOT NULL) \
-                 FROM review_events {where_clause} AND github_repo IS NOT NULL GROUP BY github_repo ORDER BY COUNT(*) DESC"
+                "SELECT github_repo, COUNT(*), (AVG(overall_score) FILTER (WHERE overall_score IS NOT NULL))::FLOAT8 \
+                 FROM review_events {repo_where} GROUP BY github_repo ORDER BY COUNT(*) DESC"
             )
         )
         .fetch_all(&self.pool)
