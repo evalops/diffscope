@@ -101,10 +101,21 @@ export function useGhPrs(repo: string | undefined, state?: string) {
   })
 }
 
-export function useEvents() {
+export function useEvents(params?: {
+  source?: string; model?: string; status?: string;
+  time_from?: string; time_to?: string;
+}) {
   return useQuery({
-    queryKey: ['events'],
-    queryFn: () => api.listEvents(),
+    queryKey: ['events', params],
+    queryFn: () => api.listEvents(params),
+    refetchInterval: REFETCH.reviews,
+  })
+}
+
+export function useEventStats(params?: { time_from?: string; time_to?: string }) {
+  return useQuery({
+    queryKey: ['event-stats', params],
+    queryFn: () => api.getEventStats(params),
     refetchInterval: REFETCH.reviews,
   })
 }

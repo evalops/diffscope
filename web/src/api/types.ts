@@ -82,6 +82,52 @@ export interface ReviewEvent {
   github_repo?: string
   github_pr?: number
   error?: string
+  created_at?: string
+}
+
+export interface ModelStats {
+  model: string
+  count: number
+  avg_duration_ms: number
+  total_tokens: number
+  avg_score?: number
+}
+
+export interface SourceStats {
+  source: string
+  count: number
+}
+
+export interface RepoStats {
+  repo: string
+  count: number
+  avg_score?: number
+}
+
+export interface DailyCount {
+  date: string
+  completed: number
+  failed: number
+}
+
+export interface EventStats {
+  total_reviews: number
+  completed_count: number
+  failed_count: number
+  total_tokens: number
+  avg_duration_ms: number
+  avg_score?: number
+  error_rate: number
+  p50_latency_ms: number
+  p95_latency_ms: number
+  p99_latency_ms: number
+  by_model: ModelStats[]
+  by_source: SourceStats[]
+  by_repo: RepoStats[]
+  severity_totals: Record<string, number>
+  category_totals: Record<string, number>
+  daily_counts: DailyCount[]
+  total_cost_estimate: number
 }
 
 export interface ReviewProgress {

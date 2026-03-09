@@ -78,57 +78,60 @@ pub struct ListEventsParams {
     pub source: Option<String>,
     pub model: Option<String>,
     pub status: Option<String>,
+    pub time_from: Option<String>,
+    pub time_to: Option<String>,
+    pub github_repo: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 use super::state::ReviewEvent;
+use super::storage::{EventFilters, EventStats};
 
-/// Returns all wide events from completed/failed reviews, sorted newest-first.
+impl ListEventsParams {
+    fn into_filters(self) -> EventFilters {
+        EventFilters {
+            source: self.source,
+            model: self.model,
+            status: self.status,
+            time_from: self.time_from.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|t| t.with_timezone(&chrono::Utc))),
+            time_to: self.time_to.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok().map(|t| t.with_timezone(&chrono::Utc))),
+            github_repo: self.github_repo,
+            limit: self.limit,
+            offset: self.offset,
+        }
+    }
+}
+
+/// Returns all wide events, filtered and sorted newest-first.
+/// Uses the storage backend (PostgreSQL or JSON) for querying.
 pub async fn list_events(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ListEventsParams>,
 ) -> Json<Vec<ReviewEvent>> {
-    let reviews = state.reviews.read().await;
-    let mut events: Vec<ReviewEvent> = reviews
-        .values()
-        .filter_map(|s| s.event.clone())
-        .filter(|e| {
-            let source_ok = params
-                .source
-                .as_ref()
-                .map_or(true, |f| e.diff_source.eq_ignore_ascii_case(f));
-            let model_ok = params
-                .model
-                .as_ref()
-                .map_or(true, |f| e.model.eq_ignore_ascii_case(f));
-            let status_ok = params.status.as_ref().map_or(true, |f| {
-                e.event_type.eq_ignore_ascii_case(&format!("review.{}", f))
-            });
-            source_ok && model_ok && status_ok
-        })
-        .collect();
-    events.sort_by(|a, b| b.review_id.cmp(&a.review_id));
-    events.sort_by(|a, b| {
-        b.duration_ms
-            .cmp(&a.duration_ms)
-            .then(b.review_id.cmp(&a.review_id))
-    });
-    // Sort by review start time proxy: we use completed reviews ordering
-    // Re-sort by the review order (newest first) using the review map ordering
-    let id_order: std::collections::HashMap<String, usize> = {
-        let mut ordered: Vec<_> = reviews
-            .values()
-            .filter(|s| s.event.is_some())
-            .map(|s| (s.id.clone(), s.started_at))
-            .collect();
-        ordered.sort_by(|a, b| b.1.cmp(&a.1));
-        ordered
-            .into_iter()
-            .enumerate()
-            .map(|(i, (id, _))| (id, i))
-            .collect()
-    };
-    events.sort_by_key(|e| id_order.get(&e.review_id).copied().unwrap_or(usize::MAX));
-    Json(events)
+    let filters = params.into_filters();
+    match state.storage.list_events(&filters).await {
+        Ok(events) => Json(events),
+        Err(e) => {
+            warn!("Failed to list events from storage: {}", e);
+            Json(Vec::new())
+        }
+    }
+}
+
+/// Returns aggregated event statistics (server-side analytics).
+pub async fn get_event_stats(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ListEventsParams>,
+) -> Json<EventStats> {
+    let filters = params.into_filters();
+    match state.storage.get_event_stats(&filters).await {
+        Ok(stats) => Json(stats),
+        Err(e) => {
+            warn!("Failed to get event stats from storage: {}", e);
+            Json(EventStats::default())
+        }
+    }
 }
 
 // === Handlers ===
@@ -494,6 +497,21 @@ async fn run_review_task(
 
     AppState::save_reviews_async(&state);
     AppState::prune_old_reviews(&state).await;
+
+    // Persist to storage backend (PostgreSQL or JSON)
+    {
+        let reviews = state.reviews.read().await;
+        if let Some(session) = reviews.get(&review_id) {
+            if let Err(e) = state.storage.save_review(session).await {
+                warn!(review_id = %review_id, "Failed to persist review to storage: {}", e);
+            }
+            if let Some(ref event) = session.event {
+                if let Err(e) = state.storage.save_event(event).await {
+                    warn!(review_id = %review_id, "Failed to persist event to storage: {}", e);
+                }
+            }
+        }
+    }
 }
 
 fn get_diff_from_git(
@@ -533,12 +551,18 @@ pub async fn get_review(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ReviewSession>, StatusCode> {
-    let reviews = state.reviews.read().await;
-    reviews
-        .get(&id)
-        .cloned()
-        .map(Json)
-        .ok_or(StatusCode::NOT_FOUND)
+    // Check in-memory first (active reviews with progress tracking)
+    {
+        let reviews = state.reviews.read().await;
+        if let Some(session) = reviews.get(&id) {
+            return Ok(Json(session.clone()));
+        }
+    }
+    // Fall back to storage backend (historical reviews in PostgreSQL)
+    match state.storage.get_review(&id).await {
+        Ok(Some(session)) => Ok(Json(session)),
+        _ => Err(StatusCode::NOT_FOUND),
+    }
 }
 
 pub async fn list_reviews(
@@ -573,6 +597,8 @@ pub async fn submit_feedback(
         return Err(StatusCode::BAD_REQUEST);
     }
 
+    let comment_id_for_storage = request.comment_id.clone();
+
     let mut reviews = state.reviews.write().await;
     let session = reviews.get_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
 
@@ -597,6 +623,9 @@ pub async fn submit_feedback(
     drop(reviews);
 
     AppState::save_reviews_async(&state);
+
+    // Persist feedback to storage backend
+    let _ = state.storage.update_comment_feedback(&id, &comment_id_for_storage, if is_accepted { "accept" } else { "reject" }).await;
 
     // Record in convention store for learned patterns
     let config = state.config.read().await;
@@ -1854,6 +1883,21 @@ async fn run_pr_review_task(
 
     AppState::save_reviews_async(&state);
     AppState::prune_old_reviews(&state).await;
+
+    // Persist to storage backend (PostgreSQL or JSON)
+    {
+        let reviews = state.reviews.read().await;
+        if let Some(session) = reviews.get(&review_id) {
+            if let Err(e) = state.storage.save_review(session).await {
+                warn!(review_id = %review_id, "Failed to persist PR review to storage: {}", e);
+            }
+            if let Some(ref event) = session.event {
+                if let Err(e) = state.storage.save_event(event).await {
+                    warn!(review_id = %review_id, "Failed to persist PR event to storage: {}", e);
+                }
+            }
+        }
+    }
 }
 
 /// Generate an AI-powered PR summary and store it in the review session.

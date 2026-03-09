@@ -8,6 +8,8 @@ use tracing::info;
 use crate::config::Config;
 use crate::core::comment::{Comment, ReviewSummary};
 
+use super::storage::StorageBackend;
+
 /// Per-file review metric for the wide event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileMetricEvent {
@@ -91,6 +93,10 @@ pub struct ReviewEvent {
 
     // --- errors ---
     pub error: Option<String>,
+
+    // --- timestamp ---
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Maximum number of reviews to keep in memory. Oldest completed reviews are pruned.
@@ -150,6 +156,7 @@ pub struct AppState {
     pub config: Arc<RwLock<Config>>,
     pub repo_path: PathBuf,
     pub reviews: Arc<RwLock<HashMap<String, ReviewSession>>>,
+    pub storage: Arc<dyn StorageBackend>,
     pub storage_path: PathBuf,
     pub config_path: PathBuf,
     /// Shared HTTP client for GitHub API and provider tests (connection pooling).
@@ -159,7 +166,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: Config) -> anyhow::Result<Self> {
+    pub async fn new(config: Config) -> anyhow::Result<Self> {
         let repo_path = std::env::current_dir()?;
         let data_dir = dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -167,7 +174,35 @@ impl AppState {
         let storage_path = data_dir.join("reviews.json");
         let config_path = data_dir.join("config.json");
 
-        // Load persisted reviews before creating the RwLock (avoids blocking_write inside runtime)
+        // Initialize storage backend based on DATABASE_URL
+        let storage: Arc<dyn StorageBackend> = if let Ok(db_url) = std::env::var("DATABASE_URL") {
+            info!("Connecting to PostgreSQL...");
+            let pool = sqlx::PgPool::connect(&db_url).await?;
+            let pg = super::storage_pg::PgStorageBackend::new(pool);
+            pg.migrate().await?;
+
+            // Migrate existing JSON data if PG is empty
+            if pg.is_empty().await? && storage_path.exists() {
+                let json_reviews = Self::load_reviews_from_disk(&storage_path);
+                if !json_reviews.is_empty() {
+                    info!("Migrating {} reviews from JSON to PostgreSQL...", json_reviews.len());
+                    for (_id, session) in &json_reviews {
+                        if let Err(e) = pg.save_review(session).await {
+                            tracing::warn!("Failed to migrate review {}: {}", session.id, e);
+                        }
+                        if let Some(ref event) = session.event {
+                            let _ = pg.save_event(event).await;
+                        }
+                    }
+                    info!("JSON to PostgreSQL migration complete");
+                }
+            }
+            Arc::new(pg)
+        } else {
+            Arc::new(super::storage_json::JsonStorageBackend::new(&storage_path))
+        };
+
+        // Load persisted reviews for in-memory cache (active reviews / progress tracking)
         let reviews = Self::load_reviews_from_disk(&storage_path);
 
         let http_client = reqwest::Client::builder()
@@ -181,6 +216,7 @@ impl AppState {
             config: Arc::new(RwLock::new(config)),
             repo_path,
             reviews: Arc::new(RwLock::new(reviews)),
+            storage,
             storage_path,
             config_path,
             http_client,
@@ -463,6 +499,7 @@ impl ReviewEventBuilder {
                 github_repo: None,
                 github_pr: None,
                 error: None,
+                created_at: None,
             },
         }
     }
@@ -581,7 +618,8 @@ impl ReviewEventBuilder {
         self
     }
 
-    pub fn build(self) -> ReviewEvent {
+    pub fn build(mut self) -> ReviewEvent {
+        self.event.created_at = Some(chrono::Utc::now());
         self.event
     }
 }
@@ -874,10 +912,12 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let storage_path = dir.path().join("reviews.json");
             let config_path = dir.path().join("config.json");
+            let json_backend = crate::server::storage_json::JsonStorageBackend::new(&storage_path);
             let state = Arc::new(AppState {
                 config: Arc::new(tokio::sync::RwLock::new(crate::config::Config::default())),
                 repo_path: dir.path().to_path_buf(),
                 reviews: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                storage: Arc::new(json_backend),
                 http_client: reqwest::Client::new(),
                 storage_path: storage_path.clone(),
                 config_path,

@@ -1,6 +1,9 @@
 pub mod api;
 pub mod github;
 pub mod state;
+pub mod storage;
+pub mod storage_json;
+pub mod storage_pg;
 
 pub mod metrics;
 
@@ -62,7 +65,7 @@ async fn serve_embedded(uri: axum::http::Uri) -> Response {
 }
 
 pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Result<()> {
-    let state = Arc::new(state::AppState::new(config)?);
+    let state = Arc::new(state::AppState::new(config).await?);
 
     let origin_strings = [
         format!("http://localhost:{}", port),
@@ -94,6 +97,7 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .route("/review", post(api::start_review))
         .route("/reviews", get(api::list_reviews))
         .route("/events", get(api::list_events))
+        .route("/events/stats", get(api::get_event_stats))
         .route("/review/{id}", get(api::get_review))
         .route("/review/{id}/feedback", post(api::submit_feedback))
         .route("/doctor", get(api::get_doctor))

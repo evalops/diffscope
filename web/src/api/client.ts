@@ -91,12 +91,30 @@ export const api = {
       body: JSON.stringify({ diff_source: 'raw', diff_content: diffContent, title }),
     }),
 
-  listEvents: (params?: { source?: string; model?: string; status?: string }) => {
+  listEvents: (params?: {
+    source?: string; model?: string; status?: string;
+    time_from?: string; time_to?: string;
+    github_repo?: string;
+    limit?: number; offset?: number;
+  }) => {
     const qs = new URLSearchParams()
     if (params?.source) qs.set('source', params.source)
     if (params?.model) qs.set('model', params.model)
     if (params?.status) qs.set('status', params.status)
+    if (params?.time_from) qs.set('time_from', params.time_from)
+    if (params?.time_to) qs.set('time_to', params.time_to)
+    if (params?.github_repo) qs.set('github_repo', params.github_repo)
+    if (params?.limit) qs.set('limit', String(params.limit))
+    if (params?.offset) qs.set('offset', String(params.offset))
     const suffix = qs.toString() ? `?${qs}` : ''
     return request<import('./types').ReviewEvent[]>(`/events${suffix}`)
+  },
+
+  getEventStats: (params?: { time_from?: string; time_to?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.time_from) qs.set('time_from', params.time_from)
+    if (params?.time_to) qs.set('time_to', params.time_to)
+    const suffix = qs.toString() ? `?${qs}` : ''
+    return request<import('./types').EventStats>(`/events/stats${suffix}`)
   },
 }
