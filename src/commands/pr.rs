@@ -99,8 +99,9 @@ pub async fn pr_command(
         return Ok(());
     }
 
-    let comments =
+    let review_result =
         review::review_diff_content_raw(&diff_content, config.clone(), &repo_root).await?;
+    let comments = review_result.comments;
 
     if post_comments {
         info!("Posting {} comments to PR", comments.len());

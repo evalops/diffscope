@@ -2,6 +2,7 @@ use anyhow::Result;
 use futures::StreamExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -18,6 +19,34 @@ use crate::core::offline::optimize_prompt_for_local;
 use crate::output::OutputFormat;
 use crate::parsing::parse_llm_response;
 use crate::plugins;
+
+/// Rich result from the review pipeline, carrying comments plus telemetry metadata.
+#[derive(Debug, Clone, Default)]
+pub struct ReviewResult {
+    pub comments: Vec<core::Comment>,
+    /// Aggregate LLM token usage across all files and passes.
+    pub total_prompt_tokens: usize,
+    pub total_completion_tokens: usize,
+    pub total_tokens: usize,
+    /// Per-file metrics (latency, tokens, comment count).
+    pub file_metrics: Vec<FileMetric>,
+    /// Number of comments suppressed by learned convention patterns.
+    pub convention_suppressed_count: usize,
+    /// Comment counts grouped by specialized pass tag (e.g., "security-pass": 3).
+    pub comments_by_pass: HashMap<String, usize>,
+    /// Hotspot detection results from multi-pass analysis.
+    pub hotspots: Vec<core::multi_pass::HotspotResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileMetric {
+    pub file_path: PathBuf,
+    pub latency_ms: u64,
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub total_tokens: usize,
+    pub comment_count: usize,
+}
 
 /// Progress update emitted per file during review.
 pub struct ProgressUpdate {
@@ -54,15 +83,15 @@ pub async fn review_diff_content_with_repo(
     repo_path: &Path,
 ) -> Result<()> {
     let rule_priority = config.rule_priority.clone();
-    let comments = review_diff_content_raw(diff_content, config, repo_path).await?;
-    crate::output::output_comments(&comments, None, format, &rule_priority).await
+    let result = review_diff_content_raw(diff_content, config, repo_path).await?;
+    crate::output::output_comments(&result.comments, None, format, &rule_priority).await
 }
 
 pub async fn review_diff_content_raw(
     diff_content: &str,
     config: config::Config,
     repo_path: &Path,
-) -> Result<Vec<core::Comment>> {
+) -> Result<ReviewResult> {
     review_diff_content_raw_with_progress(diff_content, config, repo_path, None).await
 }
 
@@ -73,7 +102,7 @@ pub async fn review_diff_content_raw_with_progress(
     config: config::Config,
     repo_path: &Path,
     on_progress: Option<ProgressCallback>,
-) -> Result<Vec<core::Comment>> {
+) -> Result<ReviewResult> {
     // For local models, chunk oversized diffs instead of truncating
     if should_optimize_for_local(&config) {
         let context_budget = config.context_window.unwrap_or(8192);
@@ -85,7 +114,7 @@ pub async fn review_diff_content_raw_with_progress(
                 "Diff split into {} chunks for local model context window",
                 chunks.len()
             );
-            let mut all_comments = Vec::new();
+            let mut merged = ReviewResult::default();
             for (i, chunk) in chunks.iter().enumerate() {
                 eprintln!("Processing chunk {}/{}...", i + 1, chunks.len());
                 match review_diff_content_raw_inner(
@@ -96,13 +125,25 @@ pub async fn review_diff_content_raw_with_progress(
                 )
                 .await
                 {
-                    Ok(comments) => all_comments.extend(comments),
+                    Ok(chunk_result) => {
+                        merged.comments.extend(chunk_result.comments);
+                        merged.total_prompt_tokens += chunk_result.total_prompt_tokens;
+                        merged.total_completion_tokens += chunk_result.total_completion_tokens;
+                        merged.total_tokens += chunk_result.total_tokens;
+                        merged.file_metrics.extend(chunk_result.file_metrics);
+                        merged.convention_suppressed_count +=
+                            chunk_result.convention_suppressed_count;
+                        for (pass, count) in chunk_result.comments_by_pass {
+                            *merged.comments_by_pass.entry(pass).or_insert(0) += count;
+                        }
+                        merged.hotspots.extend(chunk_result.hotspots);
+                    }
                     Err(e) => {
                         eprintln!("Warning: chunk {} failed: {}", i + 1, e);
                     }
                 }
             }
-            return Ok(all_comments);
+            return Ok(merged);
         }
     }
 
@@ -114,7 +155,7 @@ async fn review_diff_content_raw_inner(
     config: config::Config,
     repo_path: &Path,
     on_progress: Option<ProgressCallback>,
-) -> Result<Vec<core::Comment>> {
+) -> Result<ReviewResult> {
     let diffs = core::DiffParser::parse_unified_diff(diff_content)?;
     info!("Parsed {} file diffs", diffs.len());
 
@@ -468,12 +509,12 @@ async fn review_diff_content_raw_inner(
                 }
                 let request_start = Instant::now();
                 let response = adapter.complete(job.request).await;
+                let latency_ms = request_start.elapsed().as_millis() as u64;
                 if is_local {
-                    let elapsed = request_start.elapsed();
                     eprintln!(
                         "{}: response received ({:.1}s)",
                         job.file_path.display(),
-                        elapsed.as_secs_f64()
+                        latency_ms as f64 / 1000.0
                     );
                 }
                 (
@@ -483,6 +524,7 @@ async fn review_diff_content_raw_inner(
                     job.file_path,
                     job.pass_kind,
                     response,
+                    latency_ms,
                 )
             }
         })
@@ -492,9 +534,17 @@ async fn review_diff_content_raw_inner(
 
     // Phase 3: Process results in file order
     let mut indexed_results = results;
-    indexed_results.sort_by_key(|(idx, _, _, _, _, _)| *idx);
+    indexed_results.sort_by_key(|(idx, _, _, _, _, _, _)| *idx);
 
-    for (diff_index, active_rules, path_config, file_path, pass_kind, response) in indexed_results {
+    let mut total_prompt_tokens: usize = 0;
+    let mut total_completion_tokens: usize = 0;
+    let mut total_tokens: usize = 0;
+    let mut file_metrics: Vec<FileMetric> = Vec::new();
+    let mut comments_by_pass: HashMap<String, usize> = HashMap::new();
+
+    for (diff_index, active_rules, path_config, file_path, pass_kind, response, latency_ms) in
+        indexed_results
+    {
         let diff = &diffs[diff_index];
 
         match response {
@@ -503,6 +553,21 @@ async fn review_diff_content_raw_inner(
                 continue;
             }
             Ok(response) => {
+                // Extract usage metrics from the response
+                let (resp_prompt_tokens, resp_completion_tokens, resp_total_tokens) =
+                    if let Some(ref usage) = response.usage {
+                        (
+                            usage.prompt_tokens,
+                            usage.completion_tokens,
+                            usage.total_tokens,
+                        )
+                    } else {
+                        (0, 0, 0)
+                    };
+                total_prompt_tokens += resp_prompt_tokens;
+                total_completion_tokens += resp_completion_tokens;
+                total_tokens += resp_total_tokens;
+
                 // Validate LLM response before parsing
                 if let Err(validation_err) = validate_llm_response(&response.content) {
                     eprintln!(
@@ -515,6 +580,15 @@ async fn review_diff_content_raw_inner(
                             "Hint: Try a larger model or reduce diff size for better results with local models."
                         );
                     }
+                    // Still record file metric even for validation failures
+                    file_metrics.push(FileMetric {
+                        file_path: file_path.clone(),
+                        latency_ms,
+                        prompt_tokens: resp_prompt_tokens,
+                        completion_tokens: resp_completion_tokens,
+                        total_tokens: resp_total_tokens,
+                        comment_count: 0,
+                    });
                     continue;
                 }
 
@@ -549,7 +623,47 @@ async fn review_diff_content_raw_inner(
                     let comments = apply_rule_overrides(comments, &active_rules);
 
                     let comments = filter_comments_for_diff(diff, comments);
+                    let comment_count = comments.len();
+
+                    // Track comments_by_pass
+                    let pass_tag = pass_kind
+                        .map(|k| k.tag().to_string())
+                        .unwrap_or_else(|| "default".to_string());
+                    *comments_by_pass.entry(pass_tag).or_insert(0) += comment_count;
+
+                    // Build per-file metric; merge with existing entry for same file if multi-pass
+                    if let Some(existing) =
+                        file_metrics.iter_mut().find(|m| m.file_path == file_path)
+                    {
+                        existing.prompt_tokens += resp_prompt_tokens;
+                        existing.completion_tokens += resp_completion_tokens;
+                        existing.total_tokens += resp_total_tokens;
+                        existing.comment_count += comment_count;
+                        if latency_ms > existing.latency_ms {
+                            existing.latency_ms = latency_ms;
+                        }
+                    } else {
+                        file_metrics.push(FileMetric {
+                            file_path: file_path.clone(),
+                            latency_ms,
+                            prompt_tokens: resp_prompt_tokens,
+                            completion_tokens: resp_completion_tokens,
+                            total_tokens: resp_total_tokens,
+                            comment_count,
+                        });
+                    }
+
                     all_comments.extend(comments);
+                } else {
+                    // Parse failed; still record file metric
+                    file_metrics.push(FileMetric {
+                        file_path: file_path.clone(),
+                        latency_ms,
+                        prompt_tokens: resp_prompt_tokens,
+                        completion_tokens: resp_completion_tokens,
+                        total_tokens: resp_total_tokens,
+                        comment_count: 0,
+                    });
                 }
             }
         }
@@ -591,7 +705,7 @@ async fn review_diff_content_raw_inner(
     let processed_comments = core::apply_enhanced_filters(&mut enhanced_ctx, processed_comments);
 
     // Apply convention-based suppression: filter out comments matching suppression patterns
-    let processed_comments =
+    let (processed_comments, convention_suppressed_count) =
         apply_convention_suppression(processed_comments, &enhanced_ctx.convention_store);
 
     // Save updated convention store back to disk
@@ -599,7 +713,16 @@ async fn review_diff_content_raw_inner(
         save_convention_store(&enhanced_ctx.convention_store, store_path);
     }
 
-    Ok(processed_comments)
+    Ok(ReviewResult {
+        comments: processed_comments,
+        total_prompt_tokens,
+        total_completion_tokens,
+        total_tokens,
+        file_metrics,
+        convention_suppressed_count,
+        comments_by_pass,
+        hotspots: enhanced_ctx.hotspots.clone(),
+    })
 }
 
 pub fn extract_symbols_from_diff(diff: &core::UnifiedDiff) -> Vec<String> {
@@ -1166,13 +1289,14 @@ fn find_test_files(file_path: &Path, repo_path: &Path) -> Vec<PathBuf> {
 
 /// Apply convention-based suppression: filter out comments whose content
 /// matches learned suppression patterns with high confidence.
+/// Returns the filtered comments and the number of comments that were suppressed.
 fn apply_convention_suppression(
     comments: Vec<core::Comment>,
     convention_store: &ConventionStore,
-) -> Vec<core::Comment> {
+) -> (Vec<core::Comment>, usize) {
     let suppression_patterns = convention_store.suppression_patterns();
     if suppression_patterns.is_empty() {
-        return comments;
+        return (comments, 0);
     }
 
     let before_count = comments.len();
@@ -1195,7 +1319,7 @@ fn apply_convention_suppression(
         );
     }
 
-    filtered
+    (filtered, suppressed)
 }
 
 #[cfg(test)]

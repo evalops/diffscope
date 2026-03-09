@@ -526,7 +526,8 @@ async fn run_eval_fixture(
         })
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let comments = review_diff_content_raw(&diff_content, config.clone(), &repo_path).await?;
+    let review_result = review_diff_content_raw(&diff_content, config.clone(), &repo_path).await?;
+    let comments = review_result.comments;
     let total_comments = comments.len();
     let mut failures = Vec::new();
     let mut required_matches = 0usize;

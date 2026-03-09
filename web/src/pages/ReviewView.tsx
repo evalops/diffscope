@@ -358,6 +358,11 @@ function formatBytes(bytes: number): string {
 }
 
 function EventPanel({ event }: { event: ReviewEvent }) {
+  const [showFileMetrics, setShowFileMetrics] = useState(false)
+  const [showHotspots, setShowHotspots] = useState(false)
+
+  const fmtTokens = (n: number) => n.toLocaleString()
+
   const stats = [
     { icon: Clock, label: 'Total', value: formatDuration(event.duration_ms) },
     ...(event.llm_total_ms != null
@@ -395,13 +400,23 @@ function EventPanel({ event }: { event: ReviewEvent }) {
           </div>
         </div>
 
-        {/* Model */}
+        {/* Model + Tokens */}
         <div>
           <div className="text-text-muted mb-1.5 uppercase tracking-wider font-medium">Model</div>
           <div className="text-text-secondary space-y-0.5">
             <div className="font-code text-text-primary truncate" title={event.model}>{event.model}</div>
             {event.provider && <div><span className="text-text-muted">via</span> {event.provider}</div>}
             {event.base_url && <div className="font-code text-text-muted truncate text-[10px]" title={event.base_url}>{event.base_url}</div>}
+            {event.tokens_total != null && event.tokens_total > 0 && (
+              <div className="mt-1 pt-1 border-t border-border/50">
+                <div><span className="text-text-muted">Tokens:</span> <span className="font-code text-text-primary">{fmtTokens(event.tokens_total)}</span></div>
+                {event.tokens_prompt != null && (
+                  <div className="text-[10px] text-text-muted font-code">
+                    {fmtTokens(event.tokens_prompt)} prompt / {fmtTokens(event.tokens_completion ?? 0)} completion
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -415,6 +430,18 @@ function EventPanel({ event }: { event: ReviewEvent }) {
                 <span className="font-code text-text-primary">{n}</span>
               </div>
             ))}
+            {event.convention_suppressed != null && event.convention_suppressed > 0 && (
+              <div className="text-text-muted">{event.convention_suppressed} suppressed by conventions</div>
+            )}
+            {event.comments_by_pass && Object.keys(event.comments_by_pass).length > 0 && (
+              <div className="mt-1 pt-1 border-t border-border/50">
+                {Object.entries(event.comments_by_pass).map(([pass, n]) => (
+                  <div key={pass} className="text-text-muted">
+                    <span className="font-code text-text-primary">{n}</span> {pass}
+                  </div>
+                ))}
+              </div>
+            )}
             {event.github_posted && (
               <div className="flex items-center gap-1 mt-1 text-accent">
                 <GitBranch size={10} />
@@ -424,6 +451,61 @@ function EventPanel({ event }: { event: ReviewEvent }) {
           </div>
         </div>
       </div>
+
+      {/* Hotspots */}
+      {event.hotspot_details && event.hotspot_details.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-border/50">
+          <button onClick={() => setShowHotspots(!showHotspots)} className="text-[11px] text-text-muted hover:text-text-secondary flex items-center gap-1">
+            <span className={`transition-transform ${showHotspots ? 'rotate-90' : ''}`}>&#9654;</span>
+            High Risk Files ({event.hotspot_details.length})
+          </button>
+          {showHotspots && (
+            <div className="mt-1 space-y-1">
+              {event.hotspot_details.map(h => (
+                <div key={h.file_path} className="flex items-center gap-2 text-[11px]">
+                  <span className="font-code text-text-primary truncate flex-1">{h.file_path}</span>
+                  <span className={`font-code font-medium ${h.risk_score > 0.6 ? 'text-sev-error' : h.risk_score > 0.3 ? 'text-sev-warning' : 'text-sev-info'}`}>
+                    {(h.risk_score * 100).toFixed(0)}%
+                  </span>
+                  <span className="text-text-muted truncate max-w-48">{h.reasons.join(', ')}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Per-file breakdown */}
+      {event.file_metrics && event.file_metrics.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-border/50">
+          <button onClick={() => setShowFileMetrics(!showFileMetrics)} className="text-[11px] text-text-muted hover:text-text-secondary flex items-center gap-1">
+            <span className={`transition-transform ${showFileMetrics ? 'rotate-90' : ''}`}>&#9654;</span>
+            Per-File Breakdown ({event.file_metrics.length} files)
+          </button>
+          {showFileMetrics && (
+            <table className="mt-1 w-full text-[11px]">
+              <thead>
+                <tr className="text-text-muted text-left">
+                  <th className="font-medium pr-3 py-0.5">File</th>
+                  <th className="font-medium pr-3 py-0.5 text-right">Latency</th>
+                  <th className="font-medium pr-3 py-0.5 text-right">Tokens</th>
+                  <th className="font-medium py-0.5 text-right">Comments</th>
+                </tr>
+              </thead>
+              <tbody>
+                {event.file_metrics.map(m => (
+                  <tr key={m.file_path} className="text-text-secondary">
+                    <td className="font-code text-text-primary truncate max-w-64 pr-3 py-0.5">{m.file_path}</td>
+                    <td className="font-code text-right pr-3 py-0.5">{formatDuration(m.latency_ms)}</td>
+                    <td className="font-code text-right pr-3 py-0.5">{fmtTokens(m.total_tokens)}</td>
+                    <td className="font-code text-right py-0.5">{m.comment_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   )
 }

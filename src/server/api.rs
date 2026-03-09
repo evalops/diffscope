@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use super::state::{
     build_progress_callback, count_diff_files, count_reviewed_files, current_timestamp,
-    emit_wide_event, AppState, ReviewEventBuilder, ReviewListItem, ReviewSession, ReviewStatus,
-    MAX_DIFF_SIZE,
+    emit_wide_event, AppState, FileMetricEvent, HotspotDetail, ReviewEventBuilder, ReviewListItem,
+    ReviewSession, ReviewStatus, MAX_DIFF_SIZE,
 };
 use crate::core::comment::CommentSynthesizer;
 use crate::core::convention_learner::ConventionStore;
@@ -345,9 +345,22 @@ async fn run_review_task(
     let llm_ms = llm_start.elapsed().as_millis() as u64;
 
     match result {
-        Ok(Ok(comments)) => {
+        Ok(Ok(review_result)) => {
+            let comments = review_result.comments;
             let summary = CommentSynthesizer::generate_summary(&comments);
             let files_reviewed = count_reviewed_files(&comments);
+            let file_metric_events: Vec<FileMetricEvent> = review_result
+                .file_metrics
+                .iter()
+                .map(|m| FileMetricEvent {
+                    file_path: m.file_path.display().to_string(),
+                    latency_ms: m.latency_ms,
+                    prompt_tokens: m.prompt_tokens,
+                    completion_tokens: m.completion_tokens,
+                    total_tokens: m.total_tokens,
+                    comment_count: m.comment_count,
+                })
+                .collect();
             let event =
                 ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
                     .provider(provider.as_deref())
@@ -362,6 +375,25 @@ async fn run_review_task(
                         diff_files_total.saturating_sub(files_reviewed),
                     )
                     .comments(&comments, Some(&summary))
+                    .tokens(
+                        review_result.total_prompt_tokens,
+                        review_result.total_completion_tokens,
+                        review_result.total_tokens,
+                    )
+                    .file_metrics(file_metric_events)
+                    .hotspot_details(
+                        review_result
+                            .hotspots
+                            .iter()
+                            .map(|h| HotspotDetail {
+                                file_path: h.file_path.display().to_string(),
+                                risk_score: h.risk_score,
+                                reasons: h.reasons.clone(),
+                            })
+                            .collect(),
+                    )
+                    .convention_suppressed(review_result.convention_suppressed_count)
+                    .comments_by_pass(review_result.comments_by_pass)
                     .build();
             emit_wide_event(&event);
             AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
@@ -1655,7 +1687,8 @@ async fn run_pr_review_task(
     let llm_ms = llm_start.elapsed().as_millis() as u64;
 
     match result {
-        Ok(Ok(comments)) => {
+        Ok(Ok(review_result)) => {
+            let comments = review_result.comments;
             let summary = CommentSynthesizer::generate_summary(&comments);
             let files_reviewed = count_reviewed_files(&comments);
 
@@ -1675,6 +1708,18 @@ async fn run_pr_review_task(
                 }
             }
 
+            let file_metric_events: Vec<FileMetricEvent> = review_result
+                .file_metrics
+                .iter()
+                .map(|m| FileMetricEvent {
+                    file_path: m.file_path.display().to_string(),
+                    latency_ms: m.latency_ms,
+                    prompt_tokens: m.prompt_tokens,
+                    completion_tokens: m.completion_tokens,
+                    total_tokens: m.total_tokens,
+                    comment_count: m.comment_count,
+                })
+                .collect();
             let event =
                 ReviewEventBuilder::new(&review_id, "review.completed", &diff_source, &model)
                     .provider(provider.as_deref())
@@ -1688,6 +1733,25 @@ async fn run_pr_review_task(
                         diff_files_total.saturating_sub(files_reviewed),
                     )
                     .comments(&comments, Some(&summary))
+                    .tokens(
+                        review_result.total_prompt_tokens,
+                        review_result.total_completion_tokens,
+                        review_result.total_tokens,
+                    )
+                    .file_metrics(file_metric_events)
+                    .hotspot_details(
+                        review_result
+                            .hotspots
+                            .iter()
+                            .map(|h| HotspotDetail {
+                                file_path: h.file_path.display().to_string(),
+                                risk_score: h.risk_score,
+                                reasons: h.reasons.clone(),
+                            })
+                            .collect(),
+                    )
+                    .convention_suppressed(review_result.convention_suppressed_count)
+                    .comments_by_pass(review_result.comments_by_pass)
                     .github(&repo, pr_number)
                     .github_posted(github_posted)
                     .build();

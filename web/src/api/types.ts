@@ -35,6 +35,21 @@ export interface ReviewSummary {
   recommendations: string[]
 }
 
+export interface FileMetricEvent {
+  file_path: string
+  latency_ms: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  comment_count: number
+}
+
+export interface HotspotDetail {
+  file_path: string
+  risk_score: number
+  reasons: string[]
+}
+
 export interface ReviewEvent {
   review_id: string
   event_type: string
@@ -56,6 +71,13 @@ export interface ReviewEvent {
   overall_score?: number
   hotspots_detected: number
   high_risk_files: number
+  tokens_prompt?: number
+  tokens_completion?: number
+  tokens_total?: number
+  file_metrics?: FileMetricEvent[]
+  hotspot_details?: HotspotDetail[]
+  convention_suppressed?: number
+  comments_by_pass?: Record<string, number>
   github_posted: boolean
   github_repo?: string
   github_pr?: number

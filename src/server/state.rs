@@ -8,6 +8,25 @@ use tracing::info;
 use crate::config::Config;
 use crate::core::comment::{Comment, ReviewSummary};
 
+/// Per-file review metric for the wide event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileMetricEvent {
+    pub file_path: String,
+    pub latency_ms: u64,
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub total_tokens: usize,
+    pub comment_count: usize,
+}
+
+/// Serializable hotspot detail for the wide event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HotspotDetail {
+    pub file_path: String,
+    pub risk_score: f32,
+    pub reasons: Vec<String>,
+}
+
 /// A "wide event" capturing the full lifecycle of a single review operation.
 /// Emitted once at completion as a single structured log entry and stored
 /// alongside the review session for frontend display.
@@ -44,6 +63,26 @@ pub struct ReviewEvent {
     // --- ensemble / multi-pass ---
     pub hotspots_detected: usize,
     pub high_risk_files: usize,
+
+    // --- token usage ---
+    pub tokens_prompt: Option<usize>,
+    pub tokens_completion: Option<usize>,
+    pub tokens_total: Option<usize>,
+
+    // --- per-file breakdown ---
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_metrics: Option<Vec<FileMetricEvent>>,
+
+    // --- hotspot details ---
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hotspot_details: Option<Vec<HotspotDetail>>,
+
+    // --- convention learning ---
+    pub convention_suppressed: Option<usize>,
+
+    // --- specialized pass breakdown ---
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub comments_by_pass: HashMap<String, usize>,
 
     // --- GitHub integration ---
     pub github_posted: bool,
@@ -413,6 +452,13 @@ impl ReviewEventBuilder {
                 overall_score: None,
                 hotspots_detected: 0,
                 high_risk_files: 0,
+                tokens_prompt: None,
+                tokens_completion: None,
+                tokens_total: None,
+                file_metrics: None,
+                hotspot_details: None,
+                convention_suppressed: None,
+                comments_by_pass: HashMap::new(),
                 github_posted: false,
                 github_repo: None,
                 github_pr: None,
@@ -496,6 +542,45 @@ impl ReviewEventBuilder {
         self
     }
 
+    pub fn tokens(mut self, prompt: usize, completion: usize, total: usize) -> Self {
+        self.event.tokens_prompt = Some(prompt);
+        self.event.tokens_completion = Some(completion);
+        self.event.tokens_total = Some(total);
+        self
+    }
+
+    pub fn file_metrics(mut self, metrics: Vec<FileMetricEvent>) -> Self {
+        if metrics.is_empty() {
+            self.event.file_metrics = None;
+        } else {
+            self.event.file_metrics = Some(metrics);
+        }
+        self
+    }
+
+    pub fn hotspot_details(mut self, details: Vec<HotspotDetail>) -> Self {
+        self.event.hotspots_detected = details.len();
+        self.event.high_risk_files = details.iter().filter(|h| h.risk_score > 0.6).count();
+        if details.is_empty() {
+            self.event.hotspot_details = None;
+        } else {
+            self.event.hotspot_details = Some(details);
+        }
+        self
+    }
+
+    pub fn convention_suppressed(mut self, count: usize) -> Self {
+        if count > 0 {
+            self.event.convention_suppressed = Some(count);
+        }
+        self
+    }
+
+    pub fn comments_by_pass(mut self, by_pass: HashMap<String, usize>) -> Self {
+        self.event.comments_by_pass = by_pass;
+        self
+    }
+
     pub fn build(self) -> ReviewEvent {
         self.event
     }
@@ -515,6 +600,10 @@ pub fn emit_wide_event(event: &ReviewEvent) {
         diff_files_reviewed = event.diff_files_reviewed,
         comments_total = event.comments_total,
         overall_score = ?event.overall_score,
+        tokens_total = ?event.tokens_total,
+        convention_suppressed = ?event.convention_suppressed,
+        hotspots_detected = event.hotspots_detected,
+        high_risk_files = event.high_risk_files,
         github_posted = event.github_posted,
         error = ?event.error,
         "review.event"
@@ -621,6 +710,13 @@ mod tests {
         assert!(event.error.is_none());
         assert!(!event.github_posted);
         assert_eq!(event.comments_total, 0);
+        assert!(event.tokens_prompt.is_none());
+        assert!(event.tokens_completion.is_none());
+        assert!(event.tokens_total.is_none());
+        assert!(event.file_metrics.is_none());
+        assert!(event.hotspot_details.is_none());
+        assert!(event.convention_suppressed.is_none());
+        assert!(event.comments_by_pass.is_empty());
     }
 
     #[test]
@@ -642,6 +738,9 @@ mod tests {
         }];
         let summary = crate::core::CommentSynthesizer::generate_summary(&comments);
 
+        let mut by_pass = HashMap::new();
+        by_pass.insert("security".to_string(), 1);
+
         let event =
             ReviewEventBuilder::new("r2", "review.completed", "staged", "claude-sonnet-4.6")
                 .title("Test PR")
@@ -652,6 +751,22 @@ mod tests {
                 .llm_total_ms(4500)
                 .diff_stats(1024, 3, 2, 1)
                 .comments(&comments, Some(&summary))
+                .tokens(200, 100, 300)
+                .file_metrics(vec![FileMetricEvent {
+                    file_path: "a.rs".to_string(),
+                    latency_ms: 100,
+                    prompt_tokens: 200,
+                    completion_tokens: 100,
+                    total_tokens: 300,
+                    comment_count: 1,
+                }])
+                .hotspot_details(vec![HotspotDetail {
+                    file_path: "a.rs".to_string(),
+                    risk_score: 0.8,
+                    reasons: vec!["complex".to_string()],
+                }])
+                .convention_suppressed(2)
+                .comments_by_pass(by_pass)
                 .github("owner/repo", 42)
                 .github_posted(true)
                 .build();
@@ -669,6 +784,16 @@ mod tests {
         assert!(event.comments_by_severity.contains_key("Error"));
         assert!(event.comments_by_category.contains_key("Bug"));
         assert!(event.overall_score.is_some());
+        assert_eq!(event.tokens_prompt, Some(200));
+        assert_eq!(event.tokens_completion, Some(100));
+        assert_eq!(event.tokens_total, Some(300));
+        assert!(event.file_metrics.is_some());
+        assert_eq!(event.file_metrics.as_ref().unwrap().len(), 1);
+        assert_eq!(event.hotspots_detected, 1);
+        assert_eq!(event.high_risk_files, 1);
+        assert!(event.hotspot_details.is_some());
+        assert_eq!(event.convention_suppressed, Some(2));
+        assert_eq!(event.comments_by_pass.get("security"), Some(&1));
         assert_eq!(event.github_repo.as_deref(), Some("owner/repo"));
         assert_eq!(event.github_pr, Some(42));
         assert!(event.github_posted);
@@ -764,6 +889,52 @@ mod tests {
             // File should exist on disk
             assert!(storage_path.exists());
         });
+    }
+
+    #[test]
+    fn test_builder_tokens() {
+        let event = ReviewEventBuilder::new("r-tok", "review.completed", "head", "gpt-4o")
+            .tokens(100, 50, 150)
+            .build();
+        assert_eq!(event.tokens_prompt, Some(100));
+        assert_eq!(event.tokens_completion, Some(50));
+        assert_eq!(event.tokens_total, Some(150));
+    }
+
+    #[test]
+    fn test_builder_hotspot_details() {
+        let details = vec![
+            HotspotDetail {
+                file_path: "risky.rs".to_string(),
+                risk_score: 0.9,
+                reasons: vec!["high complexity".to_string()],
+            },
+            HotspotDetail {
+                file_path: "safe.rs".to_string(),
+                risk_score: 0.3,
+                reasons: vec!["minor change".to_string()],
+            },
+        ];
+        let event = ReviewEventBuilder::new("r-hot", "review.completed", "head", "gpt-4o")
+            .hotspot_details(details)
+            .build();
+        assert_eq!(event.hotspots_detected, 2);
+        assert_eq!(event.high_risk_files, 1); // only risky.rs has score > 0.6
+        assert!(event.hotspot_details.is_some());
+        assert_eq!(event.hotspot_details.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_builder_convention_suppressed() {
+        let event = ReviewEventBuilder::new("r-conv", "review.completed", "head", "gpt-4o")
+            .convention_suppressed(3)
+            .build();
+        assert_eq!(event.convention_suppressed, Some(3));
+
+        let event_zero = ReviewEventBuilder::new("r-conv0", "review.completed", "head", "gpt-4o")
+            .convention_suppressed(0)
+            .build();
+        assert!(event_zero.convention_suppressed.is_none());
     }
 
     #[test]
