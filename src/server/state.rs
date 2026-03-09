@@ -189,7 +189,7 @@ impl AppState {
                         "Migrating {} reviews from JSON to PostgreSQL...",
                         json_reviews.len()
                     );
-                    for (_id, session) in &json_reviews {
+                    for session in json_reviews.values() {
                         if let Err(e) = pg.save_review(session).await {
                             tracing::warn!("Failed to migrate review {}: {}", session.id, e);
                         }

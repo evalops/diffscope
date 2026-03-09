@@ -132,23 +132,24 @@ impl StorageBackend for JsonStorageBackend {
                 let source_ok = filters
                     .source
                     .as_ref()
-                    .map_or(true, |f| e.diff_source.eq_ignore_ascii_case(f));
+                    .is_none_or(|f| e.diff_source.eq_ignore_ascii_case(f));
                 let model_ok = filters
                     .model
                     .as_ref()
-                    .map_or(true, |f| e.model.eq_ignore_ascii_case(f));
-                let status_ok = filters.status.as_ref().map_or(true, |f| {
-                    e.event_type.eq_ignore_ascii_case(&format!("review.{}", f))
-                });
+                    .is_none_or(|f| e.model.eq_ignore_ascii_case(f));
+                let status_ok = filters
+                    .status
+                    .as_ref()
+                    .is_none_or(|f| e.event_type.eq_ignore_ascii_case(&format!("review.{}", f)));
                 // Time filters (best-effort for JSON backend using created_at if available)
                 let time_from_ok = filters
                     .time_from
                     .as_ref()
-                    .map_or(true, |from| e.created_at.map_or(true, |t| t >= *from));
+                    .is_none_or(|from| e.created_at.is_none_or(|t| t >= *from));
                 let time_to_ok = filters
                     .time_to
                     .as_ref()
-                    .map_or(true, |to| e.created_at.map_or(true, |t| t <= *to));
+                    .is_none_or(|to| e.created_at.is_none_or(|t| t <= *to));
                 source_ok && model_ok && status_ok && time_from_ok && time_to_ok
             })
             .collect();
