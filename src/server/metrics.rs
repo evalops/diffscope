@@ -126,7 +126,10 @@ pub async fn get_metrics(State(state): State<Arc<AppState>>) -> impl IntoRespons
     );
 
     (
-        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
         buf,
     )
 }
