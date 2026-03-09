@@ -180,7 +180,7 @@ pub struct Config {
     #[serde(default)]
     pub plugins: PluginConfig,
 
-    #[serde(default)]
+    #[serde(default = "default_exclude_patterns")]
     pub exclude_patterns: Vec<String>,
 
     #[serde(default)]
@@ -349,7 +349,7 @@ impl Default for Config {
             vault_mount: None,
             vault_namespace: None,
             plugins: PluginConfig::default(),
-            exclude_patterns: Vec::new(),
+            exclude_patterns: default_exclude_patterns(),
             paths: HashMap::new(),
             custom_context: Vec::new(),
             pattern_repositories: Vec::new(),
@@ -496,6 +496,18 @@ impl Config {
         }
         if self.api_key.is_none() {
             self.api_key = std::env::var("DIFFSCOPE_API_KEY")
+                .ok()
+                .filter(|s| !s.trim().is_empty());
+        }
+
+        // Env var fallbacks for GitHub integration
+        if self.github_token.is_none() {
+            self.github_token = std::env::var("GITHUB_TOKEN")
+                .ok()
+                .filter(|s| !s.trim().is_empty());
+        }
+        if self.github_webhook_secret.is_none() {
+            self.github_webhook_secret = std::env::var("DIFFSCOPE_WEBHOOK_SECRET")
                 .ok()
                 .filter(|s| !s.trim().is_empty());
         }
@@ -997,6 +1009,34 @@ fn default_max_context_chars() -> usize {
 
 fn default_max_diff_chars() -> usize {
     40000
+}
+
+fn default_exclude_patterns() -> Vec<String> {
+    [
+        "*.lock",
+        "Cargo.lock",
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "go.sum",
+        "Gemfile.lock",
+        "Pipfile.lock",
+        "poetry.lock",
+        "composer.lock",
+        "*.min.js",
+        "*.min.css",
+        "*.map",
+        "*.generated.*",
+        "*.pb.go",
+        "*.pb.rs",
+        "*_generated.go",
+        "vendor/**",
+        "node_modules/**",
+        ".git/**",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 fn default_context_max_chunks() -> usize {

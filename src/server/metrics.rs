@@ -1,5 +1,6 @@
 use axum::extract::State;
 use axum::response::IntoResponse;
+use std::collections::HashMap;
 use std::fmt::Write;
 use std::sync::Arc;
 
@@ -19,6 +20,11 @@ pub async fn get_metrics(State(state): State<Arc<AppState>>) -> impl IntoRespons
     let mut total_files_reviewed: u64 = 0;
     let mut total_diff_bytes: u64 = 0;
     let mut github_posted: u64 = 0;
+    let mut total_tokens: u64 = 0;
+    let mut total_prompt_tokens: u64 = 0;
+    let mut total_completion_tokens: u64 = 0;
+    let mut severity_counts: HashMap<String, u64> = HashMap::new();
+    let mut category_counts: HashMap<String, u64> = HashMap::new();
 
     for session in reviews.values() {
         total += 1;
@@ -31,6 +37,15 @@ pub async fn get_metrics(State(state): State<Arc<AppState>>) -> impl IntoRespons
         total_comments += session.comments.len() as u64;
         total_files_reviewed += session.files_reviewed as u64;
 
+        for comment in &session.comments {
+            *severity_counts
+                .entry(comment.severity.to_string())
+                .or_default() += 1;
+            *category_counts
+                .entry(comment.category.to_string())
+                .or_default() += 1;
+        }
+
         if let Some(event) = &session.event {
             if event.duration_ms > 0 {
                 total_duration_ms += event.duration_ms;
@@ -40,12 +55,21 @@ pub async fn get_metrics(State(state): State<Arc<AppState>>) -> impl IntoRespons
             if event.github_posted {
                 github_posted += 1;
             }
+            if let Some(t) = event.tokens_total {
+                total_tokens += t as u64;
+            }
+            if let Some(t) = event.tokens_prompt {
+                total_prompt_tokens += t as u64;
+            }
+            if let Some(t) = event.tokens_completion {
+                total_completion_tokens += t as u64;
+            }
         }
     }
 
     drop(reviews);
 
-    let mut buf = String::with_capacity(2048);
+    let mut buf = String::with_capacity(4096);
 
     write_metric(
         &mut buf,
@@ -124,6 +148,65 @@ pub async fn get_metrics(State(state): State<Arc<AppState>>) -> impl IntoRespons
         "counter",
         github_posted,
     );
+    write_metric(
+        &mut buf,
+        "diffscope_tokens_total",
+        "Total LLM tokens consumed",
+        "counter",
+        total_tokens,
+    );
+    write_metric(
+        &mut buf,
+        "diffscope_tokens_prompt_total",
+        "Total LLM prompt tokens consumed",
+        "counter",
+        total_prompt_tokens,
+    );
+    write_metric(
+        &mut buf,
+        "diffscope_tokens_completion_total",
+        "Total LLM completion tokens consumed",
+        "counter",
+        total_completion_tokens,
+    );
+
+    // Per-severity comment counts
+    let _ = writeln!(
+        buf,
+        "# HELP diffscope_comments_by_severity Comments by severity level"
+    );
+    let _ = writeln!(buf, "# TYPE diffscope_comments_by_severity counter");
+    for severity in &["Error", "Warning", "Info", "Suggestion"] {
+        let count = severity_counts.get(*severity).copied().unwrap_or(0);
+        let _ = writeln!(
+            buf,
+            "diffscope_comments_by_severity{{severity=\"{severity}\"}} {count}"
+        );
+    }
+
+    // Per-category comment counts
+    let _ = writeln!(
+        buf,
+        "# HELP diffscope_comments_by_category Comments by category"
+    );
+    let _ = writeln!(buf, "# TYPE diffscope_comments_by_category counter");
+    for category in &[
+        "Bug",
+        "Security",
+        "Performance",
+        "Style",
+        "Documentation",
+        "BestPractice",
+        "Maintainability",
+        "Testing",
+        "Architecture",
+    ] {
+        let count = category_counts.get(*category).copied().unwrap_or(0);
+        let _ = writeln!(
+            buf,
+            "diffscope_comments_by_category{{category=\"{category}\"}} {count}"
+        );
+    }
 
     (
         [(
