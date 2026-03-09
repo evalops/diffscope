@@ -9,6 +9,8 @@ import { Analytics } from './pages/Analytics'
 import { Settings } from './pages/Settings'
 import { Doctor } from './pages/Doctor'
 import { Repos } from './pages/Repos'
+import { Events } from './pages/Events'
+import { Admin } from './pages/Admin'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,6 +34,8 @@ export default function App() {
               <Route path="/analytics" element={<Analytics />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/repos" element={<Repos />} />
+              <Route path="/events" element={<Events />} />
+              <Route path="/admin" element={<Admin />} />
               <Route path="/doctor" element={<Doctor />} />
               <Route path="/docs" element={
                 <div className="p-6 max-w-3xl mx-auto">

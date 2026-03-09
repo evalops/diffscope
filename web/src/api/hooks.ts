@@ -101,6 +101,14 @@ export function useGhPrs(repo: string | undefined, state?: string) {
   })
 }
 
+export function useEvents() {
+  return useQuery({
+    queryKey: ['events'],
+    queryFn: () => api.listEvents(),
+    refetchInterval: REFETCH.reviews,
+  })
+}
+
 export function useStartPrReview() {
   const queryClient = useQueryClient()
   return useMutation({

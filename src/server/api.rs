@@ -73,6 +73,64 @@ pub struct ListReviewsParams {
     pub per_page: Option<usize>,
 }
 
+#[derive(Deserialize)]
+pub struct ListEventsParams {
+    pub source: Option<String>,
+    pub model: Option<String>,
+    pub status: Option<String>,
+}
+
+use super::state::ReviewEvent;
+
+/// Returns all wide events from completed/failed reviews, sorted newest-first.
+pub async fn list_events(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ListEventsParams>,
+) -> Json<Vec<ReviewEvent>> {
+    let reviews = state.reviews.read().await;
+    let mut events: Vec<ReviewEvent> = reviews
+        .values()
+        .filter_map(|s| s.event.clone())
+        .filter(|e| {
+            let source_ok = params
+                .source
+                .as_ref()
+                .map_or(true, |f| e.diff_source.eq_ignore_ascii_case(f));
+            let model_ok = params
+                .model
+                .as_ref()
+                .map_or(true, |f| e.model.eq_ignore_ascii_case(f));
+            let status_ok = params.status.as_ref().map_or(true, |f| {
+                e.event_type.eq_ignore_ascii_case(&format!("review.{}", f))
+            });
+            source_ok && model_ok && status_ok
+        })
+        .collect();
+    events.sort_by(|a, b| b.review_id.cmp(&a.review_id));
+    events.sort_by(|a, b| {
+        b.duration_ms
+            .cmp(&a.duration_ms)
+            .then(b.review_id.cmp(&a.review_id))
+    });
+    // Sort by review start time proxy: we use completed reviews ordering
+    // Re-sort by the review order (newest first) using the review map ordering
+    let id_order: std::collections::HashMap<String, usize> = {
+        let mut ordered: Vec<_> = reviews
+            .values()
+            .filter(|s| s.event.is_some())
+            .map(|s| (s.id.clone(), s.started_at))
+            .collect();
+        ordered.sort_by(|a, b| b.1.cmp(&a.1));
+        ordered
+            .into_iter()
+            .enumerate()
+            .map(|(i, (id, _))| (id, i))
+            .collect()
+    };
+    events.sort_by_key(|e| id_order.get(&e.review_id).copied().unwrap_or(usize::MAX));
+    Json(events)
+}
+
 // === Handlers ===
 
 pub async fn get_status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {

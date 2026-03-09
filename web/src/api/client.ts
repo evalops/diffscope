@@ -90,4 +90,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ diff_source: 'raw', diff_content: diffContent, title }),
     }),
+
+  listEvents: (params?: { source?: string; model?: string; status?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.source) qs.set('source', params.source)
+    if (params?.model) qs.set('model', params.model)
+    if (params?.status) qs.set('status', params.status)
+    const suffix = qs.toString() ? `?${qs}` : ''
+    return request<import('./types').ReviewEvent[]>(`/events${suffix}`)
+  },
 }
