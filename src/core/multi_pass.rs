@@ -299,7 +299,7 @@ fn analyze_file_risk(diff: &UnifiedDiff) -> HotspotResult {
 }
 
 /// Simple content similarity based on shared words.
-fn content_similarity(a: &str, b: &str) -> f32 {
+pub fn content_similarity(a: &str, b: &str) -> f32 {
     let words_a: std::collections::HashSet<&str> = a.split_whitespace().collect();
     let words_b: std::collections::HashSet<&str> = b.split_whitespace().collect();
 

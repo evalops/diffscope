@@ -42,19 +42,121 @@ Review the code changes below and identify specific issues. Focus on problems th
    - Impact if not addressed
    - Optional rule id when a scoped review rule applies
    - Suggested fix (if applicable)
+3. For every issue where a concrete code fix is possible, include a code suggestion block immediately after the issue line using this exact format:
+
+<<<ORIGINAL
+<the problematic code, copied verbatim from the diff>
+===
+<the fixed code>
+>>>SUGGESTED
 
 Format each issue as:
 Line [number] [rule:<id> optional]: [Issue type] - [Description]. [Impact]. [Suggestion if applicable].
 
+Then, if a fix applies, add the code suggestion block on the next lines.
+
 Examples:
 Line 42 [rule:sec.sql.injection]: Security - User input passed directly to SQL query. Risk of SQL injection. Use parameterized queries.
+<<<ORIGINAL
+query = "SELECT * FROM users WHERE id = " + user_id
+===
+query = "SELECT * FROM users WHERE id = ?"
+cursor.execute(query, (user_id,))
+>>>SUGGESTED
 Line 13: Bug - Missing null check before dereferencing pointer. May cause crash. Add null validation.
+<<<ORIGINAL
+value = obj.get_data()
+result = value.process()
+===
+value = obj.get_data()
+if value is not None:
+    result = value.process()
+>>>SUGGESTED
 Line 28: Performance - O(n²) algorithm for large dataset. Will be slow with many items. Consider using a hash map.
 </instructions>"#.to_string(),
             max_tokens: 2000,
             include_context: true,
             max_context_chars: 20000,
             max_diff_chars: 40000,
+        }
+    }
+}
+
+/// Build a system prompt focused exclusively on security issues.
+pub fn build_security_prompt() -> String {
+    r#"You are a security-focused code reviewer. Your ONLY job is to find security vulnerabilities in code changes. Do NOT comment on style, naming, performance, or general correctness.
+
+Focus exclusively on:
+- Injection attacks (SQL injection, XSS, command injection, LDAP injection)
+- Authentication and authorization flaws (broken auth, missing access control, privilege escalation)
+- Data exposure (secrets in code, PII leaks, sensitive data in logs, insecure storage)
+- Cryptographic issues (weak algorithms, hardcoded keys, improper random number generation)
+- OWASP Top 10 vulnerabilities (SSRF, insecure deserialization, security misconfiguration)
+- Input validation failures (missing sanitization, path traversal, buffer overflows)
+- Insecure communication (plaintext protocols, missing TLS verification)
+
+Tag every finding with [security] at the start of the issue type.
+If no security issues are found, respond with: No security issues found."#.to_string()
+}
+
+/// Build a system prompt focused exclusively on correctness issues.
+pub fn build_correctness_prompt() -> String {
+    r#"You are a correctness-focused code reviewer. Your ONLY job is to find bugs and logic errors in code changes. Do NOT comment on style, naming, or formatting.
+
+Focus exclusively on:
+- Logic errors (off-by-one, wrong operator, inverted conditions, unreachable code)
+- Edge cases (empty collections, zero/negative values, boundary conditions, integer overflow)
+- Null/None handling (null pointer dereference, unwrap on None/Err, missing Option checks)
+- Concurrency issues (race conditions, deadlocks, data races, missing synchronization)
+- Error handling (swallowed errors, incorrect error propagation, missing error cases)
+- Resource management (unclosed handles, memory leaks, missing cleanup)
+- Type safety (incorrect casts, lossy conversions, type confusion)
+- API contract violations (precondition failures, invariant breaks)
+
+Tag every finding with [correctness] at the start of the issue type.
+If no correctness issues are found, respond with: No correctness issues found."#.to_string()
+}
+
+/// Build a system prompt focused exclusively on style and readability issues.
+pub fn build_style_prompt() -> String {
+    r#"You are a style-focused code reviewer. Your ONLY job is to find style, readability, and idiomatic code issues. Do NOT comment on bugs, security, or performance.
+
+Focus exclusively on:
+- Naming conventions (unclear variable/function names, inconsistent casing, abbreviations)
+- Code patterns (non-idiomatic constructs, unnecessary complexity, missed language features)
+- Readability (deeply nested code, overly long functions, unclear control flow)
+- Consistency (mixed styles within the same file, inconsistent formatting)
+- Dead code (unused imports, unreachable branches, commented-out code)
+- Documentation (missing doc comments on public APIs, outdated comments, misleading names)
+
+Tag every finding with [style] at the start of the issue type.
+If no style issues are found, respond with: No style issues found."#.to_string()
+}
+
+/// Category label for a specialized review pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecializedPassKind {
+    Security,
+    Correctness,
+    Style,
+}
+
+impl SpecializedPassKind {
+    /// Human-readable tag added to comments produced by this pass.
+    pub fn tag(self) -> &'static str {
+        match self {
+            SpecializedPassKind::Security => "security-pass",
+            SpecializedPassKind::Correctness => "correctness-pass",
+            SpecializedPassKind::Style => "style-pass",
+        }
+    }
+
+    /// Build the specialized system prompt for this pass.
+    pub fn system_prompt(self) -> String {
+        match self {
+            SpecializedPassKind::Security => build_security_prompt(),
+            SpecializedPassKind::Correctness => build_correctness_prompt(),
+            SpecializedPassKind::Style => build_style_prompt(),
         }
     }
 }
@@ -152,5 +254,65 @@ impl PromptBuilder {
         }
 
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn security_prompt_focuses_on_security() {
+        let prompt = build_security_prompt();
+        assert!(prompt.contains("Injection"));
+        assert!(prompt.contains("OWASP"));
+        assert!(prompt.contains("[security]"));
+        // Should NOT encourage style or correctness commentary
+        assert!(prompt.contains("Do NOT comment on style"));
+    }
+
+    #[test]
+    fn correctness_prompt_focuses_on_bugs() {
+        let prompt = build_correctness_prompt();
+        assert!(prompt.contains("Logic errors"));
+        assert!(prompt.contains("Concurrency"));
+        assert!(prompt.contains("[correctness]"));
+        assert!(prompt.contains("Do NOT comment on style"));
+    }
+
+    #[test]
+    fn style_prompt_focuses_on_readability() {
+        let prompt = build_style_prompt();
+        assert!(prompt.contains("Naming conventions"));
+        assert!(prompt.contains("Readability"));
+        assert!(prompt.contains("[style]"));
+        assert!(prompt.contains("Do NOT comment on bugs"));
+    }
+
+    #[test]
+    fn pass_kind_system_prompt_matches_builder() {
+        assert_eq!(
+            SpecializedPassKind::Security.system_prompt(),
+            build_security_prompt()
+        );
+        assert_eq!(
+            SpecializedPassKind::Correctness.system_prompt(),
+            build_correctness_prompt()
+        );
+        assert_eq!(
+            SpecializedPassKind::Style.system_prompt(),
+            build_style_prompt()
+        );
+    }
+
+    #[test]
+    fn pass_kind_tags_are_unique() {
+        let tags: Vec<&str> = vec![
+            SpecializedPassKind::Security.tag(),
+            SpecializedPassKind::Correctness.tag(),
+            SpecializedPassKind::Style.tag(),
+        ];
+        let unique: std::collections::HashSet<&&str> = tags.iter().collect();
+        assert_eq!(unique.len(), tags.len());
     }
 }

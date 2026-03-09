@@ -25,14 +25,21 @@ impl PRSummaryGenerator {
         adapter: &dyn LLMAdapter,
         options: SummaryOptions,
     ) -> Result<PRSummary> {
-        // Get commit messages for context
         let commits = git.get_recent_commits(10)?;
+        Self::generate_summary_with_commits(diffs, &commits, adapter, options).await
+    }
 
-        // Analyze changes
+    /// Like `generate_summary_with_options`, but takes pre-fetched commit messages
+    /// instead of a `GitIntegration` reference. This avoids holding `GitIntegration`
+    /// (which is not `Sync`) across an `.await` boundary.
+    pub async fn generate_summary_with_commits(
+        diffs: &[UnifiedDiff],
+        commits: &[String],
+        adapter: &dyn LLMAdapter,
+        options: SummaryOptions,
+    ) -> Result<PRSummary> {
         let stats = Self::calculate_stats(diffs);
-
-        // Build prompt for AI summary
-        let prompt = Self::build_summary_prompt(diffs, &commits, &stats, &options);
+        let prompt = Self::build_summary_prompt(diffs, commits, &stats, &options);
 
         let request = LLMRequest {
             system_prompt: Self::get_system_prompt(),
@@ -42,8 +49,6 @@ impl PRSummaryGenerator {
         };
 
         let response = adapter.complete(request).await?;
-
-        // Parse AI response into structured summary
         Self::parse_summary_response(&response.content, stats)
     }
 

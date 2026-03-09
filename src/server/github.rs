@@ -28,6 +28,7 @@ pub struct DeviceFlowResponse {
 }
 
 /// POST /api/gh/auth/device — start an OAuth device flow.
+#[tracing::instrument(name = "github.device_flow_start", skip(state))]
 pub async fn start_device_flow(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<DeviceFlowResponse>, (StatusCode, String)> {
@@ -101,6 +102,7 @@ pub struct PollDeviceFlowResponse {
 }
 
 /// POST /api/gh/auth/poll — poll for device flow completion.
+#[tracing::instrument(name = "github.device_flow_poll", skip(state, request))]
 pub async fn poll_device_flow(
     State(state): State<Arc<AppState>>,
     Json(request): Json<PollDeviceFlowRequest>,
@@ -236,6 +238,7 @@ pub async fn get_webhook_status(State(state): State<Arc<AppState>>) -> Json<Webh
 }
 
 /// POST /api/webhooks/github — receive GitHub webhook events.
+#[tracing::instrument(name = "github.webhook", skip(state, headers, body), fields(event_type = tracing::field::Empty))]
 pub async fn handle_webhook(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -265,6 +268,8 @@ pub async fn handle_webhook(
         .get("x-github-event")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("unknown");
+
+    tracing::Span::current().record("event_type", event_type);
 
     let token = config.github_token.clone();
     let github_app_id = config.github_app_id;
@@ -367,6 +372,7 @@ pub async fn handle_webhook(
                     summary: None,
                     files_reviewed: 0,
                     error: None,
+                    pr_summary_text: None,
                     diff_content: Some(diff_content.clone()),
                     event: None,
                     progress: None,
@@ -624,6 +630,45 @@ async fn create_check_run(
     }
 }
 
+// ── Post PR Summary Comment ─────────────────────────────────────────────
+
+/// Post an AI-generated PR summary as a standalone issue comment on the PR.
+async fn post_pr_summary_comment(
+    client: &reqwest::Client,
+    token: &str,
+    repo: &str,
+    pr_number: u32,
+    summary_markdown: &str,
+) -> Result<(), String> {
+    let url = format!(
+        "https://api.github.com/repos/{}/issues/{}/comments",
+        repo, pr_number,
+    );
+
+    let body = serde_json::json!({
+        "body": summary_markdown,
+    });
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "DiffScope")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to post PR summary comment: {}", e))?;
+
+    if resp.status().is_success() {
+        info!(repo = %repo, pr = pr_number, "Posted PR summary comment");
+        Ok(())
+    } else {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        Err(format!("GitHub returned {}: {}", status, body))
+    }
+}
+
 // ── Webhook-triggered review task ──────────────────────────────────────
 
 struct WebhookReviewParams {
@@ -636,6 +681,7 @@ struct WebhookReviewParams {
     auth_token: String,
 }
 
+#[tracing::instrument(name = "github.webhook_review", skip(state, params), fields(review_id = %params.review_id, repo = %params.repo, pr_number = params.pr_number, diff_bytes = params.diff_content.len()))]
 async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
     let WebhookReviewParams {
         review_id,
@@ -672,6 +718,11 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
     let model = config.model.clone();
     let provider = config.adapter.clone();
     let base_url = config.base_url.clone();
+    let summary_config = if config.smart_review_summary {
+        Some(config.clone())
+    } else {
+        None
+    };
 
     let diff_bytes = diff_content.len();
     let diff_files_total = count_diff_files(&diff_content);
@@ -772,6 +823,38 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
             emit_wide_event(&event);
             AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
                 .await;
+
+            // Generate AI-powered PR summary and post it as a comment if enabled
+            if let Some(ref cfg) = summary_config {
+                super::api::generate_and_store_pr_summary(
+                    &state,
+                    &review_id,
+                    &diff_content,
+                    cfg,
+                )
+                .await;
+
+                // Post the summary as a PR comment
+                let pr_summary_text = {
+                    let reviews = state.reviews.read().await;
+                    reviews
+                        .get(&review_id)
+                        .and_then(|s| s.pr_summary_text.clone())
+                };
+                if let Some(summary_md) = pr_summary_text {
+                    if let Err(e) = post_pr_summary_comment(
+                        &state.http_client,
+                        &auth_token,
+                        &repo,
+                        pr_number,
+                        &summary_md,
+                    )
+                    .await
+                    {
+                        warn!(review_id = %review_id, "Failed to post PR summary comment: {}", e);
+                    }
+                }
+            }
         }
         Ok(Err(e)) => {
             let err_msg = format!("Review failed: {}", e);

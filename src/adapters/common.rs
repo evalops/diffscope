@@ -26,6 +26,7 @@ impl Default for RetryConfig {
 }
 
 /// Send an HTTP request with configurable retry parameters.
+#[tracing::instrument(name = "llm_request", skip(retry_config, make_request), fields(adapter = %adapter_name, max_retries = retry_config.max_retries))]
 pub async fn send_with_retry_config<F>(
     adapter_name: &str,
     retry_config: &RetryConfig,

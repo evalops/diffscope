@@ -13,6 +13,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tracing_subscriber::EnvFilter;
+#[cfg(feature = "otel")]
+use opentelemetry::trace::TracerProvider as _;
+#[cfg(feature = "otel")]
+use tracing_subscriber::layer::SubscriberExt;
 
 use commands::{EvalRunOptions, GitCommands};
 use config::CliOverrides;
@@ -296,6 +300,43 @@ async fn main() -> Result<()> {
         EnvFilter::new("info")
     };
 
+    #[cfg(feature = "otel")]
+    let _otel_guard: Option<opentelemetry_sdk::trace::TracerProvider> = {
+        let otel_enabled = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok();
+        if otel_enabled {
+            let exporter = opentelemetry_otlp::SpanExporter::builder()
+                .with_tonic()
+                .build()
+                .expect("Failed to build OTLP span exporter");
+
+            let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
+                .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+                .with_resource(opentelemetry_sdk::Resource::new(vec![
+                    opentelemetry::KeyValue::new("service.name", "diffscope"),
+                ]))
+                .build();
+
+            opentelemetry::global::set_tracer_provider(tracer_provider.clone());
+
+            let otel_layer =
+                tracing_opentelemetry::layer().with_tracer(tracer_provider.tracer("diffscope"));
+
+            let subscriber = tracing_subscriber::fmt::Subscriber::builder()
+                .with_env_filter(filter)
+                .finish()
+                .with(otel_layer);
+
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("Failed to set tracing subscriber");
+
+            Some(tracer_provider)
+        } else {
+            tracing_subscriber::fmt().with_env_filter(filter).init();
+            None
+        }
+    };
+
+    #[cfg(not(feature = "otel"))]
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     // Load configuration from file and merge with CLI options
@@ -427,6 +468,11 @@ async fn main() -> Result<()> {
             };
             commands::eval_command(config, fixtures, output, eval_options).await?;
         }
+    }
+
+    #[cfg(feature = "otel")]
+    if let Some(ref provider) = _otel_guard {
+        let _ = provider.shutdown();
     }
 
     Ok(())

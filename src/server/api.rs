@@ -99,6 +99,7 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> Json<StatusRespon
     })
 }
 
+#[tracing::instrument(name = "api.start_review", skip(state, request), fields(diff_source = %request.diff_source))]
 pub async fn start_review(
     State(state): State<Arc<AppState>>,
     Json(request): Json<StartReviewRequest>,
@@ -172,6 +173,7 @@ pub async fn start_review(
         summary: None,
         files_reviewed: 0,
         error: None,
+        pr_summary_text: None,
         diff_content: None,
         event: None,
         progress: None,
@@ -207,6 +209,7 @@ pub async fn start_review(
     }))
 }
 
+#[tracing::instrument(name = "review_task", skip(state, raw_diff, overrides), fields(review_id = %review_id, diff_source = %diff_source))]
 async fn run_review_task(
     state: Arc<AppState>,
     review_id: String,
@@ -319,6 +322,13 @@ async fn run_review_task(
 
     let on_progress = Some(build_progress_callback(&state, &review_id, task_start));
 
+    // Save config for post-review PR summary generation (config is moved into the review call)
+    let summary_config = if config.smart_review_summary {
+        Some(config.clone())
+    } else {
+        None
+    };
+
     // Run the review with a 5-minute timeout
     let llm_start = std::time::Instant::now();
     let result = tokio::time::timeout(
@@ -355,6 +365,11 @@ async fn run_review_task(
             emit_wide_event(&event);
             AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
                 .await;
+
+            // Generate AI-powered PR summary if enabled
+            if let Some(ref cfg) = summary_config {
+                generate_and_store_pr_summary(&state, &review_id, &diff_content, cfg).await;
+            }
         }
         Ok(Err(e)) => {
             let err_msg = format!("Review failed: {}", e);
@@ -1435,6 +1450,7 @@ pub struct StartPrReviewRequest {
     pub post_results: bool,
 }
 
+#[tracing::instrument(name = "api.start_pr_review", skip(state, request), fields(repo = %request.repo, pr_number = request.pr_number))]
 pub async fn start_pr_review(
     State(state): State<Arc<AppState>>,
     Json(request): Json<StartPrReviewRequest>,
@@ -1488,6 +1504,7 @@ pub async fn start_pr_review(
         summary: None,
         files_reviewed: 0,
         error: None,
+        pr_summary_text: None,
         diff_content: Some(diff_content.clone()),
         event: None,
         progress: None,
@@ -1551,6 +1568,11 @@ async fn run_pr_review_task(
     let model = config.model.clone();
     let provider = config.adapter.clone();
     let base_url = config.base_url.clone();
+    let summary_config = if config.smart_review_summary {
+        Some(config.clone())
+    } else {
+        None
+    };
 
     let diff_bytes = diff_content.len();
     let diff_files_total = count_diff_files(&diff_content);
@@ -1624,6 +1646,11 @@ async fn run_pr_review_task(
             emit_wide_event(&event);
             AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
                 .await;
+
+            // Generate AI-powered PR summary if enabled
+            if let Some(ref cfg) = summary_config {
+                generate_and_store_pr_summary(&state, &review_id, &diff_content, cfg).await;
+            }
         }
         Ok(Err(e)) => {
             let err_msg = format!("Review failed: {}", e);
@@ -1657,6 +1684,81 @@ async fn run_pr_review_task(
 
     AppState::save_reviews_async(&state);
     AppState::prune_old_reviews(&state).await;
+}
+
+/// Generate an AI-powered PR summary and store it in the review session.
+/// Called after a successful review when `smart_review_summary` is enabled.
+///
+/// GitIntegration contains a raw pointer and is not `Sync`, so git operations
+/// are performed in a blocking task before the async LLM call.
+pub(super) async fn generate_and_store_pr_summary(
+    state: &Arc<AppState>,
+    review_id: &str,
+    diff_content: &str,
+    config: &crate::config::Config,
+) {
+    use crate::core::{DiffParser, PRSummaryGenerator, SummaryOptions};
+
+    let diffs = match DiffParser::parse_unified_diff(diff_content) {
+        Ok(d) => d,
+        Err(e) => {
+            warn!(review_id = %review_id, "PR summary skipped (diff parse error): {}", e);
+            return;
+        }
+    };
+
+    // Extract recent commits in a blocking task (GitIntegration is not Sync)
+    let repo_path = state.repo_path.clone();
+    let commits = match tokio::task::spawn_blocking(move || {
+        let git = crate::core::GitIntegration::new(&repo_path)?;
+        git.get_recent_commits(10)
+    })
+    .await
+    {
+        Ok(Ok(c)) => c,
+        Ok(Err(e)) => {
+            warn!(review_id = %review_id, "PR summary skipped (git error): {}", e);
+            return;
+        }
+        Err(e) => {
+            warn!(review_id = %review_id, "PR summary skipped (blocking task failed): {}", e);
+            return;
+        }
+    };
+
+    let model_config = config.to_model_config();
+    let adapter = match crate::adapters::llm::create_adapter(&model_config) {
+        Ok(a) => a,
+        Err(e) => {
+            warn!(review_id = %review_id, "PR summary skipped (adapter error): {}", e);
+            return;
+        }
+    };
+
+    let options = SummaryOptions {
+        include_diagram: false,
+    };
+
+    match PRSummaryGenerator::generate_summary_with_commits(
+        &diffs,
+        &commits,
+        adapter.as_ref(),
+        options,
+    )
+    .await
+    {
+        Ok(summary) => {
+            let markdown = summary.to_markdown();
+            info!(review_id = %review_id, "PR summary generated ({} chars)", markdown.len());
+            let mut reviews = state.reviews.write().await;
+            if let Some(session) = reviews.get_mut(review_id) {
+                session.pr_summary_text = Some(markdown);
+            }
+        }
+        Err(e) => {
+            warn!(review_id = %review_id, "PR summary generation failed: {}", e);
+        }
+    }
 }
 
 pub(super) async fn post_pr_review_comments(

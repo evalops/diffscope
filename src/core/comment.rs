@@ -375,8 +375,12 @@ impl CommentSynthesizer {
     }
 
     fn generate_code_suggestion(raw: &RawComment) -> Option<CodeSuggestion> {
-        // This is a simplified implementation - in practice, you'd use the LLM
-        // to generate more sophisticated code suggestions
+        // Prefer the structured code suggestion parsed from the LLM response
+        if let Some(cs) = &raw.code_suggestion {
+            return Some(cs.clone());
+        }
+
+        // Fallback: generate a basic suggestion from the textual suggestion field
         if let Some(suggestion) = &raw.suggestion {
             if suggestion.contains("use") || suggestion.contains("replace") {
                 return Some(CodeSuggestion {
@@ -537,6 +541,7 @@ pub struct RawComment {
     pub confidence: Option<f32>,
     pub fix_effort: Option<FixEffort>,
     pub tags: Vec<String>,
+    pub code_suggestion: Option<CodeSuggestion>,
 }
 
 #[cfg(test)]

@@ -98,6 +98,11 @@ pub struct Config {
     #[serde(default = "default_feedback_path")]
     pub feedback_path: PathBuf,
 
+    /// Path to the convention store file for learned review patterns.
+    /// Defaults to ~/.local/share/diffscope/conventions.json if not set.
+    #[serde(default)]
+    pub convention_store_path: Option<String>,
+
     pub system_prompt: Option<String>,
     pub api_key: Option<String>,
     pub base_url: Option<String>,
@@ -221,6 +226,11 @@ pub struct Config {
     /// Webhook secret for verifying GitHub webhook signatures.
     #[serde(default)]
     pub github_webhook_secret: Option<String>,
+
+    /// When true, run separate specialized LLM passes for security, correctness,
+    /// and style instead of a single monolithic review prompt.
+    #[serde(default = "default_false")]
+    pub multi_pass_specialized: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -316,6 +326,7 @@ impl Default for Config {
             symbol_index_lsp_command: None,
             symbol_index_lsp_languages: default_symbol_index_lsp_languages(),
             feedback_path: default_feedback_path(),
+            convention_store_path: None,
             system_prompt: None,
             api_key: None,
             base_url: None,
@@ -352,6 +363,7 @@ impl Default for Config {
             github_client_secret: None,
             github_private_key: None,
             github_webhook_secret: None,
+            multi_pass_specialized: false,
         }
     }
 }
@@ -1072,6 +1084,10 @@ fn default_feedback_suppression_margin() -> usize {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_false() -> bool {
+    false
 }
 
 fn normalize_comment_types(values: &[String]) -> Vec<String> {

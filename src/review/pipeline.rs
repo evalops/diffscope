@@ -67,6 +67,7 @@ pub async fn review_diff_content_raw(
 }
 
 /// Like `review_diff_content_raw` but with an optional progress callback.
+#[tracing::instrument(name = "review_pipeline", skip(diff_content, config, repo_path, on_progress), fields(diff_bytes = diff_content.len(), model = %config.model))]
 pub async fn review_diff_content_raw_with_progress(
     diff_content: &str,
     config: config::Config,
@@ -193,6 +194,8 @@ async fn review_diff_content_raw_inner(
         active_rules: Vec<crate::core::ReviewRule>,
         path_config: Option<config::PathConfig>,
         file_path: std::path::PathBuf,
+        /// When running specialized multi-pass review, identifies which pass this job belongs to.
+        pass_kind: Option<core::SpecializedPassKind>,
     }
 
     let mut jobs: Vec<FileReviewJob> = Vec::new();
@@ -305,60 +308,121 @@ async fn review_diff_content_raw_inner(
             config.context_budget_chars,
         );
 
-        // Create prompt builder with config
-        let mut local_prompt_config = base_prompt_config.clone();
-        if let Some(custom_prompt) = &config.system_prompt {
-            local_prompt_config.system_prompt = custom_prompt.clone();
-        }
-        if let Some(ref pc) = path_config {
-            if let Some(ref prompt) = pc.system_prompt {
-                local_prompt_config.system_prompt = prompt.clone();
+        // Determine which specialized passes to run, if any.
+        let specialized_passes: Vec<core::SpecializedPassKind> = if config.multi_pass_specialized {
+            let mut passes = vec![
+                core::SpecializedPassKind::Security,
+                core::SpecializedPassKind::Correctness,
+            ];
+            // Only run the style pass when strictness >= 2
+            if config.strictness >= 2 {
+                passes.push(core::SpecializedPassKind::Style);
+            }
+            passes
+        } else {
+            Vec::new()
+        };
+
+        if specialized_passes.is_empty() {
+            // Standard single-pass mode
+            let mut local_prompt_config = base_prompt_config.clone();
+            if let Some(custom_prompt) = &config.system_prompt {
+                local_prompt_config.system_prompt = custom_prompt.clone();
+            }
+            if let Some(ref pc) = path_config {
+                if let Some(ref prompt) = pc.system_prompt {
+                    local_prompt_config.system_prompt = prompt.clone();
+                }
+            }
+            if let Some(guidance) = build_review_guidance(&config, path_config.as_ref()) {
+                local_prompt_config.system_prompt.push_str("\n\n");
+                local_prompt_config.system_prompt.push_str(&guidance);
+            }
+            if !enhanced_guidance.is_empty() {
+                local_prompt_config.system_prompt.push_str("\n\n");
+                local_prompt_config
+                    .system_prompt
+                    .push_str(&enhanced_guidance);
+            }
+            if let Some(ref instructions) = auto_instructions {
+                local_prompt_config
+                    .system_prompt
+                    .push_str("\n\n# Project-specific instructions (auto-detected):\n");
+                local_prompt_config.system_prompt.push_str(instructions);
+            }
+            let local_prompt_builder = core::PromptBuilder::new(local_prompt_config);
+            let (system_prompt, user_prompt) =
+                local_prompt_builder.build_prompt(diff, &context_chunks)?;
+
+            let (system_prompt, user_prompt) = if is_local {
+                let context_window = config.context_window.unwrap_or(8192);
+                optimize_prompt_for_local(&system_prompt, &user_prompt, context_window)
+            } else {
+                (system_prompt, user_prompt)
+            };
+
+            let request = adapters::llm::LLMRequest {
+                system_prompt,
+                user_prompt,
+                temperature: None,
+                max_tokens: None,
+            };
+
+            jobs.push(FileReviewJob {
+                diff_index,
+                request,
+                active_rules,
+                path_config,
+                file_path: diff.file_path.clone(),
+                pass_kind: None,
+            });
+        } else {
+            // Multi-pass specialized mode: create one job per pass per file
+            for pass_kind in &specialized_passes {
+                let mut local_prompt_config = base_prompt_config.clone();
+                local_prompt_config.system_prompt = pass_kind.system_prompt();
+
+                if !enhanced_guidance.is_empty() {
+                    local_prompt_config.system_prompt.push_str("\n\n");
+                    local_prompt_config
+                        .system_prompt
+                        .push_str(&enhanced_guidance);
+                }
+                if let Some(ref instructions) = auto_instructions {
+                    local_prompt_config
+                        .system_prompt
+                        .push_str("\n\n# Project-specific instructions (auto-detected):\n");
+                    local_prompt_config.system_prompt.push_str(instructions);
+                }
+
+                let local_prompt_builder = core::PromptBuilder::new(local_prompt_config);
+                let (system_prompt, user_prompt) =
+                    local_prompt_builder.build_prompt(diff, &context_chunks)?;
+
+                let (system_prompt, user_prompt) = if is_local {
+                    let context_window = config.context_window.unwrap_or(8192);
+                    optimize_prompt_for_local(&system_prompt, &user_prompt, context_window)
+                } else {
+                    (system_prompt, user_prompt)
+                };
+
+                let request = adapters::llm::LLMRequest {
+                    system_prompt,
+                    user_prompt,
+                    temperature: None,
+                    max_tokens: None,
+                };
+
+                jobs.push(FileReviewJob {
+                    diff_index,
+                    request,
+                    active_rules: active_rules.clone(),
+                    path_config: path_config.clone(),
+                    file_path: diff.file_path.clone(),
+                    pass_kind: Some(*pass_kind),
+                });
             }
         }
-        if let Some(guidance) = build_review_guidance(&config, path_config.as_ref()) {
-            local_prompt_config.system_prompt.push_str("\n\n");
-            local_prompt_config.system_prompt.push_str(&guidance);
-        }
-        // Inject enhanced guidance from the new modules
-        if !enhanced_guidance.is_empty() {
-            local_prompt_config.system_prompt.push_str("\n\n");
-            local_prompt_config
-                .system_prompt
-                .push_str(&enhanced_guidance);
-        }
-        // Inject auto-detected instruction files
-        if let Some(ref instructions) = auto_instructions {
-            local_prompt_config
-                .system_prompt
-                .push_str("\n\n# Project-specific instructions (auto-detected):\n");
-            local_prompt_config.system_prompt.push_str(instructions);
-        }
-        let local_prompt_builder = core::PromptBuilder::new(local_prompt_config);
-        let (system_prompt, user_prompt) =
-            local_prompt_builder.build_prompt(diff, &context_chunks)?;
-
-        // Optimize prompt for local models with limited context windows
-        let (system_prompt, user_prompt) = if is_local {
-            let context_window = config.context_window.unwrap_or(8192);
-            optimize_prompt_for_local(&system_prompt, &user_prompt, context_window)
-        } else {
-            (system_prompt, user_prompt)
-        };
-
-        let request = adapters::llm::LLMRequest {
-            system_prompt,
-            user_prompt,
-            temperature: None,
-            max_tokens: None,
-        };
-
-        jobs.push(FileReviewJob {
-            diff_index,
-            request,
-            active_rules,
-            path_config,
-            file_path: diff.file_path.clone(),
-        });
     }
 
     // Phase 2: Send LLM requests with bounded concurrency
@@ -396,6 +460,7 @@ async fn review_diff_content_raw_inner(
                     job.active_rules,
                     job.path_config,
                     job.file_path,
+                    job.pass_kind,
                     response,
                 )
             }
@@ -406,9 +471,9 @@ async fn review_diff_content_raw_inner(
 
     // Phase 3: Process results in file order
     let mut indexed_results = results;
-    indexed_results.sort_by_key(|(idx, _, _, _, _)| *idx);
+    indexed_results.sort_by_key(|(idx, _, _, _, _, _)| *idx);
 
-    for (diff_index, active_rules, path_config, file_path, response) in indexed_results {
+    for (diff_index, active_rules, path_config, file_path, pass_kind, response) in indexed_results {
         let diff = &diffs[diff_index];
 
         match response {
@@ -434,6 +499,15 @@ async fn review_diff_content_raw_inner(
 
                 if let Ok(raw_comments) = parse_llm_response(&response.content, &diff.file_path) {
                     let mut comments = core::CommentSynthesizer::synthesize(raw_comments)?;
+
+                    // Tag comments with the specialized pass kind, if applicable
+                    if let Some(kind) = pass_kind {
+                        for comment in &mut comments {
+                            if !comment.tags.contains(&kind.tag().to_string()) {
+                                comment.tags.push(kind.tag().to_string());
+                            }
+                        }
+                    }
 
                     // Apply severity overrides if configured
                     if let Some(ref pc) = path_config {
@@ -468,6 +542,21 @@ async fn review_diff_content_raw_inner(
                 files_skipped: files_skipped_snapshot,
                 comments_so_far: all_comments.clone(),
             });
+        }
+    }
+
+    // Deduplicate across specialized passes when multi-pass is enabled.
+    if config.multi_pass_specialized {
+        let before = all_comments.len();
+        all_comments = deduplicate_specialized_comments(all_comments);
+        let after = all_comments.len();
+        if before != after {
+            info!(
+                "Deduplicated {} comment(s) across specialized passes ({} -> {})",
+                before - after,
+                before,
+                after
+            );
         }
     }
 
@@ -522,6 +611,47 @@ pub fn extract_symbols_from_diff(diff: &core::UnifiedDiff) -> Vec<String> {
     }
 
     symbols
+}
+
+/// Deduplicate comments that appear in multiple specialized passes.
+/// When multi-pass review is enabled, the same issue may be flagged by both
+/// the security and correctness passes. We merge near-identical comments,
+/// keeping the one with the highest confidence and combining their tags.
+fn deduplicate_specialized_comments(mut comments: Vec<core::Comment>) -> Vec<core::Comment> {
+    if comments.len() <= 1 {
+        return comments;
+    }
+    // Sort by file_path then line_number for stable dedup
+    comments.sort_by(|a, b| {
+        a.file_path
+            .cmp(&b.file_path)
+            .then(a.line_number.cmp(&b.line_number))
+    });
+
+    let mut deduped: Vec<core::Comment> = Vec::with_capacity(comments.len());
+    for comment in comments {
+        let dominated = deduped.iter_mut().find(|existing| {
+            existing.file_path == comment.file_path
+                && existing.line_number == comment.line_number
+                && core::multi_pass::content_similarity(&existing.content, &comment.content) > 0.6
+        });
+        if let Some(existing) = dominated {
+            // Merge: keep higher confidence, combine tags
+            if comment.confidence > existing.confidence {
+                existing.content = comment.content;
+                existing.confidence = comment.confidence;
+                existing.severity = comment.severity;
+            }
+            for tag in &comment.tags {
+                if !existing.tags.contains(tag) {
+                    existing.tags.push(tag.clone());
+                }
+            }
+        } else {
+            deduped.push(comment);
+        }
+    }
+    deduped
 }
 
 pub fn filter_comments_for_diff(
@@ -626,7 +756,11 @@ pub fn build_review_guidance(
 
     // Fix suggestions toggle
     if !config.include_fix_suggestions {
-        sections.push("Do not include code fix suggestions. Only describe the issue.".to_string());
+        sections.push("Do not include code fix suggestions. Only describe the issue. Do not include <<<ORIGINAL/>>>SUGGESTED blocks.".to_string());
+    } else {
+        sections.push(
+            "For every finding where a concrete code fix is possible, include a code suggestion block immediately after the issue line using this exact format:\n\n<<<ORIGINAL\n<the problematic code>\n===\n<the fixed code>\n>>>SUGGESTED\n\nAlways copy the original code verbatim from the diff. Only omit the block when no concrete fix can be expressed in code.".to_string(),
+        );
     }
 
     if sections.is_empty() {
@@ -1273,5 +1407,101 @@ mod tests {
         // 200 spaces should not be flagged (whitespace patterns are skipped)
         let text = " ".repeat(200);
         assert!(!has_excessive_repetition(&text));
+    }
+
+    // --- deduplicate_specialized_comments tests ---
+
+    fn make_comment(file: &str, line: usize, content: &str, tag: &str) -> core::Comment {
+        core::Comment {
+            id: format!("cmt_{}", line),
+            file_path: PathBuf::from(file),
+            line_number: line,
+            content: content.to_string(),
+            rule_id: None,
+            severity: core::comment::Severity::Warning,
+            category: core::comment::Category::BestPractice,
+            suggestion: None,
+            confidence: 0.7,
+            code_suggestion: None,
+            tags: vec![tag.to_string()],
+            fix_effort: core::comment::FixEffort::Medium,
+            feedback: None,
+        }
+    }
+
+    #[test]
+    fn dedup_removes_similar_comments_on_same_line() {
+        let comments = vec![
+            make_comment("a.rs", 10, "Missing null check on input", "security-pass"),
+            make_comment(
+                "a.rs",
+                10,
+                "Missing null check on user input",
+                "correctness-pass",
+            ),
+        ];
+        let deduped = deduplicate_specialized_comments(comments);
+        assert_eq!(deduped.len(), 1);
+        assert!(deduped[0].tags.contains(&"security-pass".to_string()));
+    }
+
+    #[test]
+    fn dedup_keeps_different_comments_on_same_line() {
+        let comments = vec![
+            make_comment("a.rs", 10, "SQL injection vulnerability", "security-pass"),
+            make_comment("a.rs", 10, "Off-by-one error in loop", "correctness-pass"),
+        ];
+        let deduped = deduplicate_specialized_comments(comments);
+        assert_eq!(deduped.len(), 2);
+    }
+
+    #[test]
+    fn dedup_keeps_similar_comments_on_different_lines() {
+        let comments = vec![
+            make_comment("a.rs", 10, "Missing null check on input", "security-pass"),
+            make_comment(
+                "a.rs",
+                20,
+                "Missing null check on input",
+                "correctness-pass",
+            ),
+        ];
+        let deduped = deduplicate_specialized_comments(comments);
+        assert_eq!(deduped.len(), 2);
+    }
+
+    #[test]
+    fn dedup_handles_empty_input() {
+        let deduped = deduplicate_specialized_comments(vec![]);
+        assert!(deduped.is_empty());
+    }
+
+    #[test]
+    fn specialized_prompts_are_distinct() {
+        let security = core::prompt::build_security_prompt();
+        let correctness = core::prompt::build_correctness_prompt();
+        let style = core::prompt::build_style_prompt();
+        assert!(security.contains("security"));
+        assert!(correctness.contains("correctness"));
+        assert!(style.contains("style"));
+        assert_ne!(security, correctness);
+        assert_ne!(security, style);
+        assert_ne!(correctness, style);
+    }
+
+    #[test]
+    fn specialized_pass_kind_tags() {
+        assert_eq!(core::SpecializedPassKind::Security.tag(), "security-pass");
+        assert_eq!(
+            core::SpecializedPassKind::Correctness.tag(),
+            "correctness-pass"
+        );
+        assert_eq!(core::SpecializedPassKind::Style.tag(), "style-pass");
+    }
+
+    #[test]
+    fn multi_pass_specialized_config_default_false() {
+        let config = config::Config::default();
+        assert!(!config.multi_pass_specialized);
     }
 }

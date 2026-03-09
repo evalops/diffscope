@@ -33,6 +33,7 @@ pub fn parse_smart_review_response(
                 confidence: None,
                 fix_effort: None,
                 tags: Vec::new(),
+                code_suggestion: None,
             });
             section = None;
             continue;

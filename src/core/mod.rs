@@ -32,7 +32,7 @@ pub use enhanced_review::{
 };
 pub use git::{validate_ref_name, GitIntegration};
 pub use pr_summary::{PRSummaryGenerator, SummaryOptions};
-pub use prompt::PromptBuilder;
+pub use prompt::{PromptBuilder, SpecializedPassKind};
 pub use rules::{active_rules_for_file, load_rules_from_patterns, ReviewRule};
 pub use smart_review_prompt::SmartReviewPromptBuilder;
 pub use symbol_index::SymbolIndex;

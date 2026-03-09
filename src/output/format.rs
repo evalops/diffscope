@@ -48,6 +48,9 @@ pub fn format_as_patch(comments: &[core::Comment]) -> String {
         if let Some(suggestion) = &comment.suggestion {
             output.push_str(&format!("# Suggestion: {}\n", suggestion));
         }
+        if let Some(code_suggestion) = &comment.code_suggestion {
+            output.push_str(&format!("# Code fix:\n{}\n", code_suggestion.diff));
+        }
     }
     output
 }

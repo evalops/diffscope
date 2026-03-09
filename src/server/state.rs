@@ -74,6 +74,9 @@ pub struct ReviewSession {
     pub summary: Option<ReviewSummary>,
     pub files_reviewed: usize,
     pub error: Option<String>,
+    /// AI-generated PR summary markdown (when smart_review_summary is enabled).
+    #[serde(default)]
+    pub pr_summary_text: Option<String>,
     #[serde(default)]
     pub diff_content: Option<String>,
     #[serde(default)]

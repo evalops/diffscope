@@ -14,9 +14,65 @@ pub fn parse_llm_response(
         Regex::new(r"(?i)line\s+(\d+)((?:\s*(?:\[[^\]]+\]|\([^)]+\)))*)\s*:\s*(.+)").unwrap()
     });
 
+    // State machine for tracking <<<ORIGINAL ... === ... >>>SUGGESTED blocks
+    let mut in_original = false;
+    let mut in_suggested = false;
+    let mut original_lines: Vec<String> = Vec::new();
+    let mut suggested_lines: Vec<String> = Vec::new();
+
     for line in content.lines() {
         let trimmed = line.trim();
 
+        // Handle code suggestion block markers
+        if trimmed == "<<<ORIGINAL" {
+            in_original = true;
+            in_suggested = false;
+            original_lines.clear();
+            suggested_lines.clear();
+            continue;
+        }
+
+        if in_original && trimmed == "===" {
+            in_original = false;
+            in_suggested = true;
+            continue;
+        }
+
+        if in_suggested && trimmed == ">>>SUGGESTED" {
+            in_suggested = false;
+            // Attach the code suggestion to the most recent comment
+            if let Some(last_comment) = comments.last_mut() {
+                let original_code = original_lines.join("\n");
+                let suggested_code = suggested_lines.join("\n");
+                let diff = build_suggestion_diff(&original_code, &suggested_code);
+                let last_comment: &mut core::comment::RawComment = last_comment;
+                last_comment.code_suggestion = Some(core::comment::CodeSuggestion {
+                    original_code,
+                    suggested_code,
+                    explanation: last_comment
+                        .suggestion
+                        .clone()
+                        .or_else(|| Some(last_comment.content.clone()))
+                        .unwrap_or_default(),
+                    diff,
+                });
+            }
+            original_lines.clear();
+            suggested_lines.clear();
+            continue;
+        }
+
+        // Accumulate lines inside the code suggestion block
+        if in_original {
+            original_lines.push(line.to_string());
+            continue;
+        }
+        if in_suggested {
+            suggested_lines.push(line.to_string());
+            continue;
+        }
+
+        // Normal line-by-line comment parsing
         // Skip empty lines and common non-issue lines
         if trimmed.is_empty()
             || trimmed.starts_with("```")
@@ -71,11 +127,28 @@ pub fn parse_llm_response(
                 confidence: None,
                 fix_effort: None,
                 tags: Vec::new(),
+                code_suggestion: None,
             });
         }
     }
 
     Ok(comments)
+}
+
+/// Build a unified-diff-style string from original and suggested code.
+fn build_suggestion_diff(original: &str, suggested: &str) -> String {
+    let mut diff = String::new();
+    for line in original.lines() {
+        diff.push_str(&format!("- {}\n", line));
+    }
+    for line in suggested.lines() {
+        diff.push_str(&format!("+ {}\n", line));
+    }
+    // Remove trailing newline for consistency
+    if diff.ends_with('\n') {
+        diff.truncate(diff.len() - 1);
+    }
+    diff
 }
 
 pub fn extract_rule_id_from_text(text: &str) -> (Option<String>, String) {
@@ -230,5 +303,100 @@ mod tests {
     fn extract_rule_id_from_metadata_empty() {
         let rule = extract_rule_id_from_metadata("(Warning)");
         assert!(rule.is_none());
+    }
+
+    #[test]
+    fn parse_llm_response_extracts_code_suggestion() {
+        let input = r#"Line 42: Security - User input passed directly to SQL query. Use parameterized queries.
+<<<ORIGINAL
+query = "SELECT * FROM users WHERE id = " + user_id
+===
+query = "SELECT * FROM users WHERE id = ?"
+cursor.execute(query, (user_id,))
+>>>SUGGESTED"#;
+        let file_path = PathBuf::from("src/db.py");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        let cs = comments[0].code_suggestion.as_ref().unwrap();
+        assert_eq!(
+            cs.original_code,
+            "query = \"SELECT * FROM users WHERE id = \" + user_id"
+        );
+        assert_eq!(
+            cs.suggested_code,
+            "query = \"SELECT * FROM users WHERE id = ?\"\ncursor.execute(query, (user_id,))"
+        );
+        assert!(cs
+            .diff
+            .contains("- query = \"SELECT * FROM users WHERE id = \" + user_id"));
+        assert!(cs
+            .diff
+            .contains("+ query = \"SELECT * FROM users WHERE id = ?\""));
+    }
+
+    #[test]
+    fn parse_llm_response_code_suggestion_attaches_to_correct_comment() {
+        let input = r#"Line 10: Bug - Missing null check.
+Line 20: Security - SQL injection risk.
+<<<ORIGINAL
+db.query(user_input)
+===
+db.query(sanitize(user_input))
+>>>SUGGESTED"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 2);
+        // First comment should have no code suggestion
+        assert!(comments[0].code_suggestion.is_none());
+        // Second comment should have the code suggestion
+        let cs = comments[1].code_suggestion.as_ref().unwrap();
+        assert_eq!(cs.original_code, "db.query(user_input)");
+        assert_eq!(cs.suggested_code, "db.query(sanitize(user_input))");
+    }
+
+    #[test]
+    fn parse_llm_response_multiple_code_suggestions() {
+        let input = r#"Line 5: Bug - Off by one error.
+<<<ORIGINAL
+for i in 0..len + 1 {
+===
+for i in 0..len {
+>>>SUGGESTED
+Line 15: Performance - Unnecessary clone.
+<<<ORIGINAL
+let data = input.clone();
+===
+let data = &input;
+>>>SUGGESTED"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 2);
+        let cs0 = comments[0].code_suggestion.as_ref().unwrap();
+        assert_eq!(cs0.original_code, "for i in 0..len + 1 {");
+        assert_eq!(cs0.suggested_code, "for i in 0..len {");
+        let cs1 = comments[1].code_suggestion.as_ref().unwrap();
+        assert_eq!(cs1.original_code, "let data = input.clone();");
+        assert_eq!(cs1.suggested_code, "let data = &input;");
+    }
+
+    #[test]
+    fn parse_llm_response_no_code_suggestion_when_markers_absent() {
+        let input = "Line 7: Style - Variable name is unclear.";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert!(comments[0].code_suggestion.is_none());
+    }
+
+    #[test]
+    fn build_suggestion_diff_formats_correctly() {
+        let diff = build_suggestion_diff("old_line", "new_line");
+        assert_eq!(diff, "- old_line\n+ new_line");
+    }
+
+    #[test]
+    fn build_suggestion_diff_multiline() {
+        let diff = build_suggestion_diff("line1\nline2", "line1\nline2_fixed\nline3");
+        assert_eq!(diff, "- line1\n- line2\n+ line1\n+ line2_fixed\n+ line3");
     }
 }
