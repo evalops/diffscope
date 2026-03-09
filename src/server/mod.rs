@@ -2,6 +2,8 @@ pub mod api;
 pub mod github;
 pub mod state;
 
+pub mod metrics;
+
 use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
@@ -110,6 +112,8 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
 
     let app = Router::new()
         .nest("/api", api_routes)
+        .route("/metrics", get(metrics::get_metrics))
+        .with_state(state.clone())
         .fallback(serve_embedded)
         .layer(cors);
 
