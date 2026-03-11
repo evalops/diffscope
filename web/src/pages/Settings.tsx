@@ -632,6 +632,22 @@ export function Settings() {
         </div>
       </Section>
 
+      <Section title="AGENT REVIEW" defaultOpen={false}>
+        <p className="text-[10px] text-text-muted mb-3">
+          When enabled, the LLM can iteratively request additional context during review — reading files, searching the codebase, and looking up symbols — instead of relying on a single one-shot prompt.
+        </p>
+        <Toggle
+          label="Enable Agent Review"
+          description="Let the LLM call tools to gather context during review (requires Anthropic or OpenAI)"
+          checked={form.agent_review === true}
+          onChange={v => setForm({ ...form, agent_review: v })}
+        />
+        <div className="space-y-3 mt-3">
+          {field('Max Iterations', 'agent_max_iterations', 'number', '10', 'Maximum LLM round-trips per file (1-50, default: 10)')}
+          {field('Token Budget', 'agent_max_total_tokens', 'number', '', 'Total token limit across all iterations (empty = unlimited)')}
+        </div>
+      </Section>
+
       <Section title="EXCLUDE PATTERNS" defaultOpen={false}>
         <div>
           <label className="block text-[12px] font-medium text-text-secondary mb-1">Glob patterns to exclude from review</label>

@@ -124,6 +124,27 @@ struct Cli {
         help = "Force an LSP command for symbol indexing (enables LSP provider)"
     )]
     lsp_command: Option<String>,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Enable agent loop for iterative tool-calling review"
+    )]
+    agent_review: bool,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Max LLM round-trips in agent mode (default: 10)"
+    )]
+    agent_max_iterations: Option<usize>,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Total token budget for agent loop (cost guard)"
+    )]
+    agent_max_total_tokens: Option<usize>,
 }
 
 #[derive(Subcommand)]
@@ -373,6 +394,9 @@ async fn main() -> Result<()> {
         vault_addr: cli.vault_addr,
         vault_path: cli.vault_path,
         vault_key: cli.vault_key,
+        agent_review: cli.agent_review,
+        agent_max_iterations: cli.agent_max_iterations,
+        agent_max_total_tokens: cli.agent_max_total_tokens,
     });
     config.normalize();
 

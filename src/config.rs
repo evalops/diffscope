@@ -482,6 +482,9 @@ pub struct CliOverrides {
     pub vault_addr: Option<String>,
     pub vault_path: Option<String>,
     pub vault_key: Option<String>,
+    pub agent_review: bool,
+    pub agent_max_iterations: Option<usize>,
+    pub agent_max_total_tokens: Option<usize>,
 }
 
 impl Config {
@@ -545,6 +548,15 @@ impl Config {
         }
         if let Some(v) = cli.vault_key {
             self.vault_key = Some(v);
+        }
+        if cli.agent_review {
+            self.agent_review = true;
+        }
+        if let Some(v) = cli.agent_max_iterations {
+            self.agent_max_iterations = v;
+        }
+        if let Some(v) = cli.agent_max_total_tokens {
+            self.agent_max_total_tokens = Some(v);
         }
     }
 
