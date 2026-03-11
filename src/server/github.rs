@@ -341,78 +341,76 @@ pub async fn handle_webhook(
                     None
                 };
 
-                let (diff_content, is_incremental) =
-                    if let Some(ref base_sha) = last_reviewed_sha {
-                        // Incremental: fetch only new commits since last review
-                        info!(
-                            repo = %repo,
-                            pr = pr_number,
-                            base_sha = %base_sha,
-                            head_sha = %head_sha,
-                            "Fetching incremental diff (push-by-push)"
-                        );
-                        let compare_url = format!(
-                            "https://api.github.com/repos/{}/compare/{}...{}",
-                            repo, base_sha, head_sha,
-                        );
-                        let compare_resp = state
-                            .http_client
-                            .get(&compare_url)
-                            .header("Authorization", format!("Bearer {}", auth_token))
-                            .header("Accept", "application/vnd.github.v3.diff")
-                            .header("User-Agent", "DiffScope")
-                            .send()
-                            .await
-                            .map_err(|e| {
-                                (
-                                    StatusCode::BAD_GATEWAY,
-                                    format!("Failed to fetch incremental diff: {}", e),
-                                )
-                            })?;
+                let (diff_content, is_incremental) = if let Some(ref base_sha) = last_reviewed_sha {
+                    // Incremental: fetch only new commits since last review
+                    info!(
+                        repo = %repo,
+                        pr = pr_number,
+                        base_sha = %base_sha,
+                        head_sha = %head_sha,
+                        "Fetching incremental diff (push-by-push)"
+                    );
+                    let compare_url = format!(
+                        "https://api.github.com/repos/{}/compare/{}...{}",
+                        repo, base_sha, head_sha,
+                    );
+                    let compare_resp = state
+                        .http_client
+                        .get(&compare_url)
+                        .header("Authorization", format!("Bearer {}", auth_token))
+                        .header("Accept", "application/vnd.github.v3.diff")
+                        .header("User-Agent", "DiffScope")
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            (
+                                StatusCode::BAD_GATEWAY,
+                                format!("Failed to fetch incremental diff: {}", e),
+                            )
+                        })?;
 
-                        if compare_resp.status().is_success() {
-                            let content = compare_resp.text().await.unwrap_or_default();
-                            if content.trim().is_empty() {
-                                // No changes between SHAs (e.g. force push to same content);
-                                // fall through to full diff below
-                                info!(
-                                    repo = %repo,
-                                    pr = pr_number,
-                                    "Incremental diff empty, falling back to full PR diff"
-                                );
-                                (
-                                    fetch_full_pr_diff(&state, &auth_token, &repo, pr_number)
-                                        .await?,
-                                    false,
-                                )
-                            } else {
-                                (content, true)
-                            }
-                        } else {
-                            // Compare API failed (e.g. force push rewrote history);
-                            // fall back to full PR diff
-                            let status = compare_resp.status();
-                            let body = compare_resp.text().await.unwrap_or_default();
-                            warn!(
+                    if compare_resp.status().is_success() {
+                        let content = compare_resp.text().await.unwrap_or_default();
+                        if content.trim().is_empty() {
+                            // No changes between SHAs (e.g. force push to same content);
+                            // fall through to full diff below
+                            info!(
                                 repo = %repo,
                                 pr = pr_number,
-                                status = %status,
-                                "Incremental compare failed ({}), falling back to full PR diff: {}",
-                                status,
-                                body,
+                                "Incremental diff empty, falling back to full PR diff"
                             );
                             (
                                 fetch_full_pr_diff(&state, &auth_token, &repo, pr_number).await?,
                                 false,
                             )
+                        } else {
+                            (content, true)
                         }
                     } else {
-                        // No previous review or "opened" action — full PR diff
+                        // Compare API failed (e.g. force push rewrote history);
+                        // fall back to full PR diff
+                        let status = compare_resp.status();
+                        let body = compare_resp.text().await.unwrap_or_default();
+                        warn!(
+                            repo = %repo,
+                            pr = pr_number,
+                            status = %status,
+                            "Incremental compare failed ({}), falling back to full PR diff: {}",
+                            status,
+                            body,
+                        );
                         (
                             fetch_full_pr_diff(&state, &auth_token, &repo, pr_number).await?,
                             false,
                         )
-                    };
+                    }
+                } else {
+                    // No previous review or "opened" action — full PR diff
+                    (
+                        fetch_full_pr_diff(&state, &auth_token, &repo, pr_number).await?,
+                        false,
+                    )
+                };
 
                 let review_id = uuid::Uuid::new_v4().to_string();
                 let diff_source = format!("pr:{}#{}", repo, pr_number);

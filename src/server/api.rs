@@ -587,7 +587,7 @@ pub async fn list_reviews(
     };
 
     // Fall back to storage backend for historical reviews not in memory
-    let limit = (per_page * 2) as i64; // fetch extra to merge
+    let limit = (page * per_page + per_page) as i64; // fetch enough to cover requested page
     if let Ok(stored) = state.storage.list_reviews(limit, 0).await {
         let in_memory_ids: std::collections::HashSet<String> =
             list.iter().map(|r| r.id.clone()).collect();
@@ -637,8 +637,11 @@ pub async fn prune_reviews(
     State(state): State<Arc<AppState>>,
     Query(params): Query<PruneParams>,
 ) -> Json<serde_json::Value> {
-    let max_age_secs = params.max_age_days.unwrap_or(30) * 86400;
-    let max_count = params.max_count.unwrap_or(1000);
+    let max_age_secs = params.max_age_days.unwrap_or(30).max(1) * 86400;
+    let max_count = params.max_count.unwrap_or(1000).max(1);
+
+    // Prune in-memory state first
+    AppState::prune_old_reviews(&state).await;
 
     match state.storage.prune(max_age_secs, max_count).await {
         Ok(pruned) => {
@@ -2420,7 +2423,10 @@ mod tests {
     fn test_mask_config_secrets_no_secret_fields_present() {
         let mut obj = serde_json::Map::new();
         obj.insert("model".to_string(), serde_json::json!("gpt-4"));
-        obj.insert("base_url".to_string(), serde_json::json!("http://localhost"));
+        obj.insert(
+            "base_url".to_string(),
+            serde_json::json!("http://localhost"),
+        );
         mask_config_secrets(&mut obj);
         assert_eq!(obj.get("model").unwrap(), &serde_json::json!("gpt-4"));
         assert_eq!(
@@ -2442,7 +2448,10 @@ mod tests {
             serde_json::json!("https://api.openai.com"),
         );
         providers.insert("openai".to_string(), serde_json::Value::Object(openai));
-        obj.insert("providers".to_string(), serde_json::Value::Object(providers));
+        obj.insert(
+            "providers".to_string(),
+            serde_json::Value::Object(providers),
+        );
 
         mask_provider_api_keys(&mut obj);
 
@@ -2484,15 +2493,15 @@ mod tests {
         // No api_key for ollama
         providers.insert("ollama".to_string(), serde_json::Value::Object(ollama));
 
-        obj.insert("providers".to_string(), serde_json::Value::Object(providers));
+        obj.insert(
+            "providers".to_string(),
+            serde_json::Value::Object(providers),
+        );
         mask_provider_api_keys(&mut obj);
 
         let providers = obj.get("providers").unwrap().as_object().unwrap();
         let anthropic = providers.get("anthropic").unwrap().as_object().unwrap();
-        assert_eq!(
-            anthropic.get("api_key").unwrap(),
-            &serde_json::json!("***")
-        );
+        assert_eq!(anthropic.get("api_key").unwrap(), &serde_json::json!("***"));
 
         let ollama = providers.get("ollama").unwrap().as_object().unwrap();
         assert!(ollama.get("api_key").is_none());
