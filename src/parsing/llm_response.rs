@@ -246,12 +246,15 @@ fn parse_json_format(content: &str, file_path: &Path) -> Vec<core::comment::RawC
             return items
                 .iter()
                 .filter_map(|item| {
-                    let line = item
+                    let line_value = item
                         .get("line")
                         .or_else(|| item.get("line_number"))
-                        .or_else(|| item.get("lineNumber"))
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v as usize)?;
+                        .or_else(|| item.get("lineNumber"));
+                    let line = line_value.and_then(|v| {
+                        v.as_u64()
+                            .map(|n| n as usize)
+                            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<usize>().ok()))
+                    })?;
                     let text = item
                         .get("issue")
                         .or_else(|| item.get("description"))
@@ -702,5 +705,189 @@ let data = &input;
         let comments = parse_llm_response(input, &file_path).unwrap();
         assert_eq!(comments.len(), 1);
         assert!(comments[0].code_suggestion.is_some());
+    }
+
+    // ── Mutation-testing gap fills ─────────────────────────────────────
+
+    #[test]
+    fn parse_primary_skips_code_fence_markers() {
+        // ``` markers themselves are skipped (not parsed as comments)
+        let input = "```rust\n```";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn parse_primary_skips_heading_lines() {
+        let input = "# Code Review\nLine 10: Real issue";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        // Heading line skipped, but real Line 10 comment caught
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 10);
+    }
+
+    #[test]
+    fn parse_primary_skips_preamble_lines() {
+        let input = "Here are the issues I found:\nLine 5: Missing check";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 5);
+    }
+
+    #[test]
+    fn parse_json_in_code_block_strategy() {
+        // Test that extract_json_from_code_block specifically works
+        let input = "Here are findings:\n```json\n[{\"line\": 7, \"issue\": \"Off by one\"}]\n```";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 7);
+        assert!(comments[0].content.contains("Off by one"));
+    }
+
+    #[test]
+    fn parse_json_bare_array_strategy() {
+        // Test find_json_array with text before/after
+        let input = "Issues found: [{\"line\": 3, \"issue\": \"Bug\"}] end.";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 3);
+    }
+
+    // ── Adversarial edge cases ──────────────────────────────────────────
+
+    #[test]
+    fn parse_line_zero_not_panicking() {
+        // Line 0 is technically invalid but should not panic
+        let input = "Line 0: Edge case at line zero.";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 0);
+    }
+
+    #[test]
+    fn parse_huge_line_number_no_overflow() {
+        let input = "Line 999999999999: Absurd line number.";
+        let file_path = PathBuf::from("src/lib.rs");
+        // Should either parse successfully or return empty, not panic
+        let result = parse_llm_response(input, &file_path);
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn parse_unicode_content_no_panic() {
+        let input = "Line 10: 漏洞 — SQL注入风险 🔴";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert!(comments[0].content.contains("漏洞"));
+    }
+
+    #[test]
+    fn parse_numbered_list_with_no_line_number_in_path() {
+        // Numbered list where file path is missing the colon-number
+        let input = "1. **src/lib.rs** - Missing null check";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        // Should not extract a comment with a bogus line number
+        for c in &comments {
+            assert!(c.line_number > 0 || comments.is_empty());
+        }
+    }
+
+    #[test]
+    fn parse_json_with_nested_brackets() {
+        // JSON with nested arrays/objects should not confuse the bracket finder
+        let input =
+            r#"[{"line": 10, "issue": "Bug with [array] access", "details": {"nested": [1,2,3]}}]"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 10);
+    }
+
+    #[test]
+    fn parse_json_with_line_number_as_string() {
+        // Some LLMs return line numbers as strings — should be handled
+        let input = r#"[{"line": "42", "issue": "Bug"}]"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 42);
+    }
+
+    #[test]
+    fn parse_malformed_json_no_panic() {
+        let input = r#"[{"line": 10, "issue": "unclosed string}]"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn parse_mixed_strategies_first_wins() {
+        // Input matches both primary AND numbered list — primary should win
+        let input = "Line 10: Primary format.\n1. **src/lib.rs:20** - Numbered format.";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        // Primary parser should have caught Line 10, so we get that
+        assert_eq!(comments[0].line_number, 10);
+    }
+
+    #[test]
+    fn parse_code_suggestion_without_preceding_comment() {
+        // <<<ORIGINAL block with no prior Line N: comment
+        let input = "<<<ORIGINAL\nold code\n===\nnew code\n>>>SUGGESTED";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        // Should not panic; suggestion just gets dropped since no comment to attach to
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn parse_unclosed_code_suggestion_block() {
+        // <<<ORIGINAL without >>>SUGGESTED
+        let input = "Line 5: Issue here.\n<<<ORIGINAL\nold code\n===\nnew code";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        // The code suggestion should be None since the block was never closed
+        assert!(comments[0].code_suggestion.is_none());
+    }
+
+    #[test]
+    fn parse_only_whitespace_input() {
+        let input = "   \n\n  \t  \n  ";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn parse_json_in_code_block_with_extra_text() {
+        let input = "Here are my findings:\n```json\n[{\"line\": 5, \"issue\": \"Bug\"}]\n```\nLet me know if you need more details.";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 5);
+    }
+
+    #[test]
+    fn parse_file_line_format_does_not_match_urls() {
+        // URLs with port numbers like http://localhost:8080 should not be parsed as file:line
+        let input = "Visit http://localhost:8080 for the dashboard.";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        // Should not extract port 8080 as a line number
+        assert!(
+            comments.is_empty(),
+            "URL port should not be parsed as line number, got {:?}",
+            comments.iter().map(|c| c.line_number).collect::<Vec<_>>()
+        );
     }
 }

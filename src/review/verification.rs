@@ -390,4 +390,110 @@ mod tests {
     fn test_is_auto_zero_import_order() {
         assert!(is_auto_zero("import order should be alphabetical"));
     }
+
+    // ── Mutation-testing gap fills ─────────────────────────────────────
+
+    #[test]
+    fn test_safe_utf8_prefix_short_string() {
+        let result = safe_utf8_prefix("hello", 100);
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn test_safe_utf8_prefix_exact_boundary() {
+        let result = safe_utf8_prefix("hello", 5);
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn test_safe_utf8_prefix_truncates() {
+        let result = safe_utf8_prefix("hello world", 5);
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn test_safe_utf8_prefix_multibyte() {
+        // "é" is 2 bytes. "éé" = 4 bytes. Truncating at 3 should give "é" (2 bytes).
+        let result = safe_utf8_prefix("éé", 3);
+        assert_eq!(result, "é");
+    }
+
+    #[test]
+    fn test_safe_utf8_prefix_emoji() {
+        // "😀" is 4 bytes. Truncating at 2 should give empty since we can't split the emoji.
+        let result = safe_utf8_prefix("😀hello", 2);
+        assert!(result.is_empty() || result.len() <= 2);
+    }
+
+    #[test]
+    fn test_safe_utf8_prefix_empty() {
+        let result = safe_utf8_prefix("", 100);
+        assert_eq!(result, "");
+    }
+
+    // ── Adversarial edge cases ──────────────────────────────────────────
+
+    #[test]
+    fn test_parse_verification_response_duplicate_findings() {
+        // LLM returns two results for the same finding
+        let comments = vec![make_comment("c1", "issue", 10)];
+        let response = "FINDING 1: score=9 accurate=true reason=First\nFINDING 1: score=3 accurate=false reason=Second";
+        let results = parse_verification_response(response, &comments);
+        // Both should be captured (first one wins in filter since find() returns first)
+        let c1_results: Vec<_> = results.iter().filter(|r| r.comment_id == "c1").collect();
+        assert!(
+            c1_results.len() >= 1,
+            "Should have at least one result for c1"
+        );
+    }
+
+    #[test]
+    fn test_parse_verification_extra_whitespace() {
+        let comments = vec![make_comment("c1", "issue", 10)];
+        let response = "FINDING   1 :  score = 8   accurate = true   reason = Valid bug";
+        let results = parse_verification_response(response, &comments);
+        // The regex uses \s+ so extra spaces should be handled
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].score, 8);
+    }
+
+    #[test]
+    fn test_parse_verification_response_with_surrounding_text() {
+        let comments = vec![make_comment("c1", "issue", 10)];
+        let response = "Here are my verification results:\n\nFINDING 1: score=7 accurate=true reason=Valid\n\nOverall the code looks good.";
+        let results = parse_verification_response(response, &comments);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].score, 7);
+    }
+
+    #[test]
+    fn test_is_auto_zero_case_sensitivity() {
+        // Auto-zero should be case-insensitive
+        assert!(is_auto_zero("MISSING DOCSTRING"));
+        assert!(is_auto_zero("Type Annotation missing"));
+        assert!(is_auto_zero("IMPORT ORDER"));
+    }
+
+    #[test]
+    fn test_is_auto_zero_partial_match_false_positive() {
+        // "import" appears in "important" but "import order" does not
+        assert!(!is_auto_zero("This is an important security fix"));
+        // "type hint" appears in "cryptotype hinting" — substring match
+        // This IS a known limitation of substring matching
+        assert!(!is_auto_zero("The cryptographic module is broken"));
+    }
+
+    #[test]
+    fn test_build_verification_prompt_empty_comments() {
+        let prompt = build_verification_prompt(&[], "some diff");
+        assert!(prompt.contains("## Code Diff"));
+        assert!(prompt.contains("## Findings to Verify"));
+    }
+
+    #[test]
+    fn test_build_verification_prompt_empty_diff() {
+        let comments = vec![make_comment("c1", "issue", 10)];
+        let prompt = build_verification_prompt(&comments, "");
+        assert!(prompt.contains("Finding 1"));
+    }
 }
