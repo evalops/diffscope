@@ -234,7 +234,19 @@ pub fn compress_diffs(
         }
     }
 
-    if skipped.is_empty() && !included.is_empty() {
+    if included.is_empty() {
+        // Nothing fit after compression (all deletion-only or budget exhausted)
+        skipped.sort();
+        let summary = build_skipped_summary(diffs, &skipped);
+        return CompressionResult {
+            strategy: CompressionStrategy::Compressed,
+            batches: vec![],
+            skipped_indices: skipped,
+            skipped_summary: summary,
+        };
+    }
+
+    if skipped.is_empty() {
         // Everything fit after compression
         included.sort();
         return CompressionResult {
@@ -248,7 +260,7 @@ pub fn compress_diffs(
         };
     }
 
-    if !skipped.is_empty() && !included.is_empty() && max_calls <= 1 {
+    if max_calls <= 1 {
         // Can't split further — return compressed result with skipped files
         included.sort();
         skipped.sort();
@@ -697,5 +709,190 @@ mod tests {
             !result.batches.is_empty() || !result.skipped_indices.is_empty(),
             "File should be either clipped or skipped"
         );
+    }
+
+    // ── Mutation-testing gap fills ─────────────────────────────────────
+
+    #[test]
+    fn test_estimate_tokens_includes_overhead() {
+        // Even an empty hunk should have overhead from file path + hunk header
+        let diff = make_diff("a.rs", vec![make_hunk(vec![])]);
+        let tokens = estimate_diff_tokens(&diff);
+        assert!(tokens > 0, "Empty hunk should still have overhead tokens");
+    }
+
+    #[test]
+    fn test_estimate_tokens_content_proportional() {
+        // Adding more content should always increase token count
+        let small = make_simple_diff("a.rs", 100);
+        let medium = make_simple_diff("a.rs", 500);
+        let large = make_simple_diff("a.rs", 2000);
+        let t_small = estimate_diff_tokens(&small);
+        let t_medium = estimate_diff_tokens(&medium);
+        let t_large = estimate_diff_tokens(&large);
+        assert!(
+            t_small < t_medium,
+            "small={} >= medium={}",
+            t_small,
+            t_medium
+        );
+        assert!(
+            t_medium < t_large,
+            "medium={} >= large={}",
+            t_medium,
+            t_large
+        );
+    }
+
+    #[test]
+    fn test_clip_diff_reduces_size() {
+        let diff = make_diff(
+            "file.rs",
+            vec![
+                make_hunk(vec![make_line(ChangeType::Added, &"a".repeat(500))]),
+                make_hunk(vec![make_line(ChangeType::Added, &"b".repeat(500))]),
+                make_hunk(vec![make_line(ChangeType::Added, &"c".repeat(500))]),
+            ],
+        );
+        let original_tokens = estimate_diff_tokens(&diff);
+        let clipped = clip_diff(&diff, 600).unwrap(); // budget fits ~1 hunk
+        let clipped_tokens = estimate_diff_tokens(&clipped);
+        assert!(
+            clipped_tokens < original_tokens,
+            "Clipped ({}) should be smaller than original ({})",
+            clipped_tokens,
+            original_tokens
+        );
+    }
+
+    #[test]
+    fn test_compress_stage2_budget_accounting() {
+        // Verify that included files actually fit within the budget
+        let diffs = vec![
+            make_simple_diff("small.rs", 200),
+            make_simple_diff("medium.rs", 500),
+            make_simple_diff("large.rs", 2000),
+        ];
+        let budget = estimate_diff_tokens(&diffs[0]) + estimate_diff_tokens(&diffs[1]) + 10;
+        let result = compress_diffs(&diffs, budget, 1);
+        for batch in &result.batches {
+            assert!(
+                batch.estimated_tokens <= budget,
+                "Batch tokens {} exceeds budget {}",
+                batch.estimated_tokens,
+                budget
+            );
+        }
+    }
+
+    #[test]
+    fn test_skipped_summary_out_of_bounds_index() {
+        let diffs = vec![make_simple_diff("a.rs", 100)];
+        // Index 99 is out of bounds — should not panic
+        let summary = build_skipped_summary(&diffs, &[99]);
+        // Out-of-bounds index is silently ignored
+        assert!(summary.is_empty());
+    }
+
+    // ── Adversarial edge cases ──────────────────────────────────────────
+
+    #[test]
+    fn test_zero_token_budget() {
+        let diffs = vec![make_simple_diff("a.rs", 100)];
+        // Budget of 0 — should not panic, everything skipped or clipped
+        let result = compress_diffs(&diffs, 0, 5);
+        // With 0 budget nothing should fit in Full/Compressed, but the algorithm
+        // should still produce some output without panicking
+        assert!(
+            result.batches.is_empty() || result.batches.iter().all(|b| b.diff_indices.is_empty()),
+            "Nothing should fit in zero budget"
+        );
+    }
+
+    #[test]
+    fn test_max_calls_zero_treated_as_one() {
+        let diffs = vec![make_simple_diff("a.rs", 100)];
+        // max_calls=0 should be clamped to 1, not panic
+        let result = compress_diffs(&diffs, 10000, 0);
+        assert_eq!(result.strategy, CompressionStrategy::Full);
+    }
+
+    #[test]
+    fn test_diff_with_empty_hunks() {
+        let diff = make_diff("empty.rs", vec![]);
+        let tokens = estimate_diff_tokens(&diff);
+        assert!(tokens < 50, "Empty diff should have minimal tokens");
+        let result = compress_diffs(&[diff], 10000, 5);
+        assert_eq!(result.strategy, CompressionStrategy::Full);
+    }
+
+    #[test]
+    fn test_all_diffs_deletion_only_compressed_away() {
+        // Every diff has only deletion hunks — compress_diff returns None for all.
+        // Use a budget smaller than total tokens to force Stage 2 (where compression happens).
+        let diffs = vec![
+            make_diff(
+                "a.rs",
+                vec![make_hunk(vec![make_line(
+                    ChangeType::Removed,
+                    &"x".repeat(200),
+                )])],
+            ),
+            make_diff(
+                "b.rs",
+                vec![make_hunk(vec![make_line(
+                    ChangeType::Removed,
+                    &"y".repeat(200),
+                )])],
+            ),
+        ];
+        let total = diffs.iter().map(|d| estimate_diff_tokens(d)).sum::<usize>();
+        // Budget smaller than total forces Stage 2, where deletion-only hunks get removed
+        let result = compress_diffs(&diffs, total / 2, 5);
+        // All files should be skipped since they're deletion-only after compression
+        assert_eq!(
+            result.skipped_indices.len(),
+            2,
+            "Both deletion-only diffs should be skipped, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_no_duplicate_indices_across_batches() {
+        let diffs: Vec<_> = (0..8)
+            .map(|i| make_simple_diff(&format!("f{}.rs", i), 2000))
+            .collect();
+        let single_tokens = estimate_diff_tokens(&diffs[0]);
+        let result = compress_diffs(&diffs, single_tokens * 2, 4);
+
+        let mut seen = std::collections::HashSet::new();
+        for batch in &result.batches {
+            for &idx in &batch.diff_indices {
+                assert!(seen.insert(idx), "Duplicate index {} across batches", idx);
+            }
+        }
+        for &idx in &result.skipped_indices {
+            assert!(
+                seen.insert(idx),
+                "Index {} appears in both batches and skipped",
+                idx
+            );
+        }
+    }
+
+    #[test]
+    fn test_budget_of_one_token() {
+        let diffs = vec![make_simple_diff("a.rs", 100), make_simple_diff("b.rs", 100)];
+        // Budget so tiny nothing should fit via compressed
+        let result = compress_diffs(&diffs, 1, 1);
+        // Should not panic; files end up skipped or in a clipped batch
+        let total_accounted = result
+            .batches
+            .iter()
+            .map(|b| b.diff_indices.len())
+            .sum::<usize>()
+            + result.skipped_indices.len();
+        assert_eq!(total_accounted, 2, "All files must be accounted for");
     }
 }

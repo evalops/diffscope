@@ -812,4 +812,154 @@ mod tests {
         });
         assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
     }
+
+    // ── TriageResult method tests (caught by mutation testing) ─────────
+
+    #[test]
+    fn test_should_skip_returns_true_for_skip_variants() {
+        assert!(TriageResult::SkipLockFile.should_skip());
+        assert!(TriageResult::SkipWhitespaceOnly.should_skip());
+        assert!(TriageResult::SkipDeletionOnly.should_skip());
+        assert!(TriageResult::SkipGenerated.should_skip());
+        assert!(TriageResult::SkipCommentOnly.should_skip());
+    }
+
+    #[test]
+    fn test_should_skip_returns_false_for_needs_review() {
+        assert!(!TriageResult::NeedsReview.should_skip());
+    }
+
+    #[test]
+    fn test_reason_returns_nonempty_strings() {
+        assert!(!TriageResult::NeedsReview.reason().is_empty());
+        assert!(!TriageResult::SkipLockFile.reason().is_empty());
+        assert!(!TriageResult::SkipWhitespaceOnly.reason().is_empty());
+        assert!(!TriageResult::SkipDeletionOnly.reason().is_empty());
+        assert!(!TriageResult::SkipGenerated.reason().is_empty());
+        assert!(!TriageResult::SkipCommentOnly.reason().is_empty());
+    }
+
+    #[test]
+    fn test_reason_differs_per_variant() {
+        let reasons: Vec<&str> = vec![
+            TriageResult::NeedsReview.reason(),
+            TriageResult::SkipLockFile.reason(),
+            TriageResult::SkipWhitespaceOnly.reason(),
+            TriageResult::SkipDeletionOnly.reason(),
+            TriageResult::SkipGenerated.reason(),
+            TriageResult::SkipCommentOnly.reason(),
+        ];
+        // All should be unique
+        let unique: std::collections::HashSet<&str> = reasons.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            reasons.len(),
+            "Reason strings should be unique"
+        );
+    }
+
+    // ── Adversarial edge cases ──────────────────────────────────────────
+
+    #[test]
+    fn test_whitespace_only_unequal_line_counts() {
+        // More added lines than removed — not whitespace-only
+        let diff = make_diff(
+            "src/lib.rs",
+            vec![
+                make_line(1, ChangeType::Removed, "  let x = 1;"),
+                make_line(1, ChangeType::Added, "    let x = 1;"),
+                make_line(2, ChangeType::Added, "    let y = 2;"),
+            ],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_whitespace_only_content_differs() {
+        // Same whitespace but different content — not whitespace-only
+        let diff = make_diff(
+            "src/lib.rs",
+            vec![
+                make_line(1, ChangeType::Removed, "let x = 1;"),
+                make_line(1, ChangeType::Added, "let x = 2;"),
+            ],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_comment_hash_without_space_is_not_comment() {
+        // "#tag" — not a comment prefix since we changed to "# "
+        let diff = make_diff(
+            "src/lib.rs",
+            vec![make_line(1, ChangeType::Added, "#tag: important")],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_python_comment_with_space_is_comment() {
+        let diff = make_diff(
+            "src/app.py",
+            vec![make_line(
+                1,
+                ChangeType::Added,
+                "# this is a python comment",
+            )],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::SkipCommentOnly);
+    }
+
+    #[test]
+    fn test_unicode_file_path() {
+        let diff = make_diff(
+            "src/données/模型.rs",
+            vec![make_line(1, ChangeType::Added, "let x = 1;")],
+        );
+        // Should not panic, should be NeedsReview
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_file_with_only_context_lines_and_no_changes() {
+        let diff = make_diff(
+            "src/lib.rs",
+            vec![
+                make_line(1, ChangeType::Context, "fn main() {}"),
+                make_line(2, ChangeType::Context, "fn helper() {}"),
+            ],
+        );
+        // All context, no actual changes → NeedsReview (default)
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_generated_file_with_dots_in_path() {
+        // .g. should match but .git/ should not
+        let diff = make_diff(
+            ".github/workflows/ci.yml",
+            vec![make_line(1, ChangeType::Added, "name: CI")],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_empty_string_file_path() {
+        let diff = make_diff("", vec![make_line(1, ChangeType::Added, "new code")]);
+        // Should not panic
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_all_blank_lines_is_comment_only() {
+        // Blank lines count as "comment" in is_comment_line
+        let diff = make_diff(
+            "src/lib.rs",
+            vec![
+                make_line(1, ChangeType::Added, ""),
+                make_line(2, ChangeType::Added, "   "),
+            ],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::SkipCommentOnly);
+    }
 }
