@@ -1140,6 +1140,7 @@ fn extract_lsp_symbols(result: &Value) -> Vec<LspSymbol> {
 
 fn collect_lsp_symbol(value: &Value, symbols: &mut Vec<LspSymbol>) {
     if let Some(obj) = value.as_object() {
+        // DocumentSymbol format: selectionRange or range on the object itself
         if let (Some(name), Some(range)) = (
             obj.get("name").and_then(|v| v.as_str()),
             extract_range(obj.get("selectionRange").or_else(|| obj.get("range"))),
@@ -1148,9 +1149,8 @@ fn collect_lsp_symbol(value: &Value, symbols: &mut Vec<LspSymbol>) {
                 name: name.to_string(),
                 range,
             });
-        }
-
-        if let Some(location) = obj.get("location") {
+        } else if let Some(location) = obj.get("location") {
+            // SymbolInformation format: range inside a location object
             if let (Some(name), Some(range)) = (
                 obj.get("name").and_then(|v| v.as_str()),
                 extract_range(location.get("range")),
@@ -1271,5 +1271,59 @@ mod tests {
         assert!(candidates.contains(&PathBuf::from("src/lib")));
         assert!(candidates.contains(&PathBuf::from("src/lib.rs")));
         assert!(candidates.contains(&PathBuf::from("src/lib.py")));
+    }
+
+    // ── Bug: collect_lsp_symbol pushes duplicate when both formats present ──
+    //
+    // LSP responses can include both selectionRange (DocumentSymbol) and
+    // location (SymbolInformation) fields. The old code had two separate
+    // `if` blocks, causing the same symbol to be pushed twice.
+
+    #[test]
+    fn test_collect_lsp_symbol_no_duplicate() {
+        use serde_json::json;
+        let value = json!({
+            "name": "MyFunc",
+            "selectionRange": {
+                "start": { "line": 5, "character": 0 },
+                "end": { "line": 5, "character": 10 }
+            },
+            "location": {
+                "uri": "file:///test.rs",
+                "range": {
+                    "start": { "line": 5, "character": 0 },
+                    "end": { "line": 20, "character": 0 }
+                }
+            }
+        });
+        let mut symbols = Vec::new();
+        collect_lsp_symbol(&value, &mut symbols);
+        assert_eq!(
+            symbols.len(),
+            1,
+            "Symbol with both selectionRange and location should only be pushed once"
+        );
+        assert_eq!(symbols[0].name, "MyFunc");
+    }
+
+    #[test]
+    fn test_collect_lsp_symbol_location_fallback() {
+        use serde_json::json;
+        // SymbolInformation format: no selectionRange or range, only location
+        let value = json!({
+            "name": "MyVar",
+            "location": {
+                "uri": "file:///test.rs",
+                "range": {
+                    "start": { "line": 10, "character": 0 },
+                    "end": { "line": 10, "character": 5 }
+                }
+            }
+        });
+        let mut symbols = Vec::new();
+        collect_lsp_symbol(&value, &mut symbols);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "MyVar");
+        assert_eq!(symbols[0].range, (11, 11)); // 0-based to 1-based
     }
 }

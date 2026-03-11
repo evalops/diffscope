@@ -251,17 +251,30 @@ fn find_function_end(lines: &[&str], start: usize, language: &str) -> usize {
             lines.len().saturating_sub(1)
         }
         _ => {
-            // Brace-based languages — skip braces inside string literals
+            // Brace-based languages — skip braces inside string literals and comments
             let mut depth = 0i32;
             let mut found_open = false;
             for (i, line) in lines.iter().enumerate().skip(start) {
                 let mut in_double_quote = false;
                 let mut in_single_quote = false;
                 let mut escaped = false;
+                let mut prev_ch = '\0';
                 for ch in line.chars() {
                     if escaped {
                         escaped = false;
-                    } else if (in_double_quote || in_single_quote) && ch == '\\' {
+                        prev_ch = ch;
+                        continue;
+                    }
+                    // Skip line comments: // in most languages, # in Python/Ruby/Shell
+                    if !in_double_quote && !in_single_quote {
+                        if ch == '/' && prev_ch == '/' {
+                            break; // rest of line is a comment
+                        }
+                        if ch == '#' && !in_double_quote && !in_single_quote {
+                            break; // rest of line is a comment
+                        }
+                    }
+                    if (in_double_quote || in_single_quote) && ch == '\\' {
                         escaped = true;
                     } else if ch == '"' && !in_single_quote {
                         in_double_quote = !in_double_quote;
@@ -275,6 +288,7 @@ fn find_function_end(lines: &[&str], start: usize, language: &str) -> usize {
                             depth -= 1;
                         }
                     }
+                    prev_ch = ch;
                 }
                 if found_open && depth <= 0 {
                     return i;
@@ -965,6 +979,43 @@ fn next_func() {
         assert_eq!(
             end, 0,
             "Function should end at line 0 (braces balanced on same line with escaped backslash)"
+        );
+    }
+
+    // ── Bug: closing brace in line comment breaks function detection ──
+    //
+    // find_function_end tracks braces inside string literals but ignores
+    // braces in line comments (// and #). A comment like `// }` causes
+    // premature function termination.
+
+    #[test]
+    fn test_find_function_end_brace_in_line_comment() {
+        let lines: Vec<&str> = vec![
+            "fn foo() {",            // line 0: open brace
+            "    let x = 1; // }",   // line 1: closing brace in comment
+            "    println!(\"ok\");", // line 2
+            "}",                     // line 3: actual close
+        ];
+        let end = find_function_end(&lines, 0, "rs");
+        assert_eq!(
+            end, 3,
+            "Brace in line comment should be ignored; function ends at line 3"
+        );
+    }
+
+    #[test]
+    fn test_find_function_end_hash_comment() {
+        let lines: Vec<&str> = vec![
+            "function foo() {", // line 0: opening brace
+            "    x = 1  # }",   // line 1: brace in hash comment
+            "    y = 2",        // line 2
+            "}",                // line 3: actual close
+        ];
+        // Use a brace-based language to test hash comment detection
+        let end = find_function_end(&lines, 0, "rb");
+        assert_eq!(
+            end, 3,
+            "Brace in # comment should be ignored; function ends at line 3"
         );
     }
 }
