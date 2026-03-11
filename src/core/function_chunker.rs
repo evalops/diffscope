@@ -282,6 +282,21 @@ fn find_function_end(lines: &[&str], start: usize, language: &str) -> usize {
     }
 }
 
+/// Given file content and a line number, find the start line of the enclosing
+/// function/class boundary. Searches upward from `line` up to `max_search_lines`.
+/// Returns the boundary start line, or None if no boundary found.
+pub fn find_enclosing_boundary_line(
+    content: &str,
+    file_path: &Path,
+    line: usize,
+    _max_search_lines: usize,
+) -> Option<usize> {
+    let language = detect_language(file_path);
+    let boundaries = detect_function_boundaries(content, &language);
+    // Find the innermost function containing this line
+    find_enclosing_function(&boundaries, line).map(|b| b.start_line)
+}
+
 fn detect_language(file_path: &Path) -> String {
     file_path
         .extension()
@@ -849,6 +864,51 @@ fn next_func() {
         let result = find_enclosing_function(&boundaries, 12);
         // Line 12: matches "valid" (1-20). Should NOT panic even if "broken" passes filter.
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_find_enclosing_boundary_line_rust() {
+        let content =
+            "use std::io;\n\npub fn process(x: i32) -> bool {\n    let y = x + 1;\n    y > 0\n}\n";
+        let path = Path::new("test.rs");
+        // Line 4 is inside process() which starts at line 3
+        let result = find_enclosing_boundary_line(content, path, 4, 10);
+        assert_eq!(result, Some(3));
+    }
+
+    #[test]
+    fn test_find_enclosing_boundary_line_no_function() {
+        let content = "let x = 1;\nlet y = 2;\n";
+        let path = Path::new("test.rs");
+        let result = find_enclosing_boundary_line(content, path, 1, 10);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_enclosing_boundary_line_python() {
+        let content =
+            "import os\n\ndef handle_request(req):\n    data = req.json()\n    return data\n";
+        let path = Path::new("handler.py");
+        // Line 4 is inside handle_request() which starts at line 3
+        let result = find_enclosing_boundary_line(content, path, 4, 10);
+        assert_eq!(result, Some(3));
+    }
+
+    #[test]
+    fn test_find_enclosing_boundary_line_unsupported_language() {
+        let content = "some text\nmore text\n";
+        let path = Path::new("readme.txt");
+        let result = find_enclosing_boundary_line(content, path, 1, 10);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_enclosing_boundary_nested_functions() {
+        let content = "pub fn outer() {\n    fn inner() {\n        let x = 1;\n    }\n}\n";
+        let path = Path::new("test.rs");
+        // Line 3 is inside inner() which starts at line 2
+        let result = find_enclosing_boundary_line(content, path, 3, 10);
+        assert_eq!(result, Some(2));
     }
 
     #[test]

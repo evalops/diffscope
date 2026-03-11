@@ -9,6 +9,45 @@ pub fn parse_llm_response(
     content: &str,
     file_path: &Path,
 ) -> Result<Vec<core::comment::RawComment>> {
+    // Strategy 1: Primary parser (existing regex + code suggestion blocks)
+    let comments = parse_primary(content, file_path)?;
+    if !comments.is_empty() {
+        return Ok(comments);
+    }
+
+    // Strategy 2: Numbered list format (e.g. "1. **src/lib.rs:42** - Issue text")
+    let comments = parse_numbered_list(content, file_path);
+    if !comments.is_empty() {
+        return Ok(comments);
+    }
+
+    // Strategy 3: Markdown bullet format (e.g. "- Line 42: Issue text")
+    let comments = parse_markdown_bullets(content, file_path);
+    if !comments.is_empty() {
+        return Ok(comments);
+    }
+
+    // Strategy 4: file:line format (e.g. "src/lib.rs:42 - Issue text")
+    let comments = parse_file_line_format(content, file_path);
+    if !comments.is_empty() {
+        return Ok(comments);
+    }
+
+    // Strategy 5: JSON extraction
+    let comments = parse_json_format(content, file_path);
+    if !comments.is_empty() {
+        return Ok(comments);
+    }
+
+    // All strategies failed — return empty
+    Ok(Vec::new())
+}
+
+/// Strategy 1: Primary parser — `Line <num>: <text>` with code suggestion blocks.
+fn parse_primary(
+    content: &str,
+    file_path: &Path,
+) -> Result<Vec<core::comment::RawComment>> {
     let mut comments = Vec::new();
     static LINE_PATTERN: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)line\s+(\d+)((?:\s*(?:\[[^\]]+\]|\([^)]+\)))*)\s*:\s*(.+)").unwrap()
@@ -133,6 +172,166 @@ pub fn parse_llm_response(
     }
 
     Ok(comments)
+}
+
+/// Strategy 2: Numbered list format.
+/// Matches patterns like:
+///   1. **src/lib.rs:42** - Missing null check
+///   2. src/lib.rs:15 - SQL injection
+fn parse_numbered_list(content: &str, file_path: &Path) -> Vec<core::comment::RawComment> {
+    static NUMBERED_PATTERN: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^\s*\d+\.\s*\*{0,2}(?:.*?):?(\d+)\*{0,2}\s*[-\u{2013}\u{2014}:]\s*(.+)")
+            .unwrap()
+    });
+
+    let mut comments = Vec::new();
+    for line in content.lines() {
+        if let Some(caps) = NUMBERED_PATTERN.captures(line) {
+            if let Ok(line_number) = caps.get(1).unwrap().as_str().parse::<usize>() {
+                let text = caps.get(2).unwrap().as_str().trim().to_string();
+                comments.push(make_raw_comment(file_path, line_number, text));
+            }
+        }
+    }
+    comments
+}
+
+/// Strategy 3: Markdown bullet format.
+/// Matches patterns like:
+///   - Line 42: Missing null check
+///   * **Line 42**: Missing null check
+fn parse_markdown_bullets(content: &str, file_path: &Path) -> Vec<core::comment::RawComment> {
+    static BULLET_PATTERN: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^\s*[-*]\s*\*{0,2}[Ll]ine\s+(\d+)\*{0,2}\s*[:–—-]\s*(.+)").unwrap()
+    });
+
+    let mut comments = Vec::new();
+    for line in content.lines() {
+        if let Some(caps) = BULLET_PATTERN.captures(line) {
+            if let Ok(line_number) = caps.get(1).unwrap().as_str().parse::<usize>() {
+                let text = caps.get(2).unwrap().as_str().trim().to_string();
+                comments.push(make_raw_comment(file_path, line_number, text));
+            }
+        }
+    }
+    comments
+}
+
+/// Strategy 4: file:line format.
+/// Matches patterns like:
+///   src/lib.rs:42 - Missing null check
+///   file.py:15: SQL injection vulnerability
+fn parse_file_line_format(content: &str, file_path: &Path) -> Vec<core::comment::RawComment> {
+    static FILE_LINE_PATTERN: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^\s*\*{0,2}(?:[\w./]+):(\d+)\*{0,2}\s*[-\u{2013}\u{2014}:]\s*(.+)")
+            .unwrap()
+    });
+
+    let mut comments = Vec::new();
+    for line in content.lines() {
+        if let Some(caps) = FILE_LINE_PATTERN.captures(line) {
+            if let Ok(line_number) = caps.get(1).unwrap().as_str().parse::<usize>() {
+                let text = caps.get(2).unwrap().as_str().trim().to_string();
+                comments.push(make_raw_comment(file_path, line_number, text));
+            }
+        }
+    }
+    comments
+}
+
+/// Strategy 5: JSON extraction.
+/// Tries to find and parse JSON arrays from the response content.
+/// Handles JSON in code blocks or bare JSON arrays.
+fn parse_json_format(content: &str, file_path: &Path) -> Vec<core::comment::RawComment> {
+    let json_str = extract_json_from_code_block(content)
+        .or_else(|| find_json_array(content));
+
+    if let Some(json_str) = json_str {
+        if let Ok(items) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
+            return items
+                .iter()
+                .filter_map(|item| {
+                    let line = item
+                        .get("line")
+                        .or_else(|| item.get("line_number"))
+                        .or_else(|| item.get("lineNumber"))
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize)?;
+                    let text = item
+                        .get("issue")
+                        .or_else(|| item.get("description"))
+                        .or_else(|| item.get("message"))
+                        .or_else(|| item.get("content"))
+                        .or_else(|| item.get("text"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Issue found")
+                        .to_string();
+                    Some(make_raw_comment(file_path, line, text))
+                })
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+/// Extract JSON array content from markdown code blocks (```json ... ``` or ``` ... ```).
+fn extract_json_from_code_block(content: &str) -> Option<String> {
+    static CODE_BLOCK: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?s)```(?:json)?\s*\n(.*?)```").unwrap()
+    });
+
+    for caps in CODE_BLOCK.captures_iter(content) {
+        let block = caps.get(1).unwrap().as_str().trim();
+        if block.starts_with('[') {
+            return Some(block.to_string());
+        }
+    }
+    None
+}
+
+/// Find a bare JSON array in the content (not in a code block).
+fn find_json_array(content: &str) -> Option<String> {
+    // Find the first '[' and try to parse from there
+    let trimmed = content.trim();
+    if trimmed.starts_with('[') {
+        // The whole content might be a JSON array
+        return Some(trimmed.to_string());
+    }
+
+    // Look for a JSON array somewhere in the content
+    if let Some(start) = content.find('[') {
+        if let Some(end) = content.rfind(']') {
+            if end > start {
+                let candidate = &content[start..=end];
+                // Quick validation: try to parse it
+                if serde_json::from_str::<Vec<serde_json::Value>>(candidate).is_ok() {
+                    return Some(candidate.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Helper to construct a RawComment with default fields.
+fn make_raw_comment(
+    file_path: &Path,
+    line_number: usize,
+    content: String,
+) -> core::comment::RawComment {
+    core::comment::RawComment {
+        file_path: file_path.to_path_buf(),
+        line_number,
+        content,
+        rule_id: None,
+        suggestion: None,
+        severity: None,
+        category: None,
+        confidence: None,
+        fix_effort: None,
+        tags: Vec::new(),
+        code_suggestion: None,
+    }
 }
 
 /// Build a unified-diff-style string from original and suggested code.
@@ -398,5 +597,115 @@ let data = &input;
     fn build_suggestion_diff_multiline() {
         let diff = build_suggestion_diff("line1\nline2", "line1\nline2_fixed\nline3");
         assert_eq!(diff, "- line1\n- line2\n+ line1\n+ line2_fixed\n+ line3");
+    }
+
+    // === Fallback strategy tests ===
+
+    #[test]
+    fn parse_fallback_numbered_list() {
+        let input = "Here are the issues found:\n\n1. **src/lib.rs:42** - Missing null check on user input\n2. **src/lib.rs:15** - SQL injection vulnerability in query builder";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].line_number, 42);
+        assert_eq!(comments[1].line_number, 15);
+    }
+
+    #[test]
+    fn parse_fallback_numbered_list_no_bold() {
+        let input = "1. src/lib.rs:42 - Missing null check\n2. src/lib.rs:15 - SQL injection";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 2);
+    }
+
+    #[test]
+    fn parse_fallback_markdown_bullets() {
+        let input = "- Line 42: Missing null check on user input\n- Line 15: SQL injection vulnerability";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].line_number, 42);
+        assert_eq!(comments[1].line_number, 15);
+    }
+
+    #[test]
+    fn parse_fallback_markdown_bullets_bold() {
+        let input = "* **Line 42**: Missing null check\n* **Line 15**: SQL injection";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 2);
+    }
+
+    #[test]
+    fn parse_fallback_file_line_format() {
+        let input = "src/lib.rs:42 - Missing null check\nsrc/lib.rs:15: SQL injection";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].line_number, 42);
+        assert_eq!(comments[1].line_number, 15);
+    }
+
+    #[test]
+    fn parse_fallback_json_array() {
+        let input = r#"Here are the issues:
+```json
+[
+  {"line": 42, "issue": "Missing null check", "severity": "warning"},
+  {"line": 15, "issue": "SQL injection", "severity": "error"}
+]
+```"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].line_number, 42);
+        assert_eq!(comments[1].line_number, 15);
+    }
+
+    #[test]
+    fn parse_fallback_json_with_different_keys() {
+        // LLMs use various key names
+        let input = r#"[{"line_number": 10, "description": "Bug here", "type": "bug"}]"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 10);
+    }
+
+    #[test]
+    fn parse_primary_still_takes_priority() {
+        // If primary format works, fallbacks should NOT run
+        let input = "Line 10: This is a basic issue.";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 10);
+    }
+
+    #[test]
+    fn parse_empty_input_returns_empty() {
+        let input = "";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn parse_no_issues_response() {
+        let input = "No issues found. The code looks good.";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert!(comments.is_empty());
+    }
+
+    #[test]
+    fn parse_fallback_preserves_code_suggestion_in_primary() {
+        // Code suggestions should still work with primary parser
+        let input = "Line 42: Bug - Off by one.\n<<<ORIGINAL\nfor i in 0..len+1 {\n===\nfor i in 0..len {\n>>>SUGGESTED";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert!(comments[0].code_suggestion.is_some());
     }
 }

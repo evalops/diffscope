@@ -3,6 +3,7 @@ mod feedback;
 mod filters;
 mod pipeline;
 mod rule_helpers;
+pub mod triage;
 
 pub use context_helpers::{
     inject_custom_context, inject_pattern_repository_context, rank_and_trim_context_chunks,

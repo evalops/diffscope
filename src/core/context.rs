@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 
+use crate::core::function_chunker::find_enclosing_boundary_line;
 use crate::core::SymbolIndex;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMContextChunk {
@@ -50,8 +51,19 @@ impl ContextFetcher {
                 }
                 let start = start.max(1);
                 let end = end.max(start);
-                let start_idx = start.saturating_sub(1);
-                let end_idx = end.min(file_lines.len());
+
+                // Dynamic context: expand start to enclosing function boundary
+                let expanded_start =
+                    find_enclosing_boundary_line(&content, file_path, start, 10)
+                        .filter(|&boundary| boundary >= start.saturating_sub(10))
+                        .unwrap_or_else(|| start.saturating_sub(5)); // fallback: 5 lines before
+                let expanded_start = expanded_start.max(1);
+
+                // Asymmetric: less context after (1 extra line)
+                let expanded_end = (end + 1).min(file_lines.len());
+
+                let start_idx = expanded_start.saturating_sub(1);
+                let end_idx = expanded_end.min(file_lines.len());
 
                 if start_idx < file_lines.len() {
                     let chunk_content = truncate_with_notice(
@@ -62,7 +74,7 @@ impl ContextFetcher {
                         file_path: file_path.clone(),
                         content: chunk_content,
                         context_type: ContextType::FileContent,
-                        line_range: Some((start, end)),
+                        line_range: Some((expanded_start, expanded_end)),
                     });
                 }
             }
@@ -329,6 +341,28 @@ mod tests {
         let ranges = vec![(1, 5), (6, 10)];
         let merged = merge_ranges(&ranges);
         assert_eq!(merged, vec![(1, 10)]);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_context_expands_to_function_boundary() {
+        // Create a temp file with a function
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("test.rs");
+        let content = "use std::io;\n\npub fn process(x: i32) -> bool {\n    let y = x + 1;\n    y > 0\n}\n\npub fn other() {\n    println!(\"hi\");\n}\n";
+        std::fs::write(&file_path, content).unwrap();
+
+        let fetcher = ContextFetcher::new(dir.path().to_path_buf());
+        let relative = PathBuf::from("test.rs");
+        // Request context for line 4-5 (inside process function)
+        let chunks = fetcher
+            .fetch_context_for_file(&relative, &[(4, 5)])
+            .await
+            .unwrap();
+
+        assert!(!chunks.is_empty());
+        // Should expand to include the function signature (line 3)
+        let chunk = &chunks[0];
+        assert!(chunk.content.contains("pub fn process"));
     }
 }
 

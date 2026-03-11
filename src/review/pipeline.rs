@@ -20,6 +20,8 @@ use crate::output::OutputFormat;
 use crate::parsing::parse_llm_response;
 use crate::plugins;
 
+use super::triage;
+
 /// Rich result from the review pipeline, carrying comments plus telemetry metadata.
 #[derive(Debug, Clone, Default)]
 pub struct ReviewResult {
@@ -270,6 +272,18 @@ async fn review_diff_content_raw_inner(
         }
         if diff.is_binary || diff.hunks.is_empty() {
             info!("Skipping non-text diff: {}", diff.file_path.display());
+            files_skipped += 1;
+            continue;
+        }
+
+        // Triage: skip files that don't need expensive LLM review
+        let triage_result = triage::triage_diff(diff);
+        if triage_result.should_skip() {
+            info!(
+                "Skipping {} (triage: {})",
+                diff.file_path.display(),
+                triage_result.reason()
+            );
             files_skipped += 1;
             continue;
         }
