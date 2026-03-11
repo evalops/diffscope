@@ -178,7 +178,10 @@ impl StorageBackend for JsonStorageBackend {
             .iter()
             .filter(|e| e.event_type == "review.completed")
             .count() as i64;
-        let failed = total - completed;
+        let failed = events
+            .iter()
+            .filter(|e| e.event_type == "review.failed")
+            .count() as i64;
         let error_rate = if total > 0 {
             failed as f64 / total as f64
         } else {
@@ -1370,5 +1373,48 @@ mod tests {
 
         let events = backend.list_events(&EventFilters::default()).await.unwrap();
         assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_error_rate_only_counts_explicit_failures() {
+        // BUG: `failed = total - completed` misclassifies non-failure events as failures.
+        // Events with type "review.started" or "review.timeout" are counted as failures.
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+        let now = now_ts();
+
+        // 1 completed, 1 failed, 1 timeout (not a failure per se)
+        backend
+            .save_review(&make_session_with_event(
+                "r1", now, ReviewStatus::Complete, "review.completed", "gpt-4o", "github", 100,
+            ))
+            .await
+            .unwrap();
+        backend
+            .save_review(&make_session_with_event(
+                "r2", now, ReviewStatus::Failed, "review.failed", "gpt-4o", "github", 200,
+            ))
+            .await
+            .unwrap();
+        backend
+            .save_review(&make_session_with_event(
+                "r3", now, ReviewStatus::Failed, "review.timeout", "gpt-4o", "github", 300,
+            ))
+            .await
+            .unwrap();
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+        // Only "review.failed" should count as a failure (1 out of 3)
+        // BUG: currently reports 2/3 because timeout is also counted as failed
+        let expected_error_rate = 1.0 / 3.0;
+        assert!(
+            (stats.error_rate - expected_error_rate).abs() < 0.01,
+            "Error rate should be {:.2} (only explicit failures), got {:.2}",
+            expected_error_rate,
+            stats.error_rate
+        );
     }
 }

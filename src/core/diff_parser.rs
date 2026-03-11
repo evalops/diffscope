@@ -181,8 +181,8 @@ impl DiffParser {
             new_content: Some(new_content.to_string()),
             hunks,
             is_binary: false,
-            is_deleted: false,
-            is_new: false,
+            is_deleted: new_content.is_empty() && !old_content.is_empty(),
+            is_new: old_content.is_empty() && !new_content.is_empty(),
         })
     }
 
@@ -368,17 +368,16 @@ impl DiffParser {
                 *i += 1;
                 continue;
             }
-            if line.is_empty() {
-                *i += 1;
-                continue;
-            }
-
-            let (change_type, content) = match line.chars().next() {
+            let (change_type, content) = if line.is_empty() {
+                // Some diff tools emit truly empty lines for empty context lines
+                // (omitting the leading space). Treat as context to keep line numbers in sync.
+                (ChangeType::Context, "")
+            } else { match line.chars().next() {
                 Some('+') => (ChangeType::Added, &line[1..]),
                 Some('-') => (ChangeType::Removed, &line[1..]),
                 Some(' ') => (ChangeType::Context, &line[1..]),
                 _ => (ChangeType::Context, line),
-            };
+            }};
 
             let diff_line = match change_type {
                 ChangeType::Added => {
@@ -539,5 +538,64 @@ index 0000000..f735c20\n\
         assert_eq!(diffs.len(), 1);
         assert!(diffs[0].is_new);
         assert!(!diffs[0].is_deleted);
+    }
+
+    #[test]
+    fn test_parse_hunk_empty_lines_not_skipped() {
+        // BUG: empty lines in diff body are skipped, causing line number desync.
+        // An empty line (no leading space) in some diff tools represents an empty
+        // context line. The parser should treat it as context, not skip it.
+        let diff_text = "\
+diff --git a/test.txt b/test.txt\n\
+index abc..def 100644\n\
+--- a/test.txt\n\
++++ b/test.txt\n\
+@@ -1,4 +1,4 @@\n\
+ line1\n\
+\n\
+-old_line3\n\
++new_line3\n";
+        // The empty line (between "line1" and "-old_line3") should be treated as
+        // context line 2. Without it, line numbers after the empty line are wrong.
+        let diffs = DiffParser::parse_unified_diff(diff_text).unwrap();
+        assert_eq!(diffs.len(), 1);
+        let hunk = &diffs[0].hunks[0];
+
+        // Find the removed line — it should be on line 3, not line 2
+        let removed = hunk
+            .changes
+            .iter()
+            .find(|c| c.change_type == ChangeType::Removed)
+            .expect("Should have a removed line");
+        assert_eq!(
+            removed.old_line_no,
+            Some(3),
+            "Removed line should be on old line 3 (after the empty context line 2), got {:?}",
+            removed.old_line_no
+        );
+    }
+
+    #[test]
+    fn test_parse_text_diff_sets_is_new_for_new_file() {
+        // BUG: parse_text_diff always sets is_new=false even when old_content is empty
+        let diff =
+            DiffParser::parse_text_diff("", "new content\n", PathBuf::from("new_file.rs"))
+                .unwrap();
+        assert!(
+            diff.is_new,
+            "parse_text_diff with empty old content should set is_new=true"
+        );
+    }
+
+    #[test]
+    fn test_parse_text_diff_sets_is_deleted_for_deleted_file() {
+        // BUG: parse_text_diff always sets is_deleted=false even when new_content is empty
+        let diff =
+            DiffParser::parse_text_diff("old content\n", "", PathBuf::from("deleted_file.rs"))
+                .unwrap();
+        assert!(
+            diff.is_deleted,
+            "parse_text_diff with empty new content should set is_deleted=true"
+        );
     }
 }
