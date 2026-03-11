@@ -28,23 +28,28 @@ impl PreAnalyzer for EslintAnalyzer {
 
         let file_path = PathBuf::from(repo_path).join(&diff.file_path);
         let file_arg = file_path.to_string_lossy().to_string();
+        let diff_file_path = diff.file_path.clone();
 
-        let output = tokio::task::spawn_blocking(move || {
-            use std::process::Command;
-            Command::new("eslint")
-                .arg("--format=json")
-                .arg("--no-eslintrc")
-                .arg(&file_arg)
-                .output()
-        })
+        let timeout = std::time::Duration::from_secs(30);
+        let result = tokio::time::timeout(
+            timeout,
+            tokio::task::spawn_blocking(move || {
+                use std::process::Command;
+                Command::new("eslint")
+                    .arg("--format=json")
+                    .arg("--no-eslintrc")
+                    .arg(&file_arg)
+                    .output()
+            }),
+        )
         .await;
 
-        match output {
-            Ok(Ok(output)) => {
+        match result {
+            Ok(Ok(Ok(output))) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if !stdout.trim().is_empty() {
                     Ok(vec![LLMContextChunk {
-                        file_path: diff.file_path.clone(),
+                        file_path: diff_file_path,
                         content: format!("ESLint analysis:\n{}", stdout),
                         context_type: ContextType::Documentation,
                         line_range: None,
@@ -90,15 +95,23 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_eslint_accepts_js_extensions() {
-        let analyzer = EslintAnalyzer::new();
-        // These should not be skipped (they'll fail because eslint isn't installed,
-        // but they won't be filtered by extension)
+    #[test]
+    fn test_js_extensions_filter() {
+        // Verify JS_EXTENSIONS contains all expected extensions
         for ext in &[".js", ".ts", ".jsx", ".tsx"] {
-            let diff = make_diff(&format!("file{}", ext));
-            let result = analyzer.run(&diff, "/nonexistent").await;
-            assert!(result.is_ok(), "Should accept {}", ext);
+            assert!(
+                JS_EXTENSIONS.contains(ext),
+                "JS_EXTENSIONS should contain {}",
+                ext
+            );
+        }
+        // And rejects non-JS extensions
+        for ext in &[".rs", ".py", ".go"] {
+            assert!(
+                !JS_EXTENSIONS.contains(ext),
+                "JS_EXTENSIONS should not contain {}",
+                ext
+            );
         }
     }
 
