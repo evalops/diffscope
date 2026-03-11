@@ -287,22 +287,43 @@ fn extract_json_from_code_block(content: &str) -> Option<String> {
 }
 
 /// Find a bare JSON array in the content (not in a code block).
+///
+/// Uses bracket-depth counting to find the matching `]` for each `[`,
+/// then validates with serde. This correctly handles multiple separate
+/// arrays and nested brackets inside JSON strings.
 fn find_json_array(content: &str) -> Option<String> {
-    // Find the first '[' and try to parse from there
-    let trimmed = content.trim();
-    if trimmed.starts_with('[') {
-        // The whole content might be a JSON array
-        return Some(trimmed.to_string());
-    }
+    // Try each '[' as a potential array start
+    for (start, _) in content.char_indices().filter(|&(_, ch)| ch == '[') {
+        let mut depth = 0i32;
+        let mut in_string = false;
+        let mut escape_next = false;
 
-    // Look for a JSON array somewhere in the content
-    if let Some(start) = content.find('[') {
-        if let Some(end) = content.rfind(']') {
-            if end > start {
-                let candidate = &content[start..=end];
-                // Quick validation: try to parse it
-                if serde_json::from_str::<Vec<serde_json::Value>>(candidate).is_ok() {
-                    return Some(candidate.to_string());
+        for (offset, ch) in content[start..].char_indices() {
+            if escape_next {
+                escape_next = false;
+                continue;
+            }
+            if ch == '\\' && in_string {
+                escape_next = true;
+                continue;
+            }
+            if ch == '"' {
+                in_string = !in_string;
+                continue;
+            }
+            if !in_string {
+                if ch == '[' {
+                    depth += 1;
+                } else if ch == ']' {
+                    depth -= 1;
+                    if depth == 0 {
+                        let end = start + offset;
+                        let candidate = &content[start..=end];
+                        if serde_json::from_str::<Vec<serde_json::Value>>(candidate).is_ok() {
+                            return Some(candidate.to_string());
+                        }
+                        break; // this '[' didn't lead to valid JSON, try next
+                    }
                 }
             }
         }
@@ -875,6 +896,44 @@ let data = &input;
         let comments = parse_llm_response(input, &file_path).unwrap();
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].line_number, 5);
+    }
+
+    // ── Bug: find_json_array uses mismatched brackets ──────────────────
+    //
+    // `find_json_array` uses `find('[')` (first) + `rfind(']')` (last).
+    // When two separate JSON arrays appear in the text, this grabs from
+    // the first `[` to the last `]`, including non-JSON text between them.
+    // The serde validation rejects the invalid combined string, causing
+    // BOTH arrays to be silently lost.
+
+    #[test]
+    fn find_json_array_two_separate_arrays() {
+        // Two valid JSON arrays separated by text — should extract the first one
+        let input =
+            "First: [{\"line\": 1, \"issue\": \"bug1\"}] and second: [{\"line\": 2, \"issue\": \"bug2\"}]";
+        let result = find_json_array(input);
+        assert!(
+            result.is_some(),
+            "Should find at least the first valid JSON array, not fail on mismatched brackets"
+        );
+        let json_str = result.unwrap();
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed.len(), 1);
+    }
+
+    #[test]
+    fn find_json_array_validates_when_content_starts_with_bracket() {
+        // Content starts with '[' but isn't valid JSON — should try to find
+        // a valid array elsewhere, not return the invalid trimmed content
+        let input = "[not json] here is the real one: [{\"line\": 5, \"issue\": \"Bug\"}]";
+        let result = find_json_array(input);
+        assert!(
+            result.is_some(),
+            "Should find the valid JSON array even when content starts with '['",
+        );
+        let parsed: Vec<serde_json::Value> =
+            serde_json::from_str(&result.unwrap()).expect("Should be valid JSON");
+        assert_eq!(parsed.len(), 1);
     }
 
     #[test]

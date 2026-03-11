@@ -368,8 +368,15 @@ impl DiffParser {
         while *i < lines.len()
             && !lines[*i].starts_with("@@")
             && !lines[*i].starts_with("diff --git")
-            && !is_file_header(lines, *i)
         {
+            // Only check for file headers once we've consumed all expected
+            // hunk lines. Inside the hunk, "--- " / "+++ " lines are just
+            // removals/additions whose content happens to start with "-- "/"++ ".
+            let consumed_old = old_line.saturating_sub(old_start);
+            let consumed_new = new_line.saturating_sub(new_start);
+            if consumed_old >= old_lines && consumed_new >= new_lines && is_file_header(lines, *i) {
+                break;
+            }
             let line = lines[*i];
             if line.starts_with("\\ No newline at end of file") {
                 *i += 1;
@@ -658,6 +665,48 @@ diff --git a/test.txt b/test.txt
         assert!(
             removed.is_some(),
             "Should have a removed line with content '-- this is a separator'"
+        );
+    }
+
+    // ── Bug: is_file_header false positive terminates hunk early ────────
+    //
+    // When a removed line starts with "-- " (raw "--- ") AND the next line
+    // is an addition starting with "++ " (raw "+++ "), the is_file_header
+    // closure returns true and the hunk loop exits prematurely, losing
+    // the remaining changes.
+    //
+    // The fix is to track consumed old/new line counts and only check
+    // is_file_header after the expected hunk lines have been consumed.
+
+    #[test]
+    fn test_parse_hunk_false_file_header_from_dashes_and_pluses() {
+        // Both conditions for is_file_header triggered inside a hunk:
+        //   - removed line whose content is "-- SQL comment" → raw "--- SQL comment"
+        //   - added line whose content is "++ new comment"  → raw "+++ new comment"
+        let diff_text = "\
+diff --git a/test.sql b/test.sql
+--- a/test.sql
++++ b/test.sql
+@@ -1,3 +1,3 @@
+ first line
+--- SQL comment
++++ new SQL comment
+ third line
+";
+        let diffs = DiffParser::parse_unified_diff(diff_text).unwrap();
+        assert_eq!(diffs.len(), 1);
+        let hunk = &diffs[0].hunks[0];
+        // Should have 4 changes: context, removed, added, context
+        assert_eq!(
+            hunk.changes.len(),
+            4,
+            "Hunk should contain all 4 lines (context, removed, added, context), \
+             not stop at the false file header. Got {} changes: {:?}",
+            hunk.changes.len(),
+            hunk.changes
+                .iter()
+                .map(|c| format!("{:?}: {}", c.change_type, c.content))
+                .collect::<Vec<_>>()
         );
     }
 
