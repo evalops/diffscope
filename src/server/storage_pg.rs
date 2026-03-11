@@ -733,3 +733,184 @@ impl EventRow {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::comment::{Category, FixEffort, Severity};
+    use crate::server::state::ReviewStatus;
+
+    // === parse_status tests ===
+
+    #[test]
+    fn test_parse_status_running() {
+        assert_eq!(parse_status("Running"), ReviewStatus::Running);
+    }
+
+    #[test]
+    fn test_parse_status_complete() {
+        assert_eq!(parse_status("Complete"), ReviewStatus::Complete);
+    }
+
+    #[test]
+    fn test_parse_status_failed() {
+        assert_eq!(parse_status("Failed"), ReviewStatus::Failed);
+    }
+
+    #[test]
+    fn test_parse_status_pending() {
+        assert_eq!(parse_status("Pending"), ReviewStatus::Pending);
+    }
+
+    #[test]
+    fn test_parse_status_unknown_defaults_to_pending() {
+        assert_eq!(parse_status("unknown"), ReviewStatus::Pending);
+    }
+
+    #[test]
+    fn test_parse_status_empty_defaults_to_pending() {
+        assert_eq!(parse_status(""), ReviewStatus::Pending);
+    }
+
+    #[test]
+    fn test_parse_status_case_sensitive() {
+        // Lowercase variants should not match; they fall through to default
+        assert_eq!(parse_status("running"), ReviewStatus::Pending);
+        assert_eq!(parse_status("complete"), ReviewStatus::Pending);
+        assert_eq!(parse_status("failed"), ReviewStatus::Pending);
+    }
+
+    // === parse_severity tests ===
+
+    #[test]
+    fn test_parse_severity_error() {
+        assert_eq!(parse_severity("Error"), Severity::Error);
+    }
+
+    #[test]
+    fn test_parse_severity_warning() {
+        assert_eq!(parse_severity("Warning"), Severity::Warning);
+    }
+
+    #[test]
+    fn test_parse_severity_info() {
+        assert_eq!(parse_severity("Info"), Severity::Info);
+    }
+
+    #[test]
+    fn test_parse_severity_suggestion() {
+        assert_eq!(parse_severity("Suggestion"), Severity::Suggestion);
+    }
+
+    #[test]
+    fn test_parse_severity_unknown_defaults_to_suggestion() {
+        assert_eq!(parse_severity("unknown"), Severity::Suggestion);
+    }
+
+    #[test]
+    fn test_parse_severity_empty_defaults_to_suggestion() {
+        assert_eq!(parse_severity(""), Severity::Suggestion);
+    }
+
+    #[test]
+    fn test_parse_severity_case_sensitive() {
+        assert_eq!(parse_severity("error"), Severity::Suggestion);
+        assert_eq!(parse_severity("WARNING"), Severity::Suggestion);
+    }
+
+    // === parse_category tests ===
+
+    #[test]
+    fn test_parse_category_bug() {
+        assert_eq!(parse_category("Bug"), Category::Bug);
+    }
+
+    #[test]
+    fn test_parse_category_security() {
+        assert_eq!(parse_category("Security"), Category::Security);
+    }
+
+    #[test]
+    fn test_parse_category_performance() {
+        assert_eq!(parse_category("Performance"), Category::Performance);
+    }
+
+    #[test]
+    fn test_parse_category_style() {
+        assert_eq!(parse_category("Style"), Category::Style);
+    }
+
+    #[test]
+    fn test_parse_category_documentation() {
+        assert_eq!(parse_category("Documentation"), Category::Documentation);
+    }
+
+    #[test]
+    fn test_parse_category_best_practice() {
+        assert_eq!(parse_category("BestPractice"), Category::BestPractice);
+    }
+
+    #[test]
+    fn test_parse_category_maintainability() {
+        assert_eq!(parse_category("Maintainability"), Category::Maintainability);
+    }
+
+    #[test]
+    fn test_parse_category_testing() {
+        assert_eq!(parse_category("Testing"), Category::Testing);
+    }
+
+    #[test]
+    fn test_parse_category_architecture() {
+        assert_eq!(parse_category("Architecture"), Category::Architecture);
+    }
+
+    #[test]
+    fn test_parse_category_unknown_defaults_to_architecture() {
+        assert_eq!(parse_category("unknown"), Category::Architecture);
+    }
+
+    #[test]
+    fn test_parse_category_empty_defaults_to_architecture() {
+        assert_eq!(parse_category(""), Category::Architecture);
+    }
+
+    #[test]
+    fn test_parse_category_case_sensitive() {
+        assert_eq!(parse_category("bug"), Category::Architecture);
+        assert_eq!(parse_category("SECURITY"), Category::Architecture);
+    }
+
+    // === parse_fix_effort tests ===
+
+    #[test]
+    fn test_parse_fix_effort_low() {
+        assert_eq!(parse_fix_effort("Low"), FixEffort::Low);
+    }
+
+    #[test]
+    fn test_parse_fix_effort_medium() {
+        assert_eq!(parse_fix_effort("Medium"), FixEffort::Medium);
+    }
+
+    #[test]
+    fn test_parse_fix_effort_high() {
+        assert_eq!(parse_fix_effort("High"), FixEffort::High);
+    }
+
+    #[test]
+    fn test_parse_fix_effort_unknown_defaults_to_low() {
+        assert_eq!(parse_fix_effort("unknown"), FixEffort::Low);
+    }
+
+    #[test]
+    fn test_parse_fix_effort_empty_defaults_to_low() {
+        assert_eq!(parse_fix_effort(""), FixEffort::Low);
+    }
+
+    #[test]
+    fn test_parse_fix_effort_case_sensitive() {
+        assert_eq!(parse_fix_effort("medium"), FixEffort::Low);
+        assert_eq!(parse_fix_effort("HIGH"), FixEffort::Low);
+    }
+}

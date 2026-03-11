@@ -43,57 +43,7 @@ struct OllamaChatResponse {
     eval_count: Option<usize>,
 }
 
-// -- Legacy generate API types (kept for reference / future use) --
-
-#[allow(dead_code)]
-#[derive(Serialize)]
-struct OllamaGenerateRequest {
-    model: String,
-    prompt: String,
-    system: String,
-    temperature: f32,
-    num_predict: usize,
-    stream: bool,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize)]
-struct OllamaGenerateResponse {
-    response: String,
-    model: String,
-    done: bool,
-    _context: Option<Vec<i32>>,
-    _total_duration: Option<u64>,
-    prompt_eval_count: Option<usize>,
-    eval_count: Option<usize>,
-}
-
 // -- /api/show types for context window detection --
-
-#[allow(dead_code)]
-#[derive(Serialize)]
-struct OllamaShowRequest {
-    name: String,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize)]
-struct OllamaShowResponse {
-    #[serde(default)]
-    parameters: Option<String>,
-    #[allow(dead_code)]
-    #[serde(default)]
-    details: Option<OllamaShowDetails>,
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize)]
-struct OllamaShowDetails {
-    family: Option<String>,
-    parameter_size: Option<String>,
-    quantization_level: Option<String>,
-}
-
 impl OllamaAdapter {
     pub fn new(config: ModelConfig) -> Result<Self> {
         let base_url = config
@@ -131,27 +81,20 @@ impl OllamaAdapter {
     ///
     /// Returns `Some(num_ctx)` if the model metadata contains a `num_ctx` parameter,
     /// or `None` if the endpoint is unreachable or the parameter is not found.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Public API, used in tests; production uses OfflineModelManager
     pub async fn detect_context_window(&self) -> Option<usize> {
         let url = format!("{}/api/show", self.base_url);
-        let show_request = OllamaShowRequest {
-            name: self.model_name_bare().to_string(),
-        };
+        let body = serde_json::json!({"name": self.model_name_bare()});
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&show_request)
-            .send()
-            .await
-            .ok()?;
+        let response = self.client.post(&url).json(&body).send().await.ok()?;
 
         if !response.status().is_success() {
             return None;
         }
 
-        let show_response: OllamaShowResponse = response.json().await.ok()?;
-        parse_num_ctx(show_response.parameters.as_deref())
+        let value: serde_json::Value = response.json().await.ok()?;
+        let parameters = value.get("parameters").and_then(|p| p.as_str());
+        parse_num_ctx(parameters)
     }
 }
 
@@ -162,8 +105,8 @@ impl OllamaAdapter {
 /// num_ctx 4096
 /// temperature 0.8
 /// ```
-#[allow(dead_code)]
-fn parse_num_ctx(parameters: Option<&str>) -> Option<usize> {
+#[allow(dead_code)] // Called by detect_context_window
+pub(crate) fn parse_num_ctx(parameters: Option<&str>) -> Option<usize> {
     let params = parameters?;
     for line in params.lines() {
         let line = line.trim();

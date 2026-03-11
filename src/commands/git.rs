@@ -72,7 +72,8 @@ async fn suggest_commit_message(config: config::Config) -> Result<()> {
         return Ok(());
     }
 
-    let model_config = config.to_model_config();
+    // Use Fast model for commit message suggestion (lightweight task)
+    let model_config = config.to_model_config_for_role(config::ModelRole::Fast);
 
     let adapter = adapters::llm::create_adapter(&model_config)?;
 
@@ -114,7 +115,8 @@ async fn suggest_pr_title(config: config::Config) -> Result<()> {
         return Ok(());
     }
 
-    let model_config = config.to_model_config();
+    // Use Fast model for PR title suggestion (lightweight task)
+    let model_config = config.to_model_config_for_role(config::ModelRole::Fast);
 
     let adapter = adapters::llm::create_adapter(&model_config)?;
 

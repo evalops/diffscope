@@ -70,7 +70,6 @@ pub struct DailyCount {
 }
 
 /// Abstract storage backend - implemented by JSON file and PostgreSQL
-#[allow(dead_code)]
 #[async_trait]
 pub trait StorageBackend: Send + Sync {
     // Reviews

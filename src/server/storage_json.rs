@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::sync::RwLock;
+use tracing::{error, info, warn};
 
 use super::state::{ReviewEvent, ReviewSession, ReviewStatus};
 use super::storage::{
@@ -31,16 +32,16 @@ impl JsonStorageBackend {
         match std::fs::read_to_string(path) {
             Ok(data) => match serde_json::from_str::<HashMap<String, ReviewSession>>(&data) {
                 Ok(loaded) => {
-                    eprintln!("Loaded {} reviews from disk", loaded.len());
+                    info!("Loaded {} reviews from disk", loaded.len());
                     loaded
                 }
                 Err(e) => {
-                    eprintln!("Failed to parse reviews.json: {}", e);
+                    warn!("Failed to parse reviews.json: {}", e);
                     HashMap::new()
                 }
             },
             Err(e) => {
-                eprintln!("Failed to read reviews.json: {}", e);
+                warn!("Failed to read reviews.json: {}", e);
                 HashMap::new()
             }
         }
@@ -60,7 +61,7 @@ impl JsonStorageBackend {
             match serde_json::to_string_pretty(&stripped) {
                 Ok(j) => j,
                 Err(e) => {
-                    eprintln!("Failed to serialize reviews: {}", e);
+                    error!("Failed to serialize reviews: {}", e);
                     return;
                 }
             }
@@ -68,17 +69,17 @@ impl JsonStorageBackend {
 
         if let Some(parent) = self.storage_path.parent() {
             if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                eprintln!("Failed to create storage directory: {}", e);
+                error!("Failed to create storage directory: {}", e);
                 return;
             }
         }
         let tmp_path = self.storage_path.with_extension("json.tmp");
         if let Err(e) = tokio::fs::write(&tmp_path, &json).await {
-            eprintln!("Failed to write reviews temp file: {}", e);
+            error!("Failed to write reviews temp file: {}", e);
             return;
         }
         if let Err(e) = tokio::fs::rename(&tmp_path, &self.storage_path).await {
-            eprintln!("Failed to rename reviews file: {}", e);
+            error!("Failed to rename reviews file: {}", e);
             let _ = tokio::fs::remove_file(&tmp_path).await;
         }
     }

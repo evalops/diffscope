@@ -19,6 +19,7 @@ use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
 use crate::config::Config;
+use tracing::{info, warn};
 
 #[derive(RustEmbed)]
 #[folder = "web/dist"]
@@ -77,7 +78,7 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .filter_map(|s| match s.parse() {
             Ok(v) => Some(v),
             Err(e) => {
-                eprintln!("Warning: failed to parse CORS origin '{}': {}", s, e);
+                warn!("Failed to parse CORS origin '{}': {}", s, e);
                 None
             }
         })
@@ -99,7 +100,9 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .route("/events", get(api::list_events))
         .route("/events/stats", get(api::get_event_stats))
         .route("/review/{id}", get(api::get_review))
+        .route("/review/{id}", delete(api::delete_review))
         .route("/review/{id}/feedback", post(api::submit_feedback))
+        .route("/reviews/prune", post(api::prune_reviews))
         .route("/doctor", get(api::get_doctor))
         .route("/config", get(api::get_config))
         .route("/config", put(api::update_config))
@@ -123,8 +126,8 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .layer(cors);
 
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
-    eprintln!("DiffScope server running at http://{}", addr);
-    eprintln!("Press Ctrl+C to stop");
+    info!("DiffScope server running at http://{}", addr);
+    info!("Press Ctrl+C to stop");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;

@@ -65,7 +65,6 @@ pub struct Usage {
 #[async_trait]
 pub trait LLMAdapter: Send + Sync {
     async fn complete(&self, request: LLMRequest) -> Result<LLMResponse>;
-    #[allow(dead_code)]
     fn model_name(&self) -> &str;
 }
 
@@ -99,9 +98,8 @@ pub fn create_adapter(config: &ModelConfig) -> Result<Box<dyn LLMAdapter>> {
     }
 
     // Vendor-prefixed model IDs (vendor/model)
-    if config.model_name.contains('/') {
-        let (vendor, model) = config.model_name.split_once('/').unwrap();
-        let model = model.to_string();
+    if let Some((vendor, model_suffix)) = config.model_name.split_once('/') {
+        let model = model_suffix.to_string();
         match vendor {
             "anthropic" => {
                 // Route anthropic/ prefix directly to the Anthropic adapter

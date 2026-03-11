@@ -62,6 +62,23 @@ pub async fn smart_review_command(
     let model_config = config.to_model_config();
 
     let adapter = adapters::llm::create_adapter(&model_config)?;
+
+    // Use Fast model for PR summary and diagram generation (lightweight tasks).
+    // Only create a separate adapter if model_fast differs from the primary model.
+    let fast_config = config.to_model_config_for_role(config::ModelRole::Fast);
+    let separate_fast_adapter: Option<Box<dyn adapters::llm::LLMAdapter>> =
+        if fast_config.model_name != model_config.model_name {
+            info!(
+                "Using fast model '{}' for PR summary/diagram",
+                fast_config.model_name
+            );
+            Some(adapters::llm::create_adapter(&fast_config)?)
+        } else {
+            None
+        };
+    let summary_adapter: &dyn adapters::llm::LLMAdapter =
+        separate_fast_adapter.as_deref().unwrap_or(adapter.as_ref());
+
     let mut all_comments = Vec::new();
     let mut pr_summary = if config.smart_review_summary {
         match core::GitIntegration::new(&repo_root) {
@@ -72,7 +89,7 @@ pub async fn smart_review_command(
                 match core::PRSummaryGenerator::generate_summary_with_options(
                     &diffs,
                     &git,
-                    adapter.as_ref(),
+                    summary_adapter,
                     options,
                 )
                 .await
@@ -94,7 +111,7 @@ pub async fn smart_review_command(
     };
 
     if config.smart_review_diagram {
-        match core::PRSummaryGenerator::generate_change_diagram(&diffs, adapter.as_ref()).await {
+        match core::PRSummaryGenerator::generate_change_diagram(&diffs, summary_adapter).await {
             Ok(Some(diagram)) => {
                 if let Some(summary) = &mut pr_summary {
                     summary.visual_diff = Some(diagram);

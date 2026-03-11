@@ -281,7 +281,6 @@ impl OfflineModelManager {
     ///
     /// Returns `Ok(Some(num_ctx))` if the model metadata contains a `num_ctx` parameter,
     /// `Ok(None)` if the parameter is not found, or `Err` if the request fails.
-    #[allow(dead_code)]
     pub async fn detect_context_window(&self, model_name: &str) -> Result<Option<usize>> {
         let url = format!("{}/api/show", self.ollama_base_url);
         let client = reqwest::Client::builder()
@@ -309,7 +308,6 @@ impl OfflineModelManager {
 ///
 /// The parameters field is a newline-separated list of key-value pairs, e.g.:
 /// `num_ctx 4096\ntemperature 0.8`
-#[allow(dead_code)]
 fn parse_num_ctx_from_params(parameters: Option<&str>) -> Option<usize> {
     let params = parameters?;
     for line in params.lines() {

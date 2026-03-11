@@ -131,9 +131,7 @@ pub async fn doctor_command(config: Config) -> Result<()> {
 
             // Context window detection (Ollama only)
             if endpoint_type == "ollama" {
-                if let Some(ctx_size) =
-                    detect_model_context_window(&client, &base_url, &recommended.name).await
-                {
+                if let Ok(Some(ctx_size)) = manager.detect_context_window(&recommended.name).await {
                     println!(
                         "  Context window: {} tokens (detected from model)",
                         ctx_size
@@ -287,50 +285,6 @@ async fn test_model_inference(
 /// Rough token count estimate (~4 chars per token).
 fn estimate_tokens(text: &str) -> usize {
     (text.len() / 4).max(1)
-}
-
-/// Query Ollama's `/api/show` to detect the model's context window size.
-async fn detect_model_context_window(
-    client: &Client,
-    base_url: &str,
-    model_name: &str,
-) -> Option<usize> {
-    let url = format!("{}/api/show", base_url);
-    let body = serde_json::json!({"name": model_name});
-    let resp = client.post(&url).json(&body).send().await.ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let text = resp.text().await.ok()?;
-    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-
-    // The "parameters" field is a newline-delimited string of key-value pairs
-    if let Some(params) = value.get("parameters").and_then(|p| p.as_str()) {
-        for line in params.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("num_ctx") {
-                if let Some(val) = trimmed.split_whitespace().nth(1) {
-                    return val.parse().ok();
-                }
-            }
-        }
-    }
-
-    // Also check model_info for context_length
-    if let Some(info) = value.get("model_info") {
-        // Try common key patterns
-        for key in &[
-            "context_length",
-            "llama.context_length",
-            "general.context_length",
-        ] {
-            if let Some(ctx) = info.get(*key).and_then(|v| v.as_u64()) {
-                return Some(ctx as usize);
-            }
-        }
-    }
-
-    None
 }
 
 /// Print system resource information (RAM and GPU if available).
