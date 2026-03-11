@@ -255,16 +255,19 @@ fn find_function_end(lines: &[&str], start: usize, language: &str) -> usize {
             let mut depth = 0i32;
             let mut found_open = false;
             for (i, line) in lines.iter().enumerate().skip(start) {
-                let mut in_string = false;
+                let mut in_double_quote = false;
+                let mut in_single_quote = false;
                 let mut escaped = false;
                 for ch in line.chars() {
                     if escaped {
                         escaped = false;
-                    } else if in_string && ch == '\\' {
+                    } else if (in_double_quote || in_single_quote) && ch == '\\' {
                         escaped = true;
-                    } else if ch == '"' {
-                        in_string = !in_string;
-                    } else if !in_string {
+                    } else if ch == '"' && !in_single_quote {
+                        in_double_quote = !in_double_quote;
+                    } else if ch == '\'' && !in_double_quote && language != "rs" {
+                        in_single_quote = !in_single_quote;
+                    } else if !in_double_quote && !in_single_quote {
                         if ch == '{' {
                             depth += 1;
                             found_open = true;
@@ -909,6 +912,44 @@ fn next_func() {
         // Line 3 is inside inner() which starts at line 2
         let result = find_enclosing_boundary_line(content, path, 3, 10);
         assert_eq!(result, Some(2));
+    }
+
+    #[test]
+    fn test_find_function_end_single_quoted_string_with_brace() {
+        // Regression: single-quoted strings must be tracked so `'{'` isn't a real brace
+        let lines: Vec<&str> = vec![
+            "function foo() {",    // line 0: depth = 1
+            "    let s = '{';",    // line 1: depth should stay 1, but goes to 2
+            "    console.log(s);", // line 2
+            "}",                   // line 3: depth goes to 1 (not 0!), so foo "never ends"
+            "",                    // line 4
+            "function bar() {",    // line 5: depth goes to 2
+            "    return 1;",       // line 6
+            "}",                   // line 7: depth goes to 1, and foo is "found" here (wrong!)
+        ];
+        let end = find_function_end(&lines, 0, "js");
+        assert_eq!(
+            end, 3,
+            "foo() should end at line 3, not bleed into bar() due to untracked single-quoted brace"
+        );
+    }
+
+    #[test]
+    fn test_find_function_end_rust_lifetime_not_string() {
+        // Regression: Rust lifetime annotations ('a, 'static) must not toggle
+        // in_single_quote, which would cause the opening brace to be ignored.
+        let lines: Vec<&str> = vec![
+            "pub fn new(name: &'static str) -> Self {", // line 0: has lifetime '
+            "    Self { name }",                        // line 1
+            "}",                                        // line 2
+            "",
+            "fn other() {", // line 4
+        ];
+        let end = find_function_end(&lines, 0, "rs");
+        assert_eq!(
+            end, 2,
+            "Rust lifetime annotation should not break brace tracking"
+        );
     }
 
     #[test]

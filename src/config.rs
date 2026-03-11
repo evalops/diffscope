@@ -1061,7 +1061,7 @@ impl Config {
 }
 
 fn default_model() -> String {
-    "claude-sonnet-4-6".to_string()
+    "claude-opus-4-6".to_string()
 }
 
 fn default_temperature() -> f32 {
@@ -1763,5 +1763,17 @@ temperature: 0.3
         assert!(config.model_reasoning.is_none());
         assert!(config.model_embedding.is_none());
         assert!(config.fallback_models.is_empty());
+    }
+
+    #[test]
+    fn test_default_model_is_frontier() {
+        // Per CLAUDE.md: "Always use frontier models (Opus) for AI-powered features
+        // — never default to Sonnet or smaller"
+        let model = default_model();
+        assert!(
+            model.contains("opus"),
+            "Default model should be Opus (frontier), got: {}",
+            model
+        );
     }
 }

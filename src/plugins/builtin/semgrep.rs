@@ -3,7 +3,9 @@ use crate::plugins::PreAnalyzer;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::path::PathBuf;
-use std::process::Command;
+
+/// Timeout for semgrep execution in seconds.
+const SEMGREP_TIMEOUT_SECS: u64 = 30;
 
 pub struct SemgrepAnalyzer;
 
@@ -21,20 +23,32 @@ impl PreAnalyzer for SemgrepAnalyzer {
 
     async fn run(&self, diff: &UnifiedDiff, repo_path: &str) -> Result<Vec<LLMContextChunk>> {
         let file_path = PathBuf::from(repo_path).join(&diff.file_path);
+        let file_arg = file_path.to_string_lossy().to_string();
+        let diff_file_path = diff.file_path.clone();
 
-        let output = Command::new("semgrep")
-            .arg("--config=auto")
-            .arg("--json")
-            .arg("--quiet")
-            .arg(file_path.to_string_lossy().as_ref())
-            .output();
+        let timeout = std::time::Duration::from_secs(SEMGREP_TIMEOUT_SECS);
+        let result = tokio::time::timeout(
+            timeout,
+            tokio::task::spawn_blocking(move || {
+                use std::process::Command;
+                Command::new("semgrep")
+                    .arg("--config=auto")
+                    .arg("--json")
+                    .arg("--quiet")
+                    .arg("--timeout")
+                    .arg(SEMGREP_TIMEOUT_SECS.to_string())
+                    .arg(&file_arg)
+                    .output()
+            }),
+        )
+        .await;
 
-        match output {
-            Ok(output) => {
+        match result {
+            Ok(Ok(Ok(output))) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if !stdout.trim().is_empty() {
                     Ok(vec![LLMContextChunk {
-                        file_path: diff.file_path.clone(),
+                        file_path: diff_file_path,
                         content: format!("Semgrep analysis:\n{}", stdout),
                         context_type: ContextType::Documentation,
                         line_range: None,
@@ -43,7 +57,50 @@ impl PreAnalyzer for SemgrepAnalyzer {
                     Ok(Vec::new())
                 }
             }
-            Err(_) => Ok(Vec::new()),
+            _ => Ok(Vec::new()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_diff(file_path: &str) -> UnifiedDiff {
+        UnifiedDiff {
+            old_content: None,
+            new_content: None,
+            file_path: PathBuf::from(file_path),
+            is_new: false,
+            is_deleted: false,
+            is_binary: false,
+            hunks: vec![],
+        }
+    }
+
+    #[test]
+    fn test_semgrep_analyzer_id() {
+        let analyzer = SemgrepAnalyzer::new();
+        assert_eq!(analyzer.id(), "semgrep");
+    }
+
+    #[tokio::test]
+    async fn test_semgrep_handles_missing_binary() {
+        // When semgrep is not installed, should return empty vec (not error)
+        let analyzer = SemgrepAnalyzer::new();
+        let diff = make_diff("nonexistent_file.py");
+        let result = analyzer.run(&diff, "/nonexistent/repo").await;
+        assert!(result.is_ok());
+        // Either empty (semgrep not found) or has output (semgrep found but file missing)
+    }
+
+    #[tokio::test]
+    async fn test_semgrep_timeout_returns_empty() {
+        // When semgrep times out, should return empty vec (not error)
+        let analyzer = SemgrepAnalyzer::new();
+        let diff = make_diff("test.py");
+        // This will either timeout or fail to find semgrep — both should return Ok
+        let result = analyzer.run(&diff, "/nonexistent/repo").await;
+        assert!(result.is_ok());
     }
 }

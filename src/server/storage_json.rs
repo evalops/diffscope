@@ -178,7 +178,10 @@ impl StorageBackend for JsonStorageBackend {
             .iter()
             .filter(|e| e.event_type == "review.completed")
             .count() as i64;
-        let failed = total - completed;
+        let failed = events
+            .iter()
+            .filter(|e| e.event_type == "review.failed")
+            .count() as i64;
         let error_rate = if total > 0 {
             failed as f64 / total as f64
         } else {
@@ -364,5 +367,1072 @@ impl StorageBackend for JsonStorageBackend {
         }
 
         Ok(removed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::comment::{Category, Comment, FixEffort, ReviewSummary, Severity};
+    use crate::server::state::ReviewEventBuilder;
+    use crate::server::storage::EventFilters;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    /// Create a minimal ReviewSession for testing.
+    fn make_session(id: &str, started_at: i64, status: ReviewStatus) -> ReviewSession {
+        ReviewSession {
+            id: id.to_string(),
+            status,
+            diff_source: "head".to_string(),
+            started_at,
+            completed_at: None,
+            comments: vec![],
+            summary: None,
+            files_reviewed: 0,
+            error: None,
+            pr_summary_text: None,
+            diff_content: Some("diff content".to_string()),
+            event: None,
+            progress: None,
+        }
+    }
+
+    /// Create a ReviewSession with an attached ReviewEvent.
+    fn make_session_with_event(
+        id: &str,
+        started_at: i64,
+        status: ReviewStatus,
+        event_type: &str,
+        model: &str,
+        diff_source: &str,
+        duration_ms: u64,
+    ) -> ReviewSession {
+        let event = ReviewEventBuilder::new(id, event_type, diff_source, model)
+            .duration_ms(duration_ms)
+            .build();
+        let mut session = make_session(id, started_at, status);
+        session.diff_source = diff_source.to_string();
+        session.event = Some(event);
+        session
+    }
+
+    /// Create a Comment for testing.
+    fn make_comment(id: &str, file: &str) -> Comment {
+        Comment {
+            id: id.to_string(),
+            file_path: PathBuf::from(file),
+            line_number: 1,
+            content: "test comment".to_string(),
+            rule_id: None,
+            severity: Severity::Warning,
+            category: Category::Bug,
+            suggestion: None,
+            confidence: 0.8,
+            code_suggestion: None,
+            tags: vec![],
+            fix_effort: FixEffort::Low,
+            feedback: None,
+        }
+    }
+
+    /// Helper to get the current Unix timestamp.
+    fn now_ts() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+    }
+
+    // ---------------------------------------------------------------
+    // 1. save_review + get_review round-trip
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_save_and_get_review_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let session = make_session("r1", now_ts(), ReviewStatus::Complete);
+        backend.save_review(&session).await.unwrap();
+
+        let loaded = backend.get_review("r1").await.unwrap();
+        assert!(loaded.is_some());
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.id, "r1");
+        assert_eq!(loaded.status, ReviewStatus::Complete);
+        assert_eq!(loaded.diff_source, "head");
+    }
+
+    #[tokio::test]
+    async fn test_get_review_nonexistent_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let result = backend.get_review("does-not-exist").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_save_review_with_comments_and_summary() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let mut session = make_session("r-full", now_ts(), ReviewStatus::Complete);
+        session.comments = vec![
+            make_comment("c1", "src/main.rs"),
+            make_comment("c2", "src/lib.rs"),
+        ];
+        session.summary = Some(ReviewSummary {
+            total_comments: 2,
+            by_severity: HashMap::from([("Warning".to_string(), 2)]),
+            by_category: HashMap::from([("Bug".to_string(), 2)]),
+            critical_issues: 0,
+            files_reviewed: 2,
+            overall_score: 8.0,
+            recommendations: vec!["Fix bugs".to_string()],
+        });
+
+        backend.save_review(&session).await.unwrap();
+        let loaded = backend.get_review("r-full").await.unwrap().unwrap();
+        assert_eq!(loaded.comments.len(), 2);
+        assert!(loaded.summary.is_some());
+        assert_eq!(loaded.summary.unwrap().overall_score, 8.0);
+    }
+
+    // ---------------------------------------------------------------
+    // 2. list_reviews — ordering, limit, offset
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_list_reviews_ordering_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let base = now_ts();
+        for i in 0..5 {
+            let session = make_session(&format!("r{}", i), base + i as i64, ReviewStatus::Complete);
+            backend.save_review(&session).await.unwrap();
+        }
+
+        let list = backend.list_reviews(10, 0).await.unwrap();
+        assert_eq!(list.len(), 5);
+        // Should be sorted newest first (descending started_at)
+        assert_eq!(list[0].id, "r4");
+        assert_eq!(list[4].id, "r0");
+    }
+
+    #[tokio::test]
+    async fn test_list_reviews_with_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let base = now_ts();
+        for i in 0..5 {
+            let session = make_session(&format!("r{}", i), base + i as i64, ReviewStatus::Complete);
+            backend.save_review(&session).await.unwrap();
+        }
+
+        let list = backend.list_reviews(3, 0).await.unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].id, "r4");
+        assert_eq!(list[2].id, "r2");
+    }
+
+    #[tokio::test]
+    async fn test_list_reviews_with_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let base = now_ts();
+        for i in 0..5 {
+            let session = make_session(&format!("r{}", i), base + i as i64, ReviewStatus::Complete);
+            backend.save_review(&session).await.unwrap();
+        }
+
+        let list = backend.list_reviews(10, 2).await.unwrap();
+        assert_eq!(list.len(), 3);
+        // Skipped r4, r3 (offset=2), so first result is r2
+        assert_eq!(list[0].id, "r2");
+        assert_eq!(list[2].id, "r0");
+    }
+
+    #[tokio::test]
+    async fn test_list_reviews_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let list = backend.list_reviews(10, 0).await.unwrap();
+        assert!(list.is_empty());
+    }
+
+    // ---------------------------------------------------------------
+    // 3. delete_review
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_delete_review() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let session = make_session("r-del", now_ts(), ReviewStatus::Complete);
+        backend.save_review(&session).await.unwrap();
+        assert!(backend.get_review("r-del").await.unwrap().is_some());
+
+        backend.delete_review("r-del").await.unwrap();
+        assert!(backend.get_review("r-del").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_review_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        // Should not panic or error
+        backend.delete_review("ghost").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_delete_does_not_affect_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let base = now_ts();
+        backend
+            .save_review(&make_session("keep", base, ReviewStatus::Complete))
+            .await
+            .unwrap();
+        backend
+            .save_review(&make_session("remove", base + 1, ReviewStatus::Complete))
+            .await
+            .unwrap();
+
+        backend.delete_review("remove").await.unwrap();
+        assert!(backend.get_review("keep").await.unwrap().is_some());
+        assert!(backend.get_review("remove").await.unwrap().is_none());
+    }
+
+    // ---------------------------------------------------------------
+    // 4. prune
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_prune_removes_old_reviews() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        // Old review: 2 hours ago
+        backend
+            .save_review(&make_session("old", now - 7200, ReviewStatus::Complete))
+            .await
+            .unwrap();
+        // Recent review: just now
+        backend
+            .save_review(&make_session("new", now, ReviewStatus::Complete))
+            .await
+            .unwrap();
+
+        // Prune anything older than 1 hour, keep at most 100
+        let removed = backend.prune(3600, 100).await.unwrap();
+        assert_eq!(removed, 1);
+        assert!(backend.get_review("old").await.unwrap().is_none());
+        assert!(backend.get_review("new").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_prune_enforces_max_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        // All recent, but exceed max_count of 2
+        for i in 0..5 {
+            backend
+                .save_review(&make_session(
+                    &format!("r{}", i),
+                    now + i as i64,
+                    ReviewStatus::Complete,
+                ))
+                .await
+                .unwrap();
+        }
+
+        // max_age very large (so nothing expires by age), max_count = 2
+        let removed = backend.prune(999999, 2).await.unwrap();
+        assert_eq!(removed, 3);
+        let remaining = backend.list_reviews(100, 0).await.unwrap();
+        assert_eq!(remaining.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_prune_preserves_running_reviews_when_enforcing_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        // One running review (oldest)
+        backend
+            .save_review(&make_session("running", now, ReviewStatus::Running))
+            .await
+            .unwrap();
+        // Two completed reviews (newer)
+        backend
+            .save_review(&make_session("done1", now + 1, ReviewStatus::Complete))
+            .await
+            .unwrap();
+        backend
+            .save_review(&make_session("done2", now + 2, ReviewStatus::Complete))
+            .await
+            .unwrap();
+
+        // max_count=1 -- prune should remove completed, but Running is not
+        // eligible for the count-based pass (only Complete/Failed are pruned)
+        let removed = backend.prune(999999, 1).await.unwrap();
+        // 2 completed reviews removed to bring total towards max_count
+        assert_eq!(removed, 2);
+        // Running review should still be present
+        assert!(backend.get_review("running").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_prune_empty_storage() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let removed = backend.prune(3600, 100).await.unwrap();
+        assert_eq!(removed, 0);
+    }
+
+    // ---------------------------------------------------------------
+    // 5. save_event + list_events
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_list_events_returns_events_from_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        let s1 = make_session_with_event(
+            "r1",
+            now,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "head",
+            1000,
+        );
+        let s2 = make_session_with_event(
+            "r2",
+            now + 1,
+            ReviewStatus::Failed,
+            "review.failed",
+            "claude-sonnet-4.6",
+            "staged",
+            2000,
+        );
+        backend.save_review(&s1).await.unwrap();
+        backend.save_review(&s2).await.unwrap();
+
+        let events = backend.list_events(&EventFilters::default()).await.unwrap();
+        assert_eq!(events.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_events_filter_by_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        backend
+            .save_review(&make_session_with_event(
+                "r1",
+                now,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "head",
+                1000,
+            ))
+            .await
+            .unwrap();
+        backend
+            .save_review(&make_session_with_event(
+                "r2",
+                now + 1,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "staged",
+                1000,
+            ))
+            .await
+            .unwrap();
+
+        let filters = EventFilters {
+            source: Some("head".to_string()),
+            ..Default::default()
+        };
+        let events = backend.list_events(&filters).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].diff_source, "head");
+    }
+
+    #[tokio::test]
+    async fn test_list_events_filter_by_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        backend
+            .save_review(&make_session_with_event(
+                "r1",
+                now,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "head",
+                1000,
+            ))
+            .await
+            .unwrap();
+        backend
+            .save_review(&make_session_with_event(
+                "r2",
+                now + 1,
+                ReviewStatus::Complete,
+                "review.completed",
+                "claude-sonnet-4.6",
+                "head",
+                2000,
+            ))
+            .await
+            .unwrap();
+
+        let filters = EventFilters {
+            model: Some("claude-sonnet-4.6".to_string()),
+            ..Default::default()
+        };
+        let events = backend.list_events(&filters).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].model, "claude-sonnet-4.6");
+    }
+
+    #[tokio::test]
+    async fn test_list_events_filter_by_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        backend
+            .save_review(&make_session_with_event(
+                "r1",
+                now,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "head",
+                1000,
+            ))
+            .await
+            .unwrap();
+        backend
+            .save_review(&make_session_with_event(
+                "r2",
+                now + 1,
+                ReviewStatus::Failed,
+                "review.failed",
+                "gpt-4o",
+                "head",
+                500,
+            ))
+            .await
+            .unwrap();
+
+        let filters = EventFilters {
+            status: Some("failed".to_string()),
+            ..Default::default()
+        };
+        let events = backend.list_events(&filters).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "review.failed");
+    }
+
+    #[tokio::test]
+    async fn test_list_events_with_limit_and_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        for i in 0..5 {
+            backend
+                .save_review(&make_session_with_event(
+                    &format!("r{}", i),
+                    now + i as i64,
+                    ReviewStatus::Complete,
+                    "review.completed",
+                    "gpt-4o",
+                    "head",
+                    (i as u64 + 1) * 100,
+                ))
+                .await
+                .unwrap();
+        }
+
+        let filters = EventFilters {
+            limit: Some(2),
+            offset: Some(1),
+            ..Default::default()
+        };
+        let events = backend.list_events(&filters).await.unwrap();
+        assert_eq!(events.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_events_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let events = backend.list_events(&EventFilters::default()).await.unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_save_event_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        // save_event for JSON backend is a no-op (events are embedded in sessions)
+        let event = ReviewEventBuilder::new("r1", "review.completed", "head", "gpt-4o").build();
+        let result = backend.save_event(&event).await;
+        assert!(result.is_ok());
+
+        // No events should be listed because no session holds this event
+        let events = backend.list_events(&EventFilters::default()).await.unwrap();
+        assert!(events.is_empty());
+    }
+
+    // ---------------------------------------------------------------
+    // 6. get_event_stats
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_get_event_stats_basic_aggregation() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+
+        // Two completed reviews with different models
+        let mut s1 = make_session_with_event(
+            "r1",
+            now,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "head",
+            1000,
+        );
+        if let Some(ref mut e) = s1.event {
+            e.tokens_total = Some(500);
+            e.overall_score = Some(8.5);
+            e.comments_by_severity.insert("Warning".to_string(), 2);
+        }
+
+        let mut s2 = make_session_with_event(
+            "r2",
+            now + 1,
+            ReviewStatus::Complete,
+            "review.completed",
+            "claude-sonnet-4.6",
+            "staged",
+            3000,
+        );
+        if let Some(ref mut e) = s2.event {
+            e.tokens_total = Some(1000);
+            e.overall_score = Some(7.0);
+            e.comments_by_category.insert("Bug".to_string(), 3);
+        }
+
+        // One failed review
+        let mut s3 = make_session_with_event(
+            "r3",
+            now + 2,
+            ReviewStatus::Failed,
+            "review.failed",
+            "gpt-4o",
+            "head",
+            500,
+        );
+        if let Some(ref mut e) = s3.event {
+            e.tokens_total = Some(100);
+        }
+
+        backend.save_review(&s1).await.unwrap();
+        backend.save_review(&s2).await.unwrap();
+        backend.save_review(&s3).await.unwrap();
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+
+        assert_eq!(stats.total_reviews, 3);
+        assert_eq!(stats.completed_count, 2);
+        assert_eq!(stats.failed_count, 1);
+        assert_eq!(stats.total_tokens, 1600); // 500 + 1000 + 100
+        assert!(stats.avg_duration_ms > 0.0);
+        assert!(stats.avg_score.is_some());
+        assert!(stats.error_rate > 0.0);
+
+        // Verify by_source has both "head" and "staged"
+        assert_eq!(stats.by_source.len(), 2);
+
+        // Verify severity_totals and category_totals
+        assert_eq!(*stats.severity_totals.get("Warning").unwrap_or(&0), 2);
+        assert_eq!(*stats.category_totals.get("Bug").unwrap_or(&0), 3);
+    }
+
+    #[tokio::test]
+    async fn test_get_event_stats_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+
+        assert_eq!(stats.total_reviews, 0);
+        assert_eq!(stats.completed_count, 0);
+        assert_eq!(stats.failed_count, 0);
+        assert_eq!(stats.total_tokens, 0);
+        assert_eq!(stats.avg_duration_ms, 0.0);
+        assert!(stats.avg_score.is_none());
+        assert_eq!(stats.error_rate, 0.0);
+        assert_eq!(stats.p50_latency_ms, 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_event_stats_latency_percentiles() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        // Create 10 reviews with increasing durations
+        for i in 0..10 {
+            backend
+                .save_review(&make_session_with_event(
+                    &format!("r{}", i),
+                    now + i as i64,
+                    ReviewStatus::Complete,
+                    "review.completed",
+                    "gpt-4o",
+                    "head",
+                    (i as u64 + 1) * 100, // 100, 200, ..., 1000
+                ))
+                .await
+                .unwrap();
+        }
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+
+        assert!(stats.p50_latency_ms > 0);
+        assert!(stats.p95_latency_ms >= stats.p50_latency_ms);
+        assert!(stats.p99_latency_ms >= stats.p95_latency_ms);
+    }
+
+    #[tokio::test]
+    async fn test_get_event_stats_by_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        backend
+            .save_review(&make_session_with_event(
+                "r1",
+                now,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "head",
+                1000,
+            ))
+            .await
+            .unwrap();
+        backend
+            .save_review(&make_session_with_event(
+                "r2",
+                now + 1,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "head",
+                2000,
+            ))
+            .await
+            .unwrap();
+        backend
+            .save_review(&make_session_with_event(
+                "r3",
+                now + 2,
+                ReviewStatus::Complete,
+                "review.completed",
+                "claude-sonnet-4.6",
+                "head",
+                500,
+            ))
+            .await
+            .unwrap();
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+
+        assert_eq!(stats.by_model.len(), 2);
+        let gpt_stats = stats.by_model.iter().find(|m| m.model == "gpt-4o").unwrap();
+        assert_eq!(gpt_stats.count, 2);
+        assert_eq!(gpt_stats.avg_duration_ms, 1500.0); // (1000+2000)/2
+    }
+
+    #[tokio::test]
+    async fn test_get_event_stats_by_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        let mut s1 = make_session_with_event(
+            "r1",
+            now,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "head",
+            1000,
+        );
+        if let Some(ref mut e) = s1.event {
+            e.github_repo = Some("owner/repo".to_string());
+            e.overall_score = Some(9.0);
+        }
+        backend.save_review(&s1).await.unwrap();
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+
+        assert_eq!(stats.by_repo.len(), 1);
+        assert_eq!(stats.by_repo[0].repo, "owner/repo");
+        assert_eq!(stats.by_repo[0].count, 1);
+        assert_eq!(stats.by_repo[0].avg_score, Some(9.0_f64));
+    }
+
+    // ---------------------------------------------------------------
+    // 7. is_empty (via internal state check)
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_empty_storage_has_no_reviews() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let list = backend.list_reviews(100, 0).await.unwrap();
+        assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_non_empty_after_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        backend
+            .save_review(&make_session("r1", now_ts(), ReviewStatus::Pending))
+            .await
+            .unwrap();
+        let list = backend.list_reviews(100, 0).await.unwrap();
+        assert!(!list.is_empty());
+    }
+
+    // ---------------------------------------------------------------
+    // 8. Edge cases
+    // ---------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_duplicate_id_overwrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let mut session = make_session("dup", now_ts(), ReviewStatus::Pending);
+        backend.save_review(&session).await.unwrap();
+
+        // Save again with same ID but different status
+        session.status = ReviewStatus::Complete;
+        session.files_reviewed = 5;
+        backend.save_review(&session).await.unwrap();
+
+        let loaded = backend.get_review("dup").await.unwrap().unwrap();
+        assert_eq!(loaded.status, ReviewStatus::Complete);
+        assert_eq!(loaded.files_reviewed, 5);
+
+        // Should still be just one review
+        let list = backend.list_reviews(100, 0).await.unwrap();
+        assert_eq!(list.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_persistence_across_instances() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reviews.json");
+
+        // First instance: save a review
+        {
+            let backend = JsonStorageBackend::new(&path);
+            backend
+                .save_review(&make_session("persist", now_ts(), ReviewStatus::Complete))
+                .await
+                .unwrap();
+        }
+
+        // Second instance: load from the same file
+        {
+            let backend = JsonStorageBackend::new(&path);
+            let loaded = backend.get_review("persist").await.unwrap();
+            assert!(loaded.is_some());
+            assert_eq!(loaded.unwrap().id, "persist");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_diff_content_stripped_on_flush() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reviews.json");
+
+        // Save a review that has diff_content set
+        {
+            let backend = JsonStorageBackend::new(&path);
+            let mut session = make_session("strip", now_ts(), ReviewStatus::Complete);
+            session.diff_content = Some("big diff content here".to_string());
+            backend.save_review(&session).await.unwrap();
+
+            // In-memory version still has diff_content
+            let in_mem = backend.get_review("strip").await.unwrap().unwrap();
+            assert!(in_mem.diff_content.is_some());
+        }
+
+        // Reload from disk: diff_content should be None (stripped during flush)
+        {
+            let backend = JsonStorageBackend::new(&path);
+            let loaded = backend.get_review("strip").await.unwrap().unwrap();
+            assert!(loaded.diff_content.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_comment_feedback() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let mut session = make_session("fb", now_ts(), ReviewStatus::Complete);
+        session.comments = vec![make_comment("c1", "src/main.rs")];
+        backend.save_review(&session).await.unwrap();
+
+        backend
+            .update_comment_feedback("fb", "c1", "helpful")
+            .await
+            .unwrap();
+
+        let loaded = backend.get_review("fb").await.unwrap().unwrap();
+        assert_eq!(loaded.comments[0].feedback.as_deref(), Some("helpful"));
+    }
+
+    #[tokio::test]
+    async fn test_update_comment_feedback_nonexistent_review() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        // Should not error, just no-op
+        let result = backend
+            .update_comment_feedback("ghost", "c1", "helpful")
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_update_comment_feedback_nonexistent_comment() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let session = make_session("fb2", now_ts(), ReviewStatus::Complete);
+        backend.save_review(&session).await.unwrap();
+
+        // Review exists but comment does not -- should not error
+        let result = backend
+            .update_comment_feedback("fb2", "nonexistent-comment", "helpful")
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend =
+            std::sync::Arc::new(JsonStorageBackend::new(&dir.path().join("reviews.json")));
+
+        let base = now_ts();
+        let mut handles = vec![];
+
+        for i in 0..20 {
+            let b = backend.clone();
+            let handle = tokio::spawn(async move {
+                let session = make_session(
+                    &format!("conc-{}", i),
+                    base + i as i64,
+                    ReviewStatus::Complete,
+                );
+                b.save_review(&session).await.unwrap();
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        let list = backend.list_reviews(100, 0).await.unwrap();
+        assert_eq!(list.len(), 20);
+    }
+
+    #[tokio::test]
+    async fn test_load_from_nonexistent_file() {
+        let dir = tempfile::tempdir().unwrap();
+        // Point to a file that doesn't exist yet
+        let backend = JsonStorageBackend::new(&dir.path().join("doesnt-exist.json"));
+
+        let list = backend.list_reviews(100, 0).await.unwrap();
+        assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_load_from_corrupt_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reviews.json");
+
+        // Write garbage to the file
+        std::fs::write(&path, "{ not valid json !!!").unwrap();
+
+        // Should not panic; falls back to empty map
+        let backend = JsonStorageBackend::new(&path);
+        let list = backend.list_reviews(100, 0).await.unwrap();
+        assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_events_case_insensitive_filters() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        backend
+            .save_review(&make_session_with_event(
+                "r1",
+                now,
+                ReviewStatus::Complete,
+                "review.completed",
+                "GPT-4o",
+                "HEAD",
+                1000,
+            ))
+            .await
+            .unwrap();
+
+        // Filters use lowercase but source/model are uppercase -- should match
+        let filters = EventFilters {
+            source: Some("head".to_string()),
+            model: Some("gpt-4o".to_string()),
+            ..Default::default()
+        };
+        let events = backend.list_events(&filters).await.unwrap();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_sessions_without_events_excluded_from_list_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        // Session without an event
+        backend
+            .save_review(&make_session("no-event", now_ts(), ReviewStatus::Pending))
+            .await
+            .unwrap();
+
+        let events = backend.list_events(&EventFilters::default()).await.unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_error_rate_only_counts_explicit_failures() {
+        // Regression: `failed = total - completed` used to misclassify non-failure events.
+        // Events with type "review.started" or "review.timeout" are counted as failures.
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+        let now = now_ts();
+
+        // 1 completed, 1 failed, 1 timeout (not a failure per se)
+        backend
+            .save_review(&make_session_with_event(
+                "r1",
+                now,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "github",
+                100,
+            ))
+            .await
+            .unwrap();
+        backend
+            .save_review(&make_session_with_event(
+                "r2",
+                now,
+                ReviewStatus::Failed,
+                "review.failed",
+                "gpt-4o",
+                "github",
+                200,
+            ))
+            .await
+            .unwrap();
+        backend
+            .save_review(&make_session_with_event(
+                "r3",
+                now,
+                ReviewStatus::Failed,
+                "review.timeout",
+                "gpt-4o",
+                "github",
+                300,
+            ))
+            .await
+            .unwrap();
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+        // Only "review.failed" should count as a failure (1 out of 3).
+        // "review.timeout" is a separate event type and should not inflate error_rate.
+        let expected_error_rate = 1.0 / 3.0;
+        assert!(
+            (stats.error_rate - expected_error_rate).abs() < 0.01,
+            "Error rate should be {:.2} (only explicit failures), got {:.2}",
+            expected_error_rate,
+            stats.error_rate
+        );
     }
 }

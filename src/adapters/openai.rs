@@ -196,7 +196,9 @@ impl OpenAIAdapter {
             .choices
             .first()
             .map(|c| c.message.content.clone())
-            .unwrap_or_default();
+            .ok_or_else(|| {
+                anyhow::anyhow!("OpenAI returned empty choices array — no content generated")
+            })?;
 
         Ok(LLMResponse {
             content,
@@ -416,7 +418,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_empty_choices_returns_empty_content() {
+    async fn test_empty_choices_returns_error() {
         let mut server = mockito::Server::new_async().await;
         let _mock = server
             .mock("POST", "/chat/completions")
@@ -435,9 +437,16 @@ mod tests {
         let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
         let result = adapter.complete(test_request()).await;
 
-        assert!(result.is_ok());
-        let response = result.unwrap();
-        assert_eq!(response.content, "");
+        assert!(
+            result.is_err(),
+            "Empty choices should return an error, not silently succeed"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("empty choices"),
+            "Error should mention empty choices: {}",
+            err
+        );
     }
 
     #[test]

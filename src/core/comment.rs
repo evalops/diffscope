@@ -449,12 +449,23 @@ impl CommentSynthesizer {
     }
 
     fn deduplicate_comments(comments: &mut Vec<Comment>) {
+        let severity_rank = |s: &Severity| match s {
+            Severity::Error => 0,
+            Severity::Warning => 1,
+            Severity::Info => 2,
+            Severity::Suggestion => 3,
+        };
+
+        // Sort by file/line/content, then by severity (highest first)
         comments.sort_by(|a, b| {
             a.file_path
                 .cmp(&b.file_path)
                 .then(a.line_number.cmp(&b.line_number))
                 .then(a.content.cmp(&b.content))
+                .then(severity_rank(&a.severity).cmp(&severity_rank(&b.severity)))
         });
+        // dedup_by keeps the first element (b) of consecutive duplicates,
+        // which is the highest severity due to our sort order
         comments.dedup_by(|a, b| {
             a.file_path == b.file_path && a.line_number == b.line_number && a.content == b.content
         });
@@ -547,6 +558,49 @@ pub struct RawComment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_deduplicate_preserves_highest_severity() {
+        // Regression: dedup_by keeps the first element of a consecutive pair,
+        // but doesn't consider severity. If Warning comes before Error
+        // (due to stable sort on file/line/content), the Error is dropped.
+        let raw_comments = vec![
+            RawComment {
+                file_path: PathBuf::from("src/lib.rs"),
+                line_number: 10,
+                content: "Missing null check".to_string(),
+                rule_id: None,
+                suggestion: None,
+                severity: Some(Severity::Warning),
+                category: Some(Category::Bug),
+                confidence: Some(0.8),
+                fix_effort: None,
+                tags: Vec::new(),
+                code_suggestion: None,
+            },
+            RawComment {
+                file_path: PathBuf::from("src/lib.rs"),
+                line_number: 10,
+                content: "Missing null check".to_string(),
+                rule_id: None,
+                suggestion: None,
+                severity: Some(Severity::Error),
+                category: Some(Category::Bug),
+                confidence: Some(0.9),
+                fix_effort: None,
+                tags: Vec::new(),
+                code_suggestion: None,
+            },
+        ];
+
+        let comments = CommentSynthesizer::synthesize(raw_comments).unwrap();
+        assert_eq!(comments.len(), 1, "Should deduplicate to one comment");
+        assert_eq!(
+            comments[0].severity,
+            Severity::Error,
+            "Should keep the higher severity (Error), not the lower (Warning)"
+        );
+    }
 
     #[test]
     fn test_severity_display() {
