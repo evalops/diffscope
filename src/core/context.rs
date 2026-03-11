@@ -288,6 +288,16 @@ fn truncate_with_notice(mut content: String, max_chars: usize) -> String {
     content
 }
 
+async fn read_file_lossy(path: &Path) -> Result<String> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(content) => Ok(content),
+        Err(_) => {
+            let bytes = tokio::fs::read(path).await?;
+            Ok(String::from_utf8_lossy(&bytes).to_string())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,7 +314,7 @@ mod tests {
         assert!(result.contains("[Truncated]"));
         // Verify the result is valid UTF-8 (it is since it's a String, but
         // the point is truncate() would have panicked)
-        assert!(result.len() > 0);
+        assert!(!result.is_empty());
     }
 
     #[test]
@@ -362,15 +372,5 @@ mod tests {
         // Should expand to include the function signature (line 3)
         let chunk = &chunks[0];
         assert!(chunk.content.contains("pub fn process"));
-    }
-}
-
-async fn read_file_lossy(path: &Path) -> Result<String> {
-    match tokio::fs::read_to_string(path).await {
-        Ok(content) => Ok(content),
-        Err(_) => {
-            let bytes = tokio::fs::read(path).await?;
-            Ok(String::from_utf8_lossy(&bytes).to_string())
-        }
     }
 }

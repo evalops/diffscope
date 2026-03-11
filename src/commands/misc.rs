@@ -404,76 +404,6 @@ fn resolve_convention_store_path_for_feedback(config: &config::Config) -> Option
     dirs::data_local_dir().map(|d| d.join("diffscope").join("conventions.json"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_select_discussion_comment_empty_comments() {
-        // Should return an error, not panic
-        let result = select_discussion_comment(&[], None, None);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_select_discussion_comment_defaults_to_first() {
-        let comment = core::Comment {
-            id: "cmt_1".to_string(),
-            file_path: PathBuf::from("test.rs"),
-            line_number: 1,
-            content: "test".to_string(),
-            rule_id: None,
-            severity: core::comment::Severity::Info,
-            category: core::comment::Category::BestPractice,
-            suggestion: None,
-            confidence: 0.8,
-            code_suggestion: None,
-            tags: vec![],
-            fix_effort: core::comment::FixEffort::Low,
-            feedback: None,
-        };
-        let result = select_discussion_comment(&[comment.clone()], None, None).unwrap();
-        assert_eq!(result.id, "cmt_1");
-    }
-
-    #[test]
-    fn test_feedback_stats_not_double_counted() {
-        // Simulate accepting the same comment twice — stats should only increment once
-        let mut store = review::FeedbackStore::default();
-        let comment = core::Comment {
-            id: "cmt_dup".to_string(),
-            file_path: PathBuf::from("test.rs"),
-            line_number: 1,
-            content: "test".to_string(),
-            rule_id: None,
-            severity: core::comment::Severity::Warning,
-            category: core::comment::Category::Bug,
-            suggestion: None,
-            confidence: 0.8,
-            code_suggestion: None,
-            tags: vec![],
-            fix_effort: core::comment::FixEffort::Low,
-            feedback: None,
-        };
-
-        let comments = vec![comment];
-
-        // Accept the same batch of comments twice
-        for _ in 0..2 {
-            apply_feedback_accept(&mut store, &comments);
-        }
-
-        let key = review::classify_comment_type(&comments[0])
-            .as_str()
-            .to_string();
-        let stats = &store.by_comment_type[&key];
-        assert_eq!(
-            stats.accepted, 1,
-            "Stats should only count 1 acceptance, not 2 (double-counting bug)"
-        );
-    }
-}
-
 fn load_discussion_thread(path: Option<&std::path::Path>, comment_id: &str) -> DiscussionThread {
     let Some(path) = path else {
         return DiscussionThread {
@@ -566,4 +496,74 @@ async fn answer_discussion_question(
 
     let response = adapter.complete(request).await?;
     Ok(response.content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_select_discussion_comment_empty_comments() {
+        // Should return an error, not panic
+        let result = select_discussion_comment(&[], None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_select_discussion_comment_defaults_to_first() {
+        let comment = core::Comment {
+            id: "cmt_1".to_string(),
+            file_path: PathBuf::from("test.rs"),
+            line_number: 1,
+            content: "test".to_string(),
+            rule_id: None,
+            severity: core::comment::Severity::Info,
+            category: core::comment::Category::BestPractice,
+            suggestion: None,
+            confidence: 0.8,
+            code_suggestion: None,
+            tags: vec![],
+            fix_effort: core::comment::FixEffort::Low,
+            feedback: None,
+        };
+        let result = select_discussion_comment(std::slice::from_ref(&comment), None, None).unwrap();
+        assert_eq!(result.id, "cmt_1");
+    }
+
+    #[test]
+    fn test_feedback_stats_not_double_counted() {
+        // Simulate accepting the same comment twice — stats should only increment once
+        let mut store = review::FeedbackStore::default();
+        let comment = core::Comment {
+            id: "cmt_dup".to_string(),
+            file_path: PathBuf::from("test.rs"),
+            line_number: 1,
+            content: "test".to_string(),
+            rule_id: None,
+            severity: core::comment::Severity::Warning,
+            category: core::comment::Category::Bug,
+            suggestion: None,
+            confidence: 0.8,
+            code_suggestion: None,
+            tags: vec![],
+            fix_effort: core::comment::FixEffort::Low,
+            feedback: None,
+        };
+
+        let comments = vec![comment];
+
+        // Accept the same batch of comments twice
+        for _ in 0..2 {
+            apply_feedback_accept(&mut store, &comments);
+        }
+
+        let key = review::classify_comment_type(&comments[0])
+            .as_str()
+            .to_string();
+        let stats = &store.by_comment_type[&key];
+        assert_eq!(
+            stats.accepted, 1,
+            "Stats should only count 1 acceptance, not 2 (double-counting bug)"
+        );
+    }
 }

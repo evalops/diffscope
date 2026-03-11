@@ -846,7 +846,7 @@ mod tests {
                 )])],
             ),
         ];
-        let total = diffs.iter().map(|d| estimate_diff_tokens(d)).sum::<usize>();
+        let total = diffs.iter().map(estimate_diff_tokens).sum::<usize>();
         // Budget smaller than total forces Stage 2, where deletion-only hunks get removed
         let result = compress_diffs(&diffs, total / 2, 5);
         // All files should be skipped since they're deletion-only after compression

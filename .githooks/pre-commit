@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -e
+
+echo "==> Running cargo fmt --check..."
+cargo fmt --check
+if [ $? -ne 0 ]; then
+    echo "ERROR: cargo fmt found formatting issues. Run 'cargo fmt' to fix."
+    exit 1
+fi
+
+echo "==> Running cargo clippy..."
+cargo clippy --all-targets -- -D warnings
+if [ $? -ne 0 ]; then
+    echo "ERROR: cargo clippy found warnings. Fix them before committing."
+    exit 1
+fi
+
+echo "==> Running cargo test..."
+cargo test
+if [ $? -ne 0 ]; then
+    echo "ERROR: Tests failed. Fix them before committing."
+    exit 1
+fi
+
+echo "==> All pre-commit checks passed."

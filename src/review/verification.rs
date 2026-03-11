@@ -462,7 +462,7 @@ mod tests {
         // Both should be captured (first one wins in filter since find() returns first)
         let c1_results: Vec<_> = results.iter().filter(|r| r.comment_id == "c1").collect();
         assert!(
-            c1_results.len() >= 1,
+            !c1_results.is_empty(),
             "Should have at least one result for c1"
         );
     }

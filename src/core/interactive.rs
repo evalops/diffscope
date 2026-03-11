@@ -246,6 +246,42 @@ Interactive commands respect these configurations."#
     }
 }
 
+/// Manages per-session ignore patterns from @diffscope ignore commands.
+/// Will be wired into the review pipeline's triage filter.
+#[allow(dead_code)]
+pub struct InteractiveProcessor {
+    ignored_patterns: HashSet<String>,
+}
+
+#[allow(dead_code)]
+impl InteractiveProcessor {
+    pub fn new() -> Self {
+        Self {
+            ignored_patterns: HashSet::new(),
+        }
+    }
+
+    pub fn add_ignore_pattern(&mut self, pattern: &str) {
+        self.ignored_patterns.insert(pattern.to_string());
+    }
+
+    pub fn should_ignore(&self, path: &str) -> bool {
+        self.ignored_patterns.iter().any(|pattern| {
+            // Simple glob matching
+            if pattern.contains('*') {
+                // Escape regex metacharacters, then convert glob * to .*
+                let escaped = regex::escape(pattern).replace(r"\*", ".*");
+                let regex_pattern = format!("^{}$", escaped);
+                regex::Regex::new(&regex_pattern)
+                    .map(|re| re.is_match(path))
+                    .unwrap_or(false)
+            } else {
+                path.contains(pattern)
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -459,41 +495,5 @@ mod tests {
             !processor.should_ignore("foo.test.js.bak"),
             "Glob pattern should not match files with extra suffixes"
         );
-    }
-}
-
-/// Manages per-session ignore patterns from @diffscope ignore commands.
-/// Will be wired into the review pipeline's triage filter.
-#[allow(dead_code)]
-pub struct InteractiveProcessor {
-    ignored_patterns: HashSet<String>,
-}
-
-#[allow(dead_code)]
-impl InteractiveProcessor {
-    pub fn new() -> Self {
-        Self {
-            ignored_patterns: HashSet::new(),
-        }
-    }
-
-    pub fn add_ignore_pattern(&mut self, pattern: &str) {
-        self.ignored_patterns.insert(pattern.to_string());
-    }
-
-    pub fn should_ignore(&self, path: &str) -> bool {
-        self.ignored_patterns.iter().any(|pattern| {
-            // Simple glob matching
-            if pattern.contains('*') {
-                // Escape regex metacharacters, then convert glob * to .*
-                let escaped = regex::escape(pattern).replace(r"\*", ".*");
-                let regex_pattern = format!("^{}$", escaped);
-                regex::Regex::new(&regex_pattern)
-                    .map(|re| re.is_match(path))
-                    .unwrap_or(false)
-            } else {
-                path.contains(pattern)
-            }
-        })
     }
 }

@@ -173,7 +173,7 @@ pub fn parse_smart_confidence(value: &str) -> Option<f32> {
     let has_percent = raw.ends_with('%');
     let trimmed = raw.trim_end_matches('%');
     if let Ok(num) = trimmed.parse::<f32>() {
-        if !has_percent && num >= 0.0 && num <= 1.0 {
+        if !has_percent && (0.0..=1.0).contains(&num) {
             // Bare decimal in 0..1 range — treat as already-normalized confidence
             Some(num.clamp(0.0, 1.0))
         } else {
