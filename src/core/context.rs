@@ -15,7 +15,7 @@ pub struct LLMContextChunk {
     pub line_range: Option<(usize, usize)>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ContextType {
     FileContent,
     Definition,

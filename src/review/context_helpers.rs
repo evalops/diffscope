@@ -57,11 +57,33 @@ pub fn resolve_pattern_repositories(
 }
 
 fn is_git_source(source: &str) -> bool {
-    source.contains("://") || source.starts_with("git@") || source.ends_with(".git")
+    if source.starts_with("https://") || source.starts_with("git@") {
+        return true;
+    }
+    if source.starts_with("http://") && source.ends_with(".git") {
+        return true;
+    }
+    false
+}
+
+/// Validate that a pattern repository source URL uses an allowed scheme.
+/// Only `https://`, `git@`, and `http://` (with `.git` suffix) are permitted.
+fn is_safe_git_url(source: &str) -> bool {
+    source.starts_with("https://")
+        || source.starts_with("git@")
+        || (source.starts_with("http://") && source.ends_with(".git"))
 }
 
 fn prepare_pattern_repository_checkout(source: &str) -> Option<PathBuf> {
     use std::process::Command;
+
+    if !is_safe_git_url(source) {
+        warn!(
+            "Rejecting pattern repository '{}': only https:// and git@ URLs are allowed",
+            source
+        );
+        return None;
+    }
 
     let home_dir = dirs::home_dir()?;
     let cache_root = home_dir.join(".diffscope").join("pattern_repositories");
@@ -475,5 +497,67 @@ mod tests {
         let result = rank_and_trim_context_chunks(&diff, chunks, 1, 100000);
         assert_eq!(result.len(), 1);
         assert!(result[0].content.starts_with("Active review rules."));
+    }
+
+    // === URL validation tests ===
+
+    #[test]
+    fn test_is_git_source_https() {
+        assert!(is_git_source("https://github.com/org/repo.git"));
+        assert!(is_git_source("https://github.com/org/repo"));
+    }
+
+    #[test]
+    fn test_is_git_source_ssh() {
+        assert!(is_git_source("git@github.com:org/repo.git"));
+    }
+
+    #[test]
+    fn test_is_git_source_http_with_git_suffix() {
+        assert!(is_git_source("http://example.com/repo.git"));
+    }
+
+    #[test]
+    fn test_is_git_source_rejects_local_paths() {
+        assert!(!is_git_source("/tmp/evil"));
+        assert!(!is_git_source("../relative/path"));
+        assert!(!is_git_source("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn test_is_git_source_rejects_other_schemes() {
+        assert!(!is_git_source("ftp://example.com/repo.git"));
+        assert!(!is_git_source("ssh://example.com/repo"));
+    }
+
+    #[test]
+    fn test_is_safe_git_url_allows_https() {
+        assert!(is_safe_git_url("https://github.com/org/repo"));
+        assert!(is_safe_git_url("https://gitlab.com/org/repo.git"));
+    }
+
+    #[test]
+    fn test_is_safe_git_url_allows_ssh() {
+        assert!(is_safe_git_url("git@github.com:org/repo.git"));
+    }
+
+    #[test]
+    fn test_is_safe_git_url_rejects_file_urls() {
+        assert!(!is_safe_git_url("file:///etc/passwd"));
+        assert!(!is_safe_git_url("/tmp/evil"));
+        assert!(!is_safe_git_url("../traversal"));
+    }
+
+    #[test]
+    fn test_is_safe_git_url_rejects_arbitrary_schemes() {
+        assert!(!is_safe_git_url("ftp://example.com/repo"));
+        assert!(!is_safe_git_url("ssh://example.com/repo"));
+        assert!(!is_safe_git_url("gopher://example.com/repo"));
+    }
+
+    #[test]
+    fn test_is_safe_git_url_rejects_http_without_git_suffix() {
+        // Plain http without .git suffix is not safe enough
+        assert!(!is_safe_git_url("http://example.com/repo"));
     }
 }

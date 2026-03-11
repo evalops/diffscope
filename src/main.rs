@@ -304,32 +304,44 @@ async fn main() -> Result<()> {
     let _otel_guard: Option<opentelemetry_sdk::trace::TracerProvider> = {
         let otel_enabled = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok();
         if otel_enabled {
-            let exporter = opentelemetry_otlp::SpanExporter::builder()
+            match opentelemetry_otlp::SpanExporter::builder()
                 .with_tonic()
                 .build()
-                .expect("Failed to build OTLP span exporter");
+            {
+                Ok(exporter) => {
+                    let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
+                        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+                        .with_resource(opentelemetry_sdk::Resource::new(vec![
+                            opentelemetry::KeyValue::new("service.name", "diffscope"),
+                        ]))
+                        .build();
 
-            let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
-                .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
-                .with_resource(opentelemetry_sdk::Resource::new(vec![
-                    opentelemetry::KeyValue::new("service.name", "diffscope"),
-                ]))
-                .build();
+                    opentelemetry::global::set_tracer_provider(tracer_provider.clone());
 
-            opentelemetry::global::set_tracer_provider(tracer_provider.clone());
+                    let otel_layer = tracing_opentelemetry::layer()
+                        .with_tracer(tracer_provider.tracer("diffscope"));
 
-            let otel_layer =
-                tracing_opentelemetry::layer().with_tracer(tracer_provider.tracer("diffscope"));
+                    let subscriber = tracing_subscriber::fmt::Subscriber::builder()
+                        .with_env_filter(filter)
+                        .finish()
+                        .with(otel_layer);
 
-            let subscriber = tracing_subscriber::fmt::Subscriber::builder()
-                .with_env_filter(filter)
-                .finish()
-                .with(otel_layer);
+                    if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
+                        eprintln!("Warning: failed to set OTEL tracing subscriber: {}", e);
+                        // Already initialized by another thread or test — not fatal
+                    }
 
-            tracing::subscriber::set_global_default(subscriber)
-                .expect("Failed to set tracing subscriber");
-
-            Some(tracer_provider)
+                    Some(tracer_provider)
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: OTEL_EXPORTER_OTLP_ENDPOINT set but exporter failed to initialize: {}. Continuing without OpenTelemetry.",
+                        e
+                    );
+                    tracing_subscriber::fmt().with_env_filter(filter).init();
+                    None
+                }
+            }
         } else {
             tracing_subscriber::fmt().with_env_filter(filter).init();
             None

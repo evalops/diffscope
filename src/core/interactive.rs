@@ -246,6 +246,188 @@ Interactive commands respect these configurations."#
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === InteractiveCommand::parse tests ===
+
+    #[test]
+    fn test_parse_review_command() {
+        let cmd = InteractiveCommand::parse("@diffscope review").unwrap();
+        assert_eq!(cmd.command, CommandType::Review);
+        assert!(cmd.args.is_empty());
+        assert!(cmd.context.is_none());
+    }
+
+    #[test]
+    fn test_parse_review_with_focus() {
+        let cmd = InteractiveCommand::parse("@diffscope review security performance").unwrap();
+        assert_eq!(cmd.command, CommandType::Review);
+        assert_eq!(cmd.args, vec!["security", "performance"]);
+    }
+
+    #[test]
+    fn test_parse_ignore_command() {
+        let cmd = InteractiveCommand::parse("@diffscope ignore src/generated/").unwrap();
+        assert_eq!(cmd.command, CommandType::Ignore);
+        assert_eq!(cmd.args, vec!["src/generated/"]);
+    }
+
+    #[test]
+    fn test_parse_explain_command() {
+        let cmd = InteractiveCommand::parse("@diffscope explain").unwrap();
+        assert_eq!(cmd.command, CommandType::Explain);
+    }
+
+    #[test]
+    fn test_parse_generate_tests() {
+        let cmd = InteractiveCommand::parse("@diffscope generate tests").unwrap();
+        assert_eq!(cmd.command, CommandType::Generate);
+        assert_eq!(cmd.args, vec!["tests"]);
+    }
+
+    #[test]
+    fn test_parse_help() {
+        let cmd = InteractiveCommand::parse("@diffscope help").unwrap();
+        assert_eq!(cmd.command, CommandType::Help);
+    }
+
+    #[test]
+    fn test_parse_config() {
+        let cmd = InteractiveCommand::parse("@diffscope config").unwrap();
+        assert_eq!(cmd.command, CommandType::Config);
+    }
+
+    #[test]
+    fn test_parse_case_insensitive() {
+        let cmd = InteractiveCommand::parse("@diffscope REVIEW").unwrap();
+        assert_eq!(cmd.command, CommandType::Review);
+
+        let cmd = InteractiveCommand::parse("@diffscope Help").unwrap();
+        assert_eq!(cmd.command, CommandType::Help);
+    }
+
+    #[test]
+    fn test_parse_unknown_command_returns_none() {
+        assert!(InteractiveCommand::parse("@diffscope foobar").is_none());
+    }
+
+    #[test]
+    fn test_parse_no_at_mention_returns_none() {
+        assert!(InteractiveCommand::parse("just a regular comment").is_none());
+    }
+
+    #[test]
+    fn test_parse_empty_string_returns_none() {
+        assert!(InteractiveCommand::parse("").is_none());
+    }
+
+    #[test]
+    fn test_parse_at_mention_only_returns_none() {
+        assert!(InteractiveCommand::parse("@diffscope").is_none());
+    }
+
+    #[test]
+    fn test_parse_embedded_in_text() {
+        // Command embedded in longer comment
+        let cmd =
+            InteractiveCommand::parse("Hey team, can you @diffscope review this PR?").unwrap();
+        assert_eq!(cmd.command, CommandType::Review);
+    }
+
+    #[test]
+    fn test_parse_extra_whitespace() {
+        let cmd = InteractiveCommand::parse("@diffscope   review   security").unwrap();
+        assert_eq!(cmd.command, CommandType::Review);
+        assert_eq!(cmd.args, vec!["security"]);
+    }
+
+    #[test]
+    fn test_parse_different_at_mention_ignored() {
+        assert!(InteractiveCommand::parse("@someone review").is_none());
+    }
+
+    // === execute_ignore tests ===
+
+    #[test]
+    fn test_ignore_no_args() {
+        let cmd = InteractiveCommand {
+            command: CommandType::Ignore,
+            args: vec![],
+            context: None,
+        };
+        let result = cmd.execute_ignore().unwrap();
+        assert!(result.contains("specify what to ignore"));
+    }
+
+    #[test]
+    fn test_ignore_with_patterns() {
+        let cmd = InteractiveCommand {
+            command: CommandType::Ignore,
+            args: vec!["src/generated/".to_string(), "*.test.js".to_string()],
+            context: None,
+        };
+        let result = cmd.execute_ignore().unwrap();
+        assert!(result.contains("src/generated/"));
+        assert!(result.contains("*.test.js"));
+    }
+
+    // === help_text / config tests ===
+
+    #[test]
+    fn test_help_text_contains_commands() {
+        let help = InteractiveCommand::help_text();
+        assert!(help.contains("@diffscope review"));
+        assert!(help.contains("@diffscope ignore"));
+        assert!(help.contains("@diffscope explain"));
+        assert!(help.contains("@diffscope generate"));
+        assert!(help.contains("@diffscope help"));
+        assert!(help.contains("@diffscope config"));
+    }
+
+    #[test]
+    fn test_config_info_contains_yaml() {
+        let info = InteractiveCommand::get_config_info();
+        assert!(info.contains(".diffscope.yml"));
+        assert!(info.contains("exclude_patterns"));
+    }
+
+    // === InteractiveProcessor tests ===
+
+    #[test]
+    fn test_processor_new_empty() {
+        let processor = InteractiveProcessor::new();
+        assert!(!processor.should_ignore("any/path"));
+    }
+
+    #[test]
+    fn test_processor_add_and_check_pattern() {
+        let mut processor = InteractiveProcessor::new();
+        processor.add_ignore_pattern("src/generated/");
+        assert!(processor.should_ignore("src/generated/types.rs"));
+        assert!(!processor.should_ignore("src/main.rs"));
+    }
+
+    #[test]
+    fn test_processor_glob_pattern() {
+        let mut processor = InteractiveProcessor::new();
+        processor.add_ignore_pattern("*.test.js");
+        assert!(processor.should_ignore("foo.test.js"));
+        assert!(!processor.should_ignore("foo.js"));
+    }
+
+    #[test]
+    fn test_processor_multiple_patterns() {
+        let mut processor = InteractiveProcessor::new();
+        processor.add_ignore_pattern("vendor/");
+        processor.add_ignore_pattern("*.generated.*");
+        assert!(processor.should_ignore("vendor/lib.js"));
+        assert!(processor.should_ignore("types.generated.ts"));
+        assert!(!processor.should_ignore("src/main.rs"));
+    }
+}
+
 /// Manages per-session ignore patterns from @diffscope ignore commands.
 /// Will be wired into the review pipeline's triage filter.
 #[allow(dead_code)]
