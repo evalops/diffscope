@@ -273,6 +273,18 @@ pub struct Config {
     /// and style instead of a single monolithic review prompt.
     #[serde(default = "default_false")]
     pub multi_pass_specialized: bool,
+
+    /// Enable agent loop for iterative tool-calling review (default false).
+    #[serde(default)]
+    pub agent_review: bool,
+
+    /// Maximum number of LLM round-trips in agent mode (default 10).
+    #[serde(default = "default_agent_max_iterations")]
+    pub agent_max_iterations: usize,
+
+    /// Optional total token budget for agent loop.
+    #[serde(default)]
+    pub agent_max_total_tokens: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -411,6 +423,9 @@ impl Default for Config {
             github_private_key: None,
             github_webhook_secret: None,
             multi_pass_specialized: false,
+            agent_review: false,
+            agent_max_iterations: default_agent_max_iterations(),
+            agent_max_total_tokens: None,
         }
     }
 }
@@ -1191,6 +1206,10 @@ fn default_true() -> bool {
 
 fn default_false() -> bool {
     false
+}
+
+fn default_agent_max_iterations() -> usize {
+    10
 }
 
 fn normalize_comment_types(values: &[String]) -> Vec<String> {

@@ -1,5 +1,8 @@
 use crate::adapters::common;
-use crate::adapters::llm::{LLMAdapter, LLMRequest, LLMResponse, ModelConfig, Usage};
+use crate::adapters::llm::{
+    ChatRequest, ChatResponse, ChatRole, ContentBlock, LLMAdapter, LLMRequest, LLMResponse,
+    ModelConfig, StopReason, Usage,
+};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -85,6 +88,78 @@ struct OpenAIResponsesUsage {
     total_tokens: usize,
 }
 
+// === Chat API types (for tool use / function calling) ===
+
+#[derive(Serialize)]
+struct OpenAIChatRequest {
+    model: String,
+    messages: Vec<OpenAIChatMessage>,
+    temperature: f32,
+    max_tokens: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<OpenAIToolDef>>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct OpenAIChatMessage {
+    role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OpenAIToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct OpenAIToolDef {
+    #[serde(rename = "type")]
+    tool_type: String,
+    function: OpenAIFunctionDef,
+}
+
+#[derive(Serialize)]
+struct OpenAIFunctionDef {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct OpenAIToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    call_type: String,
+    function: OpenAIFunctionCall,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct OpenAIFunctionCall {
+    name: String,
+    arguments: String,
+}
+
+#[derive(Deserialize)]
+struct OpenAIChatResponse {
+    choices: Vec<OpenAIChatChoice>,
+    usage: OpenAIUsage,
+    model: String,
+}
+
+#[derive(Deserialize)]
+struct OpenAIChatChoice {
+    message: OpenAIChatResponseMessage,
+    finish_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct OpenAIChatResponseMessage {
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<OpenAIToolCall>>,
+}
+
 impl OpenAIAdapter {
     pub fn new(config: ModelConfig) -> Result<Self> {
         let base_url = config
@@ -139,6 +214,204 @@ impl LLMAdapter for OpenAIAdapter {
 
     fn model_name(&self) -> &str {
         &self.config.model_name
+    }
+
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
+        let mut messages: Vec<OpenAIChatMessage> = Vec::new();
+
+        // System message
+        messages.push(OpenAIChatMessage {
+            role: "system".to_string(),
+            content: Some(serde_json::Value::String(request.system_prompt)),
+            tool_calls: None,
+            tool_call_id: None,
+        });
+
+        // Convert ChatMessages to OpenAI format
+        for msg in &request.messages {
+            match msg.role {
+                ChatRole::User => {
+                    // Check if these are tool results
+                    let has_tool_results = msg
+                        .content
+                        .iter()
+                        .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
+
+                    if has_tool_results {
+                        // Each tool result becomes its own message in OpenAI format
+                        for block in &msg.content {
+                            if let ContentBlock::ToolResult {
+                                tool_use_id,
+                                content,
+                                ..
+                            } = block
+                            {
+                                messages.push(OpenAIChatMessage {
+                                    role: "tool".to_string(),
+                                    content: Some(serde_json::Value::String(content.clone())),
+                                    tool_calls: None,
+                                    tool_call_id: Some(tool_use_id.clone()),
+                                });
+                            }
+                        }
+                    } else {
+                        // Regular user message: collect text blocks
+                        let text: String = msg
+                            .content
+                            .iter()
+                            .filter_map(|b| match b {
+                                ContentBlock::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        messages.push(OpenAIChatMessage {
+                            role: "user".to_string(),
+                            content: Some(serde_json::Value::String(text)),
+                            tool_calls: None,
+                            tool_call_id: None,
+                        });
+                    }
+                }
+                ChatRole::Assistant => {
+                    let text: Option<String> = {
+                        let texts: Vec<&str> = msg
+                            .content
+                            .iter()
+                            .filter_map(|b| match b {
+                                ContentBlock::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect();
+                        if texts.is_empty() {
+                            None
+                        } else {
+                            Some(texts.join("\n"))
+                        }
+                    };
+
+                    let tool_calls: Option<Vec<OpenAIToolCall>> = {
+                        let calls: Vec<OpenAIToolCall> = msg
+                            .content
+                            .iter()
+                            .filter_map(|b| match b {
+                                ContentBlock::ToolUse { id, name, input } => Some(OpenAIToolCall {
+                                    id: id.clone(),
+                                    call_type: "function".to_string(),
+                                    function: OpenAIFunctionCall {
+                                        name: name.clone(),
+                                        arguments: serde_json::to_string(input).unwrap_or_default(),
+                                    },
+                                }),
+                                _ => None,
+                            })
+                            .collect();
+                        if calls.is_empty() {
+                            None
+                        } else {
+                            Some(calls)
+                        }
+                    };
+
+                    messages.push(OpenAIChatMessage {
+                        role: "assistant".to_string(),
+                        content: text.map(serde_json::Value::String),
+                        tool_calls,
+                        tool_call_id: None,
+                    });
+                }
+            }
+        }
+
+        let tools: Option<Vec<OpenAIToolDef>> = if request.tools.is_empty() {
+            None
+        } else {
+            Some(
+                request
+                    .tools
+                    .iter()
+                    .map(|t| OpenAIToolDef {
+                        tool_type: "function".to_string(),
+                        function: OpenAIFunctionDef {
+                            name: t.name.clone(),
+                            description: t.description.clone(),
+                            parameters: t.input_schema.clone(),
+                        },
+                    })
+                    .collect(),
+            )
+        };
+
+        let openai_request = OpenAIChatRequest {
+            model: self.config.model_name.clone(),
+            messages,
+            temperature: request.temperature.unwrap_or(self.config.temperature),
+            max_tokens: request.max_tokens.unwrap_or(self.config.max_tokens),
+            tools,
+        };
+
+        let url = format!("{}/chat/completions", self.base_url);
+        let response = common::send_with_retry_config("OpenAI", &self.retry_config, &mut || {
+            self.client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&openai_request)
+        })
+        .await
+        .context("Failed to send chat request to OpenAI")?;
+
+        let openai_response: OpenAIChatResponse = response
+            .json()
+            .await
+            .context("Failed to parse OpenAI chat response")?;
+
+        let choice = openai_response
+            .choices
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("OpenAI returned empty choices"))?;
+
+        let mut content_blocks: Vec<ContentBlock> = Vec::new();
+
+        if let Some(text) = &choice.message.content {
+            if !text.is_empty() {
+                content_blocks.push(ContentBlock::Text { text: text.clone() });
+            }
+        }
+
+        if let Some(tool_calls) = &choice.message.tool_calls {
+            for tc in tool_calls {
+                let input: serde_json::Value =
+                    serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::json!({}));
+                content_blocks.push(ContentBlock::ToolUse {
+                    id: tc.id.clone(),
+                    name: tc.function.name.clone(),
+                    input,
+                });
+            }
+        }
+
+        let stop_reason = match choice.finish_reason.as_deref() {
+            Some("stop") => StopReason::EndTurn,
+            Some("tool_calls") => StopReason::ToolUse,
+            Some("length") => StopReason::MaxTokens,
+            _ => StopReason::Other,
+        };
+
+        Ok(ChatResponse {
+            content: content_blocks,
+            model: openai_response.model,
+            usage: Some(Usage {
+                prompt_tokens: openai_response.usage.prompt_tokens,
+                completion_tokens: openai_response.usage.completion_tokens,
+                total_tokens: openai_response.usage.total_tokens,
+            }),
+            stop_reason,
+        })
+    }
+
+    fn supports_tools(&self) -> bool {
+        true
     }
 }
 
@@ -276,7 +549,10 @@ fn extract_response_text(response: &OpenAIResponsesResponse) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::llm::{LLMAdapter, LLMRequest, ModelConfig};
+    use crate::adapters::llm::{
+        ChatMessage, ChatRequest, ContentBlock as CB, LLMAdapter, LLMRequest, ModelConfig,
+        StopReason, ToolDefinition,
+    };
 
     fn test_config(base_url: &str) -> ModelConfig {
         ModelConfig {
@@ -591,6 +867,139 @@ mod tests {
         let config = test_config("http://localhost:8080");
         let adapter = OpenAIAdapter::new(config).unwrap();
         assert_eq!(adapter.model_name(), "gpt-4o");
+    }
+
+    #[test]
+    fn test_supports_tools() {
+        let config = test_config("http://localhost:8080");
+        let adapter = OpenAIAdapter::new(config).unwrap();
+        assert!(adapter.supports_tools());
+    }
+
+    fn make_chat_request() -> ChatRequest {
+        ChatRequest {
+            system_prompt: "You are a code reviewer.".to_string(),
+            messages: vec![ChatMessage {
+                role: ChatRole::User,
+                content: vec![CB::Text {
+                    text: "Review this.".to_string(),
+                }],
+            }],
+            tools: vec![ToolDefinition {
+                name: "read_file".to_string(),
+                description: "Read a file".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {"file_path": {"type": "string"}},
+                    "required": ["file_path"]
+                }),
+            }],
+            temperature: None,
+            max_tokens: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_chat_end_turn() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [{
+                        "message": {"role": "assistant", "content": "LGTM!"},
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110},
+                    "model": "gpt-4o"
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.chat(make_chat_request()).await.unwrap();
+
+        assert_eq!(result.stop_reason, StopReason::EndTurn);
+        assert_eq!(result.content.len(), 1);
+        match &result.content[0] {
+            CB::Text { text } => assert_eq!(text, "LGTM!"),
+            _ => panic!("Expected text block"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_chat_tool_calls_response() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": "Let me check that file.",
+                            "tool_calls": [{
+                                "id": "call_abc123",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": "{\"file_path\": \"src/main.rs\"}"
+                                }
+                            }]
+                        },
+                        "finish_reason": "tool_calls"
+                    }],
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 30, "total_tokens": 130},
+                    "model": "gpt-4o"
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.chat(make_chat_request()).await.unwrap();
+
+        assert_eq!(result.stop_reason, StopReason::ToolUse);
+        assert_eq!(result.content.len(), 2); // text + tool_use
+        match &result.content[1] {
+            CB::ToolUse { id, name, input } => {
+                assert_eq!(id, "call_abc123");
+                assert_eq!(name, "read_file");
+                assert_eq!(input["file_path"], "src/main.rs");
+            }
+            _ => panic!("Expected ToolUse block"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_chat_length_stop_reason() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [{
+                        "message": {"role": "assistant", "content": "Partial..."},
+                        "finish_reason": "length"
+                    }],
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 100, "total_tokens": 200},
+                    "model": "gpt-4o"
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.chat(make_chat_request()).await.unwrap();
+
+        assert_eq!(result.stop_reason, StopReason::MaxTokens);
     }
 
     #[tokio::test]

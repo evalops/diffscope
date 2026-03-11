@@ -1,5 +1,8 @@
 use crate::adapters::common;
-use crate::adapters::llm::{LLMAdapter, LLMRequest, LLMResponse, ModelConfig, Usage};
+use crate::adapters::llm::{
+    ChatRequest, ChatResponse, ContentBlock, LLMAdapter, LLMRequest, LLMResponse, ModelConfig,
+    StopReason, Usage,
+};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -46,6 +49,59 @@ struct Content {
 struct AnthropicUsage {
     input_tokens: usize,
     output_tokens: usize,
+}
+
+// === Chat API types (for tool use) ===
+
+#[derive(Serialize)]
+struct AnthropicChatRequest {
+    model: String,
+    messages: Vec<AnthropicChatMessage>,
+    max_tokens: usize,
+    temperature: f32,
+    system: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<AnthropicToolDef>>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct AnthropicChatMessage {
+    role: String,
+    content: Vec<AnthropicContentBlock>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AnthropicContentBlock {
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        is_error: bool,
+    },
+}
+
+#[derive(Serialize)]
+struct AnthropicToolDef {
+    name: String,
+    description: String,
+    input_schema: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+struct AnthropicChatResponse {
+    content: Vec<AnthropicContentBlock>,
+    model: String,
+    usage: AnthropicUsage,
+    stop_reason: String,
 }
 
 impl AnthropicAdapter {
@@ -149,12 +205,135 @@ impl LLMAdapter for AnthropicAdapter {
     fn model_name(&self) -> &str {
         &self.config.model_name
     }
+
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
+        let messages: Vec<AnthropicChatMessage> = request
+            .messages
+            .iter()
+            .map(|m| AnthropicChatMessage {
+                role: m.role.to_string(),
+                content: m
+                    .content
+                    .iter()
+                    .map(|b| match b {
+                        ContentBlock::Text { text } => {
+                            AnthropicContentBlock::Text { text: text.clone() }
+                        }
+                        ContentBlock::ToolUse { id, name, input } => {
+                            AnthropicContentBlock::ToolUse {
+                                id: id.clone(),
+                                name: name.clone(),
+                                input: input.clone(),
+                            }
+                        }
+                        ContentBlock::ToolResult {
+                            tool_use_id,
+                            content,
+                            is_error,
+                        } => AnthropicContentBlock::ToolResult {
+                            tool_use_id: tool_use_id.clone(),
+                            content: content.clone(),
+                            is_error: *is_error,
+                        },
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        let tools: Option<Vec<AnthropicToolDef>> = if request.tools.is_empty() {
+            None
+        } else {
+            Some(
+                request
+                    .tools
+                    .iter()
+                    .map(|t| AnthropicToolDef {
+                        name: t.name.clone(),
+                        description: t.description.clone(),
+                        input_schema: t.input_schema.clone(),
+                    })
+                    .collect(),
+            )
+        };
+
+        let anthropic_request = AnthropicChatRequest {
+            model: self.config.model_name.clone(),
+            messages,
+            max_tokens: request.max_tokens.unwrap_or(self.config.max_tokens),
+            temperature: request.temperature.unwrap_or(self.config.temperature),
+            system: request.system_prompt,
+            tools,
+        };
+
+        let url = format!("{}/messages", self.base_url);
+        let response = common::send_with_retry_config("Anthropic", &self.retry_config, &mut || {
+            self.client
+                .post(&url)
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("Content-Type", "application/json")
+                .json(&anthropic_request)
+        })
+        .await
+        .context("Failed to send chat request to Anthropic")?;
+
+        let anthropic_response: AnthropicChatResponse = response
+            .json()
+            .await
+            .context("Failed to parse Anthropic chat response")?;
+
+        let content: Vec<ContentBlock> = anthropic_response
+            .content
+            .into_iter()
+            .map(|b| match b {
+                AnthropicContentBlock::Text { text } => ContentBlock::Text { text },
+                AnthropicContentBlock::ToolUse { id, name, input } => {
+                    ContentBlock::ToolUse { id, name, input }
+                }
+                AnthropicContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } => ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                },
+            })
+            .collect();
+
+        let stop_reason = match anthropic_response.stop_reason.as_str() {
+            "end_turn" => StopReason::EndTurn,
+            "tool_use" => StopReason::ToolUse,
+            "max_tokens" => StopReason::MaxTokens,
+            _ => StopReason::Other,
+        };
+
+        Ok(ChatResponse {
+            content,
+            model: anthropic_response.model,
+            usage: Some(Usage {
+                prompt_tokens: anthropic_response.usage.input_tokens,
+                completion_tokens: anthropic_response.usage.output_tokens,
+                total_tokens: anthropic_response.usage.input_tokens
+                    + anthropic_response.usage.output_tokens,
+            }),
+            stop_reason,
+        })
+    }
+
+    fn supports_tools(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::llm::{LLMAdapter, LLMRequest, ModelConfig};
+    use crate::adapters::llm::{
+        ChatMessage, ChatRequest, ChatRole, ContentBlock as CB, LLMAdapter, LLMRequest,
+        ModelConfig, StopReason, ToolDefinition,
+    };
 
     fn test_config(base_url: &str) -> ModelConfig {
         ModelConfig {
@@ -418,5 +597,125 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_supports_tools() {
+        let config = test_config("http://localhost:8080");
+        let adapter = AnthropicAdapter::new(config).unwrap();
+        assert!(adapter.supports_tools());
+    }
+
+    fn make_chat_request() -> ChatRequest {
+        ChatRequest {
+            system_prompt: "You are a code reviewer.".to_string(),
+            messages: vec![ChatMessage {
+                role: ChatRole::User,
+                content: vec![CB::Text {
+                    text: "Review this.".to_string(),
+                }],
+            }],
+            tools: vec![ToolDefinition {
+                name: "read_file".to_string(),
+                description: "Read a file".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {"file_path": {"type": "string"}},
+                    "required": ["file_path"]
+                }),
+            }],
+            temperature: None,
+            max_tokens: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_chat_end_turn() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/messages")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "content": [{"type": "text", "text": "LGTM, no issues found."}],
+                    "model": "claude-3-5-sonnet-20241022",
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                    "stop_reason": "end_turn"
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.chat(make_chat_request()).await.unwrap();
+
+        assert_eq!(result.stop_reason, StopReason::EndTurn);
+        assert_eq!(result.content.len(), 1);
+        match &result.content[0] {
+            CB::Text { text } => assert_eq!(text, "LGTM, no issues found."),
+            _ => panic!("Expected text block"),
+        }
+        assert_eq!(result.usage.unwrap().total_tokens, 120);
+    }
+
+    #[tokio::test]
+    async fn test_chat_tool_use_response() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/messages")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "content": [
+                        {"type": "text", "text": "Let me check that file."},
+                        {"type": "tool_use", "id": "toolu_01", "name": "read_file", "input": {"file_path": "src/main.rs"}}
+                    ],
+                    "model": "claude-3-5-sonnet-20241022",
+                    "usage": {"input_tokens": 100, "output_tokens": 30},
+                    "stop_reason": "tool_use"
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.chat(make_chat_request()).await.unwrap();
+
+        assert_eq!(result.stop_reason, StopReason::ToolUse);
+        assert_eq!(result.content.len(), 2);
+        match &result.content[1] {
+            CB::ToolUse { id, name, input } => {
+                assert_eq!(id, "toolu_01");
+                assert_eq!(name, "read_file");
+                assert_eq!(input["file_path"], "src/main.rs");
+            }
+            _ => panic!("Expected ToolUse block"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_chat_max_tokens_stop_reason() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/messages")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "content": [{"type": "text", "text": "Partial response..."}],
+                    "model": "claude-3-5-sonnet-20241022",
+                    "usage": {"input_tokens": 100, "output_tokens": 100},
+                    "stop_reason": "max_tokens"
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter.chat(make_chat_request()).await.unwrap();
+
+        assert_eq!(result.stop_reason, StopReason::MaxTokens);
     }
 }

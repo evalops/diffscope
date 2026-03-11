@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelConfig {
@@ -62,10 +63,146 @@ pub struct Usage {
     pub total_tokens: usize,
 }
 
+// === Chat API types (for agent loop / tool use) ===
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatRole {
+    User,
+    Assistant,
+}
+
+impl fmt::Display for ChatRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ChatRole::User => write!(f, "user"),
+            ChatRole::Assistant => write!(f, "assistant"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentBlock {
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+        #[serde(default)]
+        is_error: bool,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: ChatRole,
+    pub content: Vec<ContentBlock>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatRequest {
+    pub system_prompt: String,
+    pub messages: Vec<ChatMessage>,
+    pub tools: Vec<ToolDefinition>,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<usize>,
+}
+
+impl ChatRequest {
+    /// Build a ChatRequest from a one-shot LLMRequest plus tool definitions.
+    pub fn from_llm_request(request: LLMRequest, tools: &[ToolDefinition]) -> Self {
+        Self {
+            system_prompt: request.system_prompt,
+            messages: vec![ChatMessage {
+                role: ChatRole::User,
+                content: vec![ContentBlock::Text {
+                    text: request.user_prompt,
+                }],
+            }],
+            tools: tools.to_vec(),
+            temperature: request.temperature,
+            max_tokens: request.max_tokens,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatResponse {
+    pub content: Vec<ContentBlock>,
+    pub model: String,
+    pub usage: Option<Usage>,
+    pub stop_reason: StopReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopReason {
+    EndTurn,
+    ToolUse,
+    MaxTokens,
+    Other,
+}
+
 #[async_trait]
 pub trait LLMAdapter: Send + Sync {
     async fn complete(&self, request: LLMRequest) -> Result<LLMResponse>;
     fn model_name(&self) -> &str;
+
+    /// Multi-turn chat with tool use support.
+    /// Default impl flattens to a single `complete()` call (no tool support).
+    async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
+        // Flatten messages into a single user prompt
+        let user_prompt = request
+            .messages
+            .iter()
+            .filter_map(|m| {
+                m.content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .next()
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let llm_request = LLMRequest {
+            system_prompt: request.system_prompt,
+            user_prompt,
+            temperature: request.temperature,
+            max_tokens: request.max_tokens,
+        };
+
+        let response = self.complete(llm_request).await?;
+        Ok(ChatResponse {
+            content: vec![ContentBlock::Text {
+                text: response.content,
+            }],
+            model: response.model,
+            usage: response.usage,
+            stop_reason: StopReason::EndTurn,
+        })
+    }
+
+    /// Whether this adapter supports native tool use.
+    fn supports_tools(&self) -> bool {
+        false
+    }
 }
 
 /// Check if a base URL points to an Ollama instance by parsing the port.
@@ -338,5 +475,135 @@ mod tests {
         assert_eq!(config.max_tokens, 4000);
         assert!(config.openai_use_responses.is_none());
         assert!(config.adapter_override.is_none());
+    }
+
+    #[test]
+    fn test_content_block_serde_roundtrip_text() {
+        let block = ContentBlock::Text {
+            text: "hello".to_string(),
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        let parsed: ContentBlock = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ContentBlock::Text { text } => assert_eq!(text, "hello"),
+            _ => panic!("Expected Text block"),
+        }
+    }
+
+    #[test]
+    fn test_content_block_serde_roundtrip_tool_use() {
+        let block = ContentBlock::ToolUse {
+            id: "call_123".to_string(),
+            name: "read_file".to_string(),
+            input: serde_json::json!({"file_path": "src/main.rs"}),
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        let parsed: ContentBlock = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ContentBlock::ToolUse { id, name, input } => {
+                assert_eq!(id, "call_123");
+                assert_eq!(name, "read_file");
+                assert_eq!(input["file_path"], "src/main.rs");
+            }
+            _ => panic!("Expected ToolUse block"),
+        }
+    }
+
+    #[test]
+    fn test_content_block_serde_roundtrip_tool_result() {
+        let block = ContentBlock::ToolResult {
+            tool_use_id: "call_123".to_string(),
+            content: "file contents here".to_string(),
+            is_error: false,
+        };
+        let json = serde_json::to_string(&block).unwrap();
+        let parsed: ContentBlock = serde_json::from_str(&json).unwrap();
+        match parsed {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => {
+                assert_eq!(tool_use_id, "call_123");
+                assert_eq!(content, "file contents here");
+                assert!(!is_error);
+            }
+            _ => panic!("Expected ToolResult block"),
+        }
+    }
+
+    #[test]
+    fn test_chat_message_serde_roundtrip() {
+        let msg = ChatMessage {
+            role: ChatRole::Assistant,
+            content: vec![
+                ContentBlock::Text {
+                    text: "Let me check that file.".to_string(),
+                },
+                ContentBlock::ToolUse {
+                    id: "t1".to_string(),
+                    name: "read_file".to_string(),
+                    input: serde_json::json!({"file_path": "lib.rs"}),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let parsed: ChatMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.role, ChatRole::Assistant);
+        assert_eq!(parsed.content.len(), 2);
+    }
+
+    #[test]
+    fn test_tool_definition_serde() {
+        let tool = ToolDefinition {
+            name: "read_file".to_string(),
+            description: "Read a file".to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string"}
+                },
+                "required": ["file_path"]
+            }),
+        };
+        let json = serde_json::to_string(&tool).unwrap();
+        let parsed: ToolDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "read_file");
+    }
+
+    #[test]
+    fn test_chat_request_from_llm_request() {
+        let llm_req = LLMRequest {
+            system_prompt: "You are a reviewer.".to_string(),
+            user_prompt: "Review this diff.".to_string(),
+            temperature: Some(0.3),
+            max_tokens: Some(2000),
+        };
+        let tools = vec![ToolDefinition {
+            name: "read_file".to_string(),
+            description: "Read a file".to_string(),
+            input_schema: serde_json::json!({}),
+        }];
+        let chat_req = ChatRequest::from_llm_request(llm_req, &tools);
+        assert_eq!(chat_req.system_prompt, "You are a reviewer.");
+        assert_eq!(chat_req.messages.len(), 1);
+        assert_eq!(chat_req.messages[0].role, ChatRole::User);
+        assert_eq!(chat_req.tools.len(), 1);
+        assert_eq!(chat_req.temperature, Some(0.3));
+    }
+
+    #[test]
+    fn test_stop_reason_serde_roundtrip() {
+        let reasons = vec![
+            StopReason::EndTurn,
+            StopReason::ToolUse,
+            StopReason::MaxTokens,
+            StopReason::Other,
+        ];
+        for reason in reasons {
+            let json = serde_json::to_string(&reason).unwrap();
+            let parsed: StopReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, reason);
+        }
     }
 }

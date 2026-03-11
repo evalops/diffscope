@@ -1,3 +1,5 @@
+pub mod agent_loop;
+pub mod agent_tools;
 pub mod changelog;
 pub mod code_summary;
 pub mod comment;

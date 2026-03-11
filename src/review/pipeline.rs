@@ -543,18 +543,65 @@ async fn review_diff_content_raw_inner(
         concurrency,
     );
 
+    // Build agent tools context if agent_review is enabled
+    let agent_tool_ctx = if config.agent_review && adapter.supports_tools() {
+        let context_fetcher_arc = Arc::new(core::ContextFetcher::new(repo_path.to_path_buf()));
+        Some(Arc::new(core::agent_tools::ReviewToolContext {
+            repo_path: repo_path.to_path_buf(),
+            context_fetcher: context_fetcher_arc,
+            symbol_index: None, // Agent can use lookup_symbol/search_codebase tools instead
+            symbol_graph: None,
+            git_history: None,
+        }))
+    } else {
+        None
+    };
+    let agent_loop_config = core::agent_loop::AgentLoopConfig {
+        max_iterations: config.agent_max_iterations,
+        max_total_tokens: config.agent_max_total_tokens,
+    };
+
     let on_progress_ref = &on_progress;
     let files_skipped_snapshot = files_skipped;
 
     let results: Vec<_> = futures::stream::iter(jobs)
         .map(|job| {
             let adapter = adapter.clone();
+            let agent_ctx = agent_tool_ctx.clone();
+            let loop_config = agent_loop_config.clone();
             async move {
                 if is_local {
                     eprintln!("Sending {} to local model...", job.file_path.display());
                 }
                 let request_start = Instant::now();
-                let response = adapter.complete(job.request).await;
+
+                let response = if let Some(ctx) = agent_ctx {
+                    // Agent mode: iterative tool-calling loop
+                    let tools = core::agent_tools::build_review_tools(ctx);
+                    let tool_defs: Vec<_> = tools.iter().map(|t| t.definition()).collect();
+                    let chat_request =
+                        adapters::llm::ChatRequest::from_llm_request(job.request, &tool_defs);
+                    match core::agent_loop::run_agent_loop(
+                        adapter.as_ref(),
+                        chat_request,
+                        &tools,
+                        &loop_config,
+                        None,
+                    )
+                    .await
+                    {
+                        Ok(result) => Ok(adapters::llm::LLMResponse {
+                            content: result.content,
+                            model: result.model,
+                            usage: Some(result.total_usage),
+                        }),
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    // Standard one-shot mode
+                    adapter.complete(job.request).await
+                };
+
                 let latency_ms = request_start.elapsed().as_millis() as u64;
                 if is_local {
                     eprintln!(
