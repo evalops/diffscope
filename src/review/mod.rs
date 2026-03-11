@@ -1,3 +1,4 @@
+pub(crate) mod compression;
 mod context_helpers;
 mod feedback;
 mod filters;

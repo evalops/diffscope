@@ -20,6 +20,7 @@ use crate::output::OutputFormat;
 use crate::parsing::parse_llm_response;
 use crate::plugins;
 
+use super::compression;
 use super::triage;
 
 /// Rich result from the review pipeline, carrying comments plus telemetry metadata.
@@ -178,6 +179,21 @@ async fn review_diff_content_raw_inner(
         }
     }
 
+    // Adaptive compression: decide strategy based on token budget
+    let token_budget = config.max_diff_chars / 4; // rough char→token conversion
+    let compression_result = compression::compress_diffs(&diffs, token_budget.max(2000), 5);
+    info!(
+        "Compression strategy: {:?} ({} batches, {} skipped)",
+        compression_result.strategy,
+        compression_result.batches.len(),
+        compression_result.skipped_indices.len(),
+    );
+    let compression_skipped: std::collections::HashSet<usize> =
+        compression_result.skipped_indices.iter().copied().collect();
+    if !compression_result.skipped_summary.is_empty() {
+        info!("Compression skipped files:\n{}", compression_result.skipped_summary);
+    }
+
     // Gather git history for enhanced context
     let git_log_output = gather_git_log(repo_path);
 
@@ -283,6 +299,16 @@ async fn review_diff_content_raw_inner(
                 "Skipping {} (triage: {})",
                 diff.file_path.display(),
                 triage_result.reason()
+            );
+            files_skipped += 1;
+            continue;
+        }
+
+        // Compression: skip files that exceed the token budget
+        if compression_skipped.contains(&diff_index) {
+            info!(
+                "Skipping {} (compression: exceeds token budget)",
+                diff.file_path.display()
             );
             files_skipped += 1;
             continue;
