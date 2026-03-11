@@ -45,8 +45,8 @@ const COMMENT_PREFIXES: &[&str] = &["//", "# ", "/*", "*/", "* ", "--", "<!--", 
 
 /// Patterns that start with `#` but are NOT comments (Rust attributes, C preprocessor, etc.).
 const HASH_NON_COMMENT_PREFIXES: &[&str] = &[
-    "#[", "#![", "#include", "#define", "#ifdef", "#ifndef", "#endif", "#pragma", "#undef", "#elif",
-    "#else", "#if ", "#error", "#warning", "#line",
+    "#[", "#![", "#!/", "#include", "#define", "#ifdef", "#ifndef", "#endif", "#pragma", "#undef",
+    "#elif", "#else", "#if ", "#error", "#warning", "#line",
 ];
 
 /// Classify a diff using fast heuristics (no LLM call).
@@ -981,6 +981,20 @@ mod tests {
             ],
         );
         assert_eq!(triage_diff(&diff), TriageResult::SkipCommentOnly);
+    }
+
+    #[test]
+    fn test_shebang_line_is_not_comment() {
+        // Shebang lines (#!/usr/bin/env python3) change runtime behavior
+        // and should NOT be classified as comments
+        let diff = make_diff(
+            "script.py",
+            vec![
+                make_line(1, ChangeType::Removed, "#!/usr/bin/env python2"),
+                make_line(1, ChangeType::Added, "#!/usr/bin/env python3"),
+            ],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
     }
 
     #[test]

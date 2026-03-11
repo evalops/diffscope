@@ -265,7 +265,7 @@ fn find_function_end(lines: &[&str], start: usize, language: &str) -> usize {
                         escaped = true;
                     } else if ch == '"' && !in_single_quote {
                         in_double_quote = !in_double_quote;
-                    } else if ch == '\'' && !in_double_quote {
+                    } else if ch == '\'' && !in_double_quote && language != "rs" {
                         in_single_quote = !in_single_quote;
                     } else if !in_double_quote && !in_single_quote {
                         if ch == '{' {
@@ -931,6 +931,24 @@ fn next_func() {
         assert_eq!(
             end, 3,
             "foo() should end at line 3, not bleed into bar() due to untracked single-quoted brace"
+        );
+    }
+
+    #[test]
+    fn test_find_function_end_rust_lifetime_not_string() {
+        // BUG: Rust lifetime annotations ('a, 'static) toggle in_single_quote,
+        // causing the opening brace on the same line to be ignored.
+        let lines: Vec<&str> = vec![
+            "pub fn new(name: &'static str) -> Self {", // line 0: has lifetime '
+            "    Self { name }",                        // line 1
+            "}",                                        // line 2
+            "",
+            "fn other() {",                             // line 4
+        ];
+        let end = find_function_end(&lines, 0, "rs");
+        assert_eq!(
+            end, 2,
+            "Rust lifetime annotation should not break brace tracking"
         );
     }
 
