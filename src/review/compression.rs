@@ -205,14 +205,14 @@ pub fn compress_diffs(
     }
 
     // Stage 2: Compressed — remove deletion-only hunks, drop tail files
-    // Sort by token count (largest first) for greedy packing
-    file_tokens.sort_by(|a, b| b.1.cmp(&a.1));
+    // Sort by token count (smallest first) to maximize files reviewed.
+    file_tokens.sort_by(|a, b| a.1.cmp(&b.1));
 
     let mut included = Vec::new();
     let mut skipped = Vec::new();
     let mut budget_used = 0;
 
-    for &(idx, tokens) in &file_tokens {
+    for &(idx, _tokens) in &file_tokens {
         // Re-estimate with compression
         let compressed_tokens = if let Some(compressed) = compress_diff(&diffs[idx]) {
             estimate_diff_tokens(&compressed)

@@ -188,10 +188,11 @@ async fn review_diff_content_raw_inner(
         compression_result.batches.len(),
         compression_result.skipped_indices.len(),
     );
-    let compression_skipped: std::collections::HashSet<usize> =
-        compression_result.skipped_indices.iter().copied().collect();
     if !compression_result.skipped_summary.is_empty() {
-        info!("Compression skipped files:\n{}", compression_result.skipped_summary);
+        info!(
+            "Compression analysis skipped files (advisory in per-file mode):\n{}",
+            compression_result.skipped_summary
+        );
     }
 
     // Gather git history for enhanced context
@@ -299,16 +300,6 @@ async fn review_diff_content_raw_inner(
                 "Skipping {} (triage: {})",
                 diff.file_path.display(),
                 triage_result.reason()
-            );
-            files_skipped += 1;
-            continue;
-        }
-
-        // Compression: skip files that exceed the token budget
-        if compression_skipped.contains(&diff_index) {
-            info!(
-                "Skipping {} (compression: exceeds token budget)",
-                diff.file_path.display()
             );
             files_skipped += 1;
             continue;

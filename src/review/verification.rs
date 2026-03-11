@@ -116,11 +116,7 @@ pub fn is_auto_zero(content: &str) -> bool {
 fn build_verification_prompt(comments: &[Comment], diff_content: &str) -> String {
     let mut prompt = String::from("## Code Diff\n```\n");
     // Include a truncated version of the diff
-    let truncated_diff = if diff_content.len() > 8000 {
-        &diff_content[..8000]
-    } else {
-        diff_content
-    };
+    let truncated_diff = safe_utf8_prefix(diff_content, 8000);
     prompt.push_str(truncated_diff);
     prompt.push_str("\n```\n\n## Findings to Verify\n\n");
 
@@ -140,6 +136,18 @@ fn build_verification_prompt(comments: &[Comment], diff_content: &str) -> String
 
     prompt.push_str("Verify each finding against the actual code diff above.\n");
     prompt
+}
+
+fn safe_utf8_prefix(content: &str, max_bytes: usize) -> &str {
+    if content.len() <= max_bytes {
+        return content;
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    &content[..end]
 }
 
 fn parse_verification_response(content: &str, comments: &[Comment]) -> Vec<VerificationResult> {
@@ -259,6 +267,15 @@ mod tests {
         let comments = vec![make_comment("c1", "issue", 10)];
         let prompt = build_verification_prompt(&comments, &long_diff);
         assert!(prompt.len() < long_diff.len() + 1000); // truncated
+    }
+
+    #[test]
+    fn test_build_verification_prompt_utf8_safe_truncation() {
+        // 3000 emojis => 12k bytes, and byte 8000 is not a char boundary.
+        let long_diff = "😀".repeat(3000);
+        let comments = vec![make_comment("c1", "issue", 10)];
+        let prompt = build_verification_prompt(&comments, &long_diff);
+        assert!(prompt.contains("## Code Diff"));
     }
 
     #[test]

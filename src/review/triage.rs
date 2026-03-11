@@ -42,7 +42,7 @@ const LOCK_FILES: &[&str] = &[
 
 /// Comment line prefixes (after trimming leading whitespace).
 const COMMENT_PREFIXES: &[&str] = &[
-    "//", "#", "/*", "*/", "*", "--", "<!--", "\"\"\"", "'''",
+    "//", "#", "/*", "*/", "* ", "--", "<!--", "\"\"\"", "'''",
 ];
 
 /// Classify a diff using fast heuristics (no LLM call).
@@ -626,6 +626,18 @@ mod tests {
             vec![
                 make_line(1, ChangeType::Removed, "// old comment"),
                 make_line(1, ChangeType::Added, "let x = 42;"),
+            ],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_comment_only_does_not_match_pointer_dereference_code() {
+        let diff = make_diff(
+            "src/lib.rs",
+            vec![
+                make_line(1, ChangeType::Added, "*ptr = compute();"),
+                make_line(2, ChangeType::Added, "*buffer = data;"),
             ],
         );
         assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
