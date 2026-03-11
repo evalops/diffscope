@@ -1292,7 +1292,11 @@ fn gather_related_file_context(
     for caller_path in callers.iter().take(3) {
         if let Some(summary) = index.file_summary(caller_path) {
             let truncated: String = if summary.len() > 2000 {
-                format!("{}...[truncated]", &summary[..2000])
+                let mut end = 2000;
+                while end > 0 && !summary.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}...[truncated]", &summary[..end])
             } else {
                 summary.to_string()
             };
@@ -1930,5 +1934,35 @@ mod tests {
         // Strings under 100 chars should always return false
         let text = "abc".repeat(30); // 90 chars
         assert!(!has_excessive_repetition(&text));
+    }
+
+    // ── Bug: UTF-8 slicing panic on multi-byte chars at boundary ─────
+    //
+    // The summary truncation in gather_related_file_context used
+    // `&summary[..2000]`, which panics if byte 2000 falls inside a
+    // multi-byte UTF-8 character (e.g. emoji, CJK, accented chars).
+    // The fix uses is_char_boundary() to find a safe slice point.
+
+    #[test]
+    fn test_utf8_safe_truncation() {
+        // "€" is 3 bytes in UTF-8. Create a string where byte 2000
+        // lands inside a multi-byte char.
+        let prefix = "a".repeat(1999); // 1999 bytes
+        let s = format!("{}€rest", prefix); // byte 1999-2001 is "€" (3 bytes)
+        assert!(s.len() > 2000);
+
+        // This is the pattern from the fix — it should not panic
+        let mut end = 2000;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        let truncated = &s[..end];
+        // The truncation should stop before the "€" character
+        assert_eq!(
+            end, 1999,
+            "Should back up to byte 1999, before the 3-byte €"
+        );
+        assert!(truncated.starts_with("aaa"));
+        assert!(!truncated.contains('€'));
     }
 }
