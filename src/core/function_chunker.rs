@@ -918,14 +918,14 @@ fn next_func() {
     fn test_find_function_end_single_quoted_string_with_brace() {
         // BUG: single-quoted strings aren't tracked, so `'{'` is counted as a real brace
         let lines: Vec<&str> = vec![
-            "function foo() {",         // line 0: depth = 1
-            "    let s = '{';",         // line 1: depth should stay 1, but goes to 2
-            "    console.log(s);",      // line 2
-            "}",                        // line 3: depth goes to 1 (not 0!), so foo "never ends"
-            "",                         // line 4
-            "function bar() {",         // line 5: depth goes to 2
-            "    return 1;",            // line 6
-            "}",                        // line 7: depth goes to 1, and foo is "found" here (wrong!)
+            "function foo() {",    // line 0: depth = 1
+            "    let s = '{';",    // line 1: depth should stay 1, but goes to 2
+            "    console.log(s);", // line 2
+            "}",                   // line 3: depth goes to 1 (not 0!), so foo "never ends"
+            "",                    // line 4
+            "function bar() {",    // line 5: depth goes to 2
+            "    return 1;",       // line 6
+            "}",                   // line 7: depth goes to 1, and foo is "found" here (wrong!)
         ];
         let end = find_function_end(&lines, 0, "js");
         assert_eq!(
@@ -943,7 +943,7 @@ fn next_func() {
             "    Self { name }",                        // line 1
             "}",                                        // line 2
             "",
-            "fn other() {",                             // line 4
+            "fn other() {", // line 4
         ];
         let end = find_function_end(&lines, 0, "rs");
         assert_eq!(

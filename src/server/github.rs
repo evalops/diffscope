@@ -1177,5 +1177,4 @@ mod tests {
 
         assert!(verify_webhook_signature(secret, body, &signature).is_ok());
     }
-
 }

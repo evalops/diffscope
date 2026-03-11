@@ -1386,19 +1386,37 @@ mod tests {
         // 1 completed, 1 failed, 1 timeout (not a failure per se)
         backend
             .save_review(&make_session_with_event(
-                "r1", now, ReviewStatus::Complete, "review.completed", "gpt-4o", "github", 100,
+                "r1",
+                now,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "github",
+                100,
             ))
             .await
             .unwrap();
         backend
             .save_review(&make_session_with_event(
-                "r2", now, ReviewStatus::Failed, "review.failed", "gpt-4o", "github", 200,
+                "r2",
+                now,
+                ReviewStatus::Failed,
+                "review.failed",
+                "gpt-4o",
+                "github",
+                200,
             ))
             .await
             .unwrap();
         backend
             .save_review(&make_session_with_event(
-                "r3", now, ReviewStatus::Failed, "review.timeout", "gpt-4o", "github", 300,
+                "r3",
+                now,
+                ReviewStatus::Failed,
+                "review.timeout",
+                "gpt-4o",
+                "github",
+                300,
             ))
             .await
             .unwrap();

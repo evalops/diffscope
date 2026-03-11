@@ -372,12 +372,14 @@ impl DiffParser {
                 // Some diff tools emit truly empty lines for empty context lines
                 // (omitting the leading space). Treat as context to keep line numbers in sync.
                 (ChangeType::Context, "")
-            } else { match line.chars().next() {
-                Some('+') => (ChangeType::Added, &line[1..]),
-                Some('-') => (ChangeType::Removed, &line[1..]),
-                Some(' ') => (ChangeType::Context, &line[1..]),
-                _ => (ChangeType::Context, line),
-            }};
+            } else {
+                match line.chars().next() {
+                    Some('+') => (ChangeType::Added, &line[1..]),
+                    Some('-') => (ChangeType::Removed, &line[1..]),
+                    Some(' ') => (ChangeType::Context, &line[1..]),
+                    _ => (ChangeType::Context, line),
+                }
+            };
 
             let diff_line = match change_type {
                 ChangeType::Added => {
@@ -579,8 +581,7 @@ index abc..def 100644\n\
     fn test_parse_text_diff_sets_is_new_for_new_file() {
         // BUG: parse_text_diff always sets is_new=false even when old_content is empty
         let diff =
-            DiffParser::parse_text_diff("", "new content\n", PathBuf::from("new_file.rs"))
-                .unwrap();
+            DiffParser::parse_text_diff("", "new content\n", PathBuf::from("new_file.rs")).unwrap();
         assert!(
             diff.is_new,
             "parse_text_diff with empty old content should set is_new=true"
