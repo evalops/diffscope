@@ -121,14 +121,13 @@ impl LLMAdapter for AnthropicAdapter {
             .content
             .first()
             .map(|c| {
-                // Verify it's a text content type
                 if c.content_type == "text" {
-                    c.text.clone()
+                    Ok(c.text.clone())
                 } else {
-                    format!("Unsupported content type: {}", c.content_type)
+                    Err(anyhow::anyhow!("Unsupported content type: {}", c.content_type))
                 }
             })
-            .unwrap_or_default();
+            .ok_or_else(|| anyhow::anyhow!("Anthropic returned empty content array — no content generated"))??;
 
         Ok(LLMResponse {
             content,
@@ -292,7 +291,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_unsupported_content_type() {
+    async fn test_unsupported_content_type_returns_error() {
         let mut server = mockito::Server::new_async().await;
         let _mock = server
             .mock("POST", "/messages")
@@ -311,17 +310,17 @@ mod tests {
         let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
         let result = adapter.complete(test_request()).await;
 
-        assert!(result.is_ok());
-        let response = result.unwrap();
+        assert!(result.is_err(), "Unsupported content type should return an error");
+        let err = result.unwrap_err().to_string();
         assert!(
-            response.content.contains("Unsupported content type"),
-            "Expected 'Unsupported content type' in response, got: {}",
-            response.content
+            err.contains("Unsupported content type"),
+            "Error should mention unsupported type, got: {}",
+            err
         );
     }
 
     #[tokio::test]
-    async fn test_empty_content_array() {
+    async fn test_empty_content_array_returns_error() {
         let mut server = mockito::Server::new_async().await;
         let _mock = server
             .mock("POST", "/messages")
@@ -340,9 +339,9 @@ mod tests {
         let adapter = AnthropicAdapter::new(test_config(&server.url())).unwrap();
         let result = adapter.complete(test_request()).await;
 
-        assert!(result.is_ok());
-        let response = result.unwrap();
-        assert_eq!(response.content, "");
+        assert!(result.is_err(), "Empty content array should return an error, not silently succeed");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("empty content"), "Error should mention empty content: {}", err);
     }
 
     #[test]

@@ -45,7 +45,7 @@ const COMMENT_PREFIXES: &[&str] = &["//", "# ", "/*", "*/", "* ", "--", "<!--", 
 
 /// Patterns that start with `#` but are NOT comments (Rust attributes, C preprocessor, etc.).
 const HASH_NON_COMMENT_PREFIXES: &[&str] = &[
-    "#[", "#!", "#include", "#define", "#ifdef", "#ifndef", "#endif", "#pragma", "#undef", "#elif",
+    "#[", "#![", "#include", "#define", "#ifdef", "#ifndef", "#endif", "#pragma", "#undef", "#elif",
     "#else", "#if ", "#error", "#warning", "#line",
 ];
 
@@ -179,13 +179,18 @@ fn is_comment_line(content: &str) -> bool {
         // Blank lines in a comment-only change are fine
         return true;
     }
-    // Handle `#` lines: exclude Rust attributes, C preprocessor, etc.
-    if trimmed.starts_with('#')
-        && HASH_NON_COMMENT_PREFIXES
+    // Handle `#` lines: treat as comment UNLESS it matches a known non-comment prefix
+    // (Rust attributes, C preprocessor, etc.)
+    if trimmed.starts_with('#') {
+        // If it matches a non-comment prefix like #[, #include, etc., it's code
+        if HASH_NON_COMMENT_PREFIXES
             .iter()
             .any(|p| trimmed.starts_with(p))
-    {
-        return false;
+        {
+            return false;
+        }
+        // Otherwise bare `#`, `#comment`, `# comment` are all comments
+        return true;
     }
     COMMENT_PREFIXES
         .iter()
@@ -888,13 +893,14 @@ mod tests {
     }
 
     #[test]
-    fn test_comment_hash_without_space_is_not_comment() {
-        // "#tag" — not a comment prefix since we changed to "# "
+    fn test_comment_hash_without_space_is_comment() {
+        // "#tag" IS a valid comment in Python/shell/Ruby/Makefile
+        // Only known code patterns (#[, #include, etc.) are excluded
         let diff = make_diff(
             "src/lib.rs",
             vec![make_line(1, ChangeType::Added, "#tag: important")],
         );
-        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+        assert_eq!(triage_diff(&diff), TriageResult::SkipCommentOnly);
     }
 
     #[test]
@@ -948,6 +954,33 @@ mod tests {
         let diff = make_diff("", vec![make_line(1, ChangeType::Added, "new code")]);
         // Should not panic
         assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_comment_bare_hash_is_comment() {
+        // Bare `#` without trailing space is a valid comment in shell, Makefile, Python
+        let diff = make_diff(
+            "deploy.sh",
+            vec![
+                make_line(1, ChangeType::Added, "#"),
+                make_line(2, ChangeType::Added, "#!"),
+            ],
+        );
+        // BUG: currently returns NeedsReview because `#` doesn't match `"# "` prefix
+        assert_eq!(triage_diff(&diff), TriageResult::SkipCommentOnly);
+    }
+
+    #[test]
+    fn test_comment_hash_with_no_space_in_makefile() {
+        // Makefile comments use `#` without requiring a space
+        let diff = make_diff(
+            "Makefile",
+            vec![
+                make_line(1, ChangeType::Removed, "#old target comment"),
+                make_line(1, ChangeType::Added, "#new target comment"),
+            ],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::SkipCommentOnly);
     }
 
     #[test]
