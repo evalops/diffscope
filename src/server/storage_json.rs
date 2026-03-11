@@ -105,8 +105,8 @@ impl StorageBackend for JsonStorageBackend {
         let reviews = self.reviews.read().await;
         let mut list: Vec<&ReviewSession> = reviews.values().collect();
         list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-        let offset = offset as usize;
-        let limit = limit as usize;
+        let offset = offset.max(0) as usize;
+        let limit = limit.max(0) as usize;
         Ok(list.into_iter().skip(offset).take(limit).cloned().collect())
     }
 
@@ -142,15 +142,16 @@ impl StorageBackend for JsonStorageBackend {
                     .status
                     .as_ref()
                     .is_none_or(|f| e.event_type.eq_ignore_ascii_case(&format!("review.{}", f)));
-                // Time filters (best-effort for JSON backend using created_at if available)
+                // Time filters: if a time bound is specified, events without a
+                // timestamp are excluded (they cannot satisfy the constraint).
                 let time_from_ok = filters
                     .time_from
                     .as_ref()
-                    .is_none_or(|from| e.created_at.is_none_or(|t| t >= *from));
+                    .is_none_or(|from| e.created_at.is_some_and(|t| t >= *from));
                 let time_to_ok = filters
                     .time_to
                     .as_ref()
-                    .is_none_or(|to| e.created_at.is_none_or(|t| t <= *to));
+                    .is_none_or(|to| e.created_at.is_some_and(|t| t <= *to));
                 let repo_ok = filters
                     .github_repo
                     .as_ref()
@@ -167,8 +168,8 @@ impl StorageBackend for JsonStorageBackend {
         });
 
         // Apply limit/offset
-        let offset = filters.offset.unwrap_or(0) as usize;
-        let limit = filters.limit.unwrap_or(500) as usize;
+        let offset = filters.offset.unwrap_or(0).max(0) as usize;
+        let limit = filters.limit.unwrap_or(500).max(0) as usize;
         events = events.into_iter().skip(offset).take(limit).collect();
 
         Ok(events)
@@ -177,8 +178,8 @@ impl StorageBackend for JsonStorageBackend {
     async fn get_event_stats(&self, filters: &EventFilters) -> anyhow::Result<EventStats> {
         // Stats must cover ALL matching events, not a paginated subset
         let mut stats_filters = filters.clone();
-        stats_filters.limit = None;
-        stats_filters.offset = None;
+        stats_filters.limit = Some(i64::MAX);
+        stats_filters.offset = Some(0);
         let events = self.list_events(&stats_filters).await?;
 
         let total = events.len() as i64;
@@ -1495,6 +1496,123 @@ mod tests {
             events.len()
         );
         assert_eq!(events[0].github_repo.as_deref(), Some("owner/repo-a"));
+    }
+
+    // ── Bug: time filters include events with created_at = None ──────
+    //
+    // When a time_from or time_to filter is active, events whose
+    // `created_at` is None should be *excluded* (they have no timestamp
+    // to satisfy the constraint).  Previously `is_none_or` let them
+    // through.
+
+    #[tokio::test]
+    async fn test_time_filter_excludes_events_without_timestamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+        let now = now_ts();
+
+        // Event WITH a timestamp (via build())
+        let s1 = make_session_with_event(
+            "r1",
+            now,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "github",
+            100,
+        );
+        backend.save_review(&s1).await.unwrap();
+
+        // Event WITHOUT a timestamp (manually set created_at = None)
+        let mut s2 = make_session_with_event(
+            "r2",
+            now + 1,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "github",
+            200,
+        );
+        s2.event.as_mut().unwrap().created_at = None;
+        backend.save_review(&s2).await.unwrap();
+
+        // Filter with time_from = epoch (should match everything WITH a ts)
+        let filters = EventFilters {
+            time_from: Some(chrono::DateTime::from_timestamp(0, 0).unwrap()),
+            ..Default::default()
+        };
+        let events = backend.list_events(&filters).await.unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "Events with created_at = None should be excluded by time filters, got {}",
+            events.len()
+        );
+        assert_eq!(events[0].review_id, "r1");
+    }
+
+    // ── Bug: negative limit/offset wraps to huge usize ───────────────
+    //
+    // Casting a negative i64 directly to usize wraps to a very large
+    // number, causing list_reviews to skip/take billions of entries.
+
+    #[tokio::test]
+    async fn test_list_reviews_negative_offset_does_not_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+        let now = now_ts();
+
+        backend
+            .save_review(&make_session("r1", now, ReviewStatus::Complete))
+            .await
+            .unwrap();
+
+        // Negative offset and limit should not panic or return nonsense
+        let result = backend.list_reviews(10, -1).await.unwrap();
+        assert_eq!(result.len(), 1, "Negative offset should be clamped to 0");
+
+        let result = backend.list_reviews(-1, 0).await.unwrap();
+        assert!(
+            result.is_empty(),
+            "Negative limit should be clamped to 0, returning no results"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_events_negative_offset_does_not_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+        let now = now_ts();
+
+        let s1 = make_session_with_event(
+            "r1",
+            now,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "github",
+            100,
+        );
+        backend.save_review(&s1).await.unwrap();
+
+        let filters = EventFilters {
+            offset: Some(-5),
+            limit: Some(100),
+            ..Default::default()
+        };
+        let events = backend.list_events(&filters).await.unwrap();
+        assert_eq!(events.len(), 1, "Negative offset should be clamped to 0");
+
+        let filters = EventFilters {
+            offset: Some(0),
+            limit: Some(-10),
+            ..Default::default()
+        };
+        let events = backend.list_events(&filters).await.unwrap();
+        assert!(
+            events.is_empty(),
+            "Negative limit should be clamped to 0, returning no results"
+        );
     }
 
     #[tokio::test]

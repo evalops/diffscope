@@ -426,6 +426,40 @@ mod tests {
         assert!(processor.should_ignore("types.generated.ts"));
         assert!(!processor.should_ignore("src/main.rs"));
     }
+
+    // ── Bug: glob dots are not escaped before regex conversion ──────────
+    //
+    // `should_ignore` converts glob patterns to regex by replacing `*`
+    // with `.*`, but does NOT escape the `.` characters in the pattern.
+    // As a result, "*.test.js" becomes regex `".*..test..js"` where the
+    // dots match ANY character, causing false positives.
+    //
+    // For example, "fooAtestBjs" matches because the unescaped dots in
+    // the regex accept any character, not just literal periods.
+
+    #[test]
+    fn test_processor_glob_dot_is_literal() {
+        let mut processor = InteractiveProcessor::new();
+        processor.add_ignore_pattern("*.test.js");
+        // Should match files with literal dots
+        assert!(processor.should_ignore("foo.test.js"));
+        // Should NOT match when dots are replaced by other characters
+        assert!(
+            !processor.should_ignore("fooAtestBjs"),
+            "Glob dot should match literal '.' only, not arbitrary characters"
+        );
+    }
+
+    #[test]
+    fn test_processor_glob_anchored() {
+        let mut processor = InteractiveProcessor::new();
+        processor.add_ignore_pattern("*.test.js");
+        // Should NOT match files with a suffix after .js
+        assert!(
+            !processor.should_ignore("foo.test.js.bak"),
+            "Glob pattern should not match files with extra suffixes"
+        );
+    }
 }
 
 /// Manages per-session ignore patterns from @diffscope ignore commands.
@@ -451,7 +485,9 @@ impl InteractiveProcessor {
         self.ignored_patterns.iter().any(|pattern| {
             // Simple glob matching
             if pattern.contains('*') {
-                let regex_pattern = pattern.replace("*", ".*");
+                // Escape regex metacharacters, then convert glob * to .*
+                let escaped = regex::escape(pattern).replace(r"\*", ".*");
+                let regex_pattern = format!("^{}$", escaped);
                 regex::Regex::new(&regex_pattern)
                     .map(|re| re.is_match(path))
                     .unwrap_or(false)
