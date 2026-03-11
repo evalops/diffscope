@@ -251,6 +251,7 @@ async fn review_diff_content_raw_inner(
 
     let adapter: Arc<dyn adapters::llm::LLMAdapter> =
         Arc::from(adapters::llm::create_adapter(&model_config)?);
+    info!("Review adapter: {}", adapter.model_name());
 
     // Use weak model for verification pass (cheaper, faster)
     let verification_adapter: Arc<dyn adapters::llm::LLMAdapter> = {

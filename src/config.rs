@@ -20,6 +20,9 @@ pub enum ModelRole {
     Reasoning,
     /// Embedding model for RAG indexing.
     Embedding,
+    /// Fast model for lightweight LLM tasks: PR summaries, commit messages,
+    /// PR titles, diagram generation. Falls back to Weak, then Primary.
+    Fast,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +53,11 @@ pub struct Config {
     /// Cheap/fast model for triage, summarization, NL translation.
     #[serde(default)]
     pub model_weak: Option<String>,
+
+    /// Fast model for lightweight LLM tasks: PR summaries, commit messages,
+    /// PR titles, diagram generation. Falls back to model_weak, then primary.
+    #[serde(default)]
+    pub model_fast: Option<String>,
 
     /// Reasoning-capable model for complex analysis and self-reflection.
     #[serde(default)]
@@ -338,6 +346,7 @@ impl Default for Config {
         Self {
             model: default_model(),
             model_weak: None,
+            model_fast: None,
             model_reasoning: None,
             model_embedding: None,
             fallback_models: Vec::new(),
@@ -914,6 +923,11 @@ impl Config {
             ModelRole::Weak => self.model_weak.as_deref().unwrap_or(&self.model),
             ModelRole::Reasoning => self.model_reasoning.as_deref().unwrap_or(&self.model),
             ModelRole::Embedding => self.model_embedding.as_deref().unwrap_or(&self.model),
+            ModelRole::Fast => self
+                .model_fast
+                .as_deref()
+                .or(self.model_weak.as_deref())
+                .unwrap_or(&self.model),
         }
     }
 
@@ -1648,6 +1662,50 @@ mod tests {
             config.model_for_role(ModelRole::Embedding),
             "custom-embedding-model"
         );
+    }
+
+    #[test]
+    fn test_model_role_fast_fallback_to_primary() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_fast: None,
+            model_weak: None,
+            ..Config::default()
+        };
+        assert_eq!(config.model_for_role(ModelRole::Fast), "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn test_model_role_fast_fallback_to_weak() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_fast: None,
+            model_weak: Some("claude-haiku-4-5".to_string()),
+            ..Config::default()
+        };
+        assert_eq!(config.model_for_role(ModelRole::Fast), "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn test_model_role_fast_explicit() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_fast: Some("gpt-4o-mini".to_string()),
+            model_weak: Some("claude-haiku-4-5".to_string()),
+            ..Config::default()
+        };
+        assert_eq!(config.model_for_role(ModelRole::Fast), "gpt-4o-mini");
+    }
+
+    #[test]
+    fn test_to_model_config_for_role_fast() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_fast: Some("gpt-4o-mini".to_string()),
+            ..Config::default()
+        };
+        let fast_config = config.to_model_config_for_role(ModelRole::Fast);
+        assert_eq!(fast_config.model_name, "gpt-4o-mini");
     }
 
     #[test]

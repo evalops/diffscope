@@ -81,9 +81,9 @@ pub async fn pr_command(
         let diffs = core::DiffParser::parse_unified_diff(&diff_content)?;
         let git = core::GitIntegration::new(".")?;
 
-        let model_config = config.to_model_config();
-
-        let adapter = adapters::llm::create_adapter(&model_config)?;
+        // Use Fast model for PR summary generation (lightweight task)
+        let fast_config = config.to_model_config_for_role(config::ModelRole::Fast);
+        let adapter = adapters::llm::create_adapter(&fast_config)?;
         let options = core::SummaryOptions {
             include_diagram: config.smart_review_diagram,
         };

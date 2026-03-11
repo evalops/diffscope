@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{error, info, warn};
 
 use crate::config::Config;
 use crate::core::comment::{Comment, ReviewSummary};
@@ -163,6 +163,9 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     /// Semaphore to limit concurrent review tasks.
     pub review_semaphore: Arc<tokio::sync::Semaphore>,
+    /// Tracks the last reviewed head SHA per PR, keyed by "owner/repo#pr_number".
+    /// Used for incremental (push-by-push) reviews.
+    pub last_reviewed_shas: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl AppState {
@@ -224,6 +227,7 @@ impl AppState {
             config_path,
             http_client,
             review_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_REVIEWS)),
+            last_reviewed_shas: Arc::new(RwLock::new(HashMap::new())),
         };
 
         Ok(state)
@@ -248,7 +252,7 @@ impl AppState {
                 match serde_json::to_string_pretty(&stripped) {
                     Ok(j) => j,
                     Err(e) => {
-                        eprintln!("Failed to serialize reviews: {}", e);
+                        error!("Failed to serialize reviews: {}", e);
                         return;
                     }
                 }
@@ -257,18 +261,18 @@ impl AppState {
 
             if let Some(parent) = state.storage_path.parent() {
                 if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    eprintln!("Failed to create storage directory: {}", e);
+                    error!("Failed to create storage directory: {}", e);
                     return;
                 }
             }
             // Write to a temp file then rename for atomic writes
             let tmp_path = state.storage_path.with_extension("json.tmp");
             if let Err(e) = tokio::fs::write(&tmp_path, &json).await {
-                eprintln!("Failed to write reviews temp file: {}", e);
+                error!("Failed to write reviews temp file: {}", e);
                 return;
             }
             if let Err(e) = tokio::fs::rename(&tmp_path, &state.storage_path).await {
-                eprintln!("Failed to rename reviews file: {}", e);
+                error!("Failed to rename reviews file: {}", e);
                 let _ = tokio::fs::remove_file(&tmp_path).await;
             }
         })
@@ -283,7 +287,7 @@ impl AppState {
                 match serde_json::to_string_pretty(&*config) {
                     Ok(j) => j,
                     Err(e) => {
-                        eprintln!("Failed to serialize config: {}", e);
+                        error!("Failed to serialize config: {}", e);
                         return;
                     }
                 }
@@ -291,17 +295,17 @@ impl AppState {
 
             if let Some(parent) = state.config_path.parent() {
                 if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    eprintln!("Failed to create config directory: {}", e);
+                    error!("Failed to create config directory: {}", e);
                     return;
                 }
             }
             let tmp_path = state.config_path.with_extension("json.tmp");
             if let Err(e) = tokio::fs::write(&tmp_path, &json).await {
-                eprintln!("Failed to write config: {}", e);
+                error!("Failed to write config: {}", e);
                 return;
             }
             if let Err(e) = tokio::fs::rename(&tmp_path, &state.config_path).await {
-                eprintln!("Failed to rename config file: {}", e);
+                error!("Failed to rename config file: {}", e);
                 let _ = tokio::fs::remove_file(&tmp_path).await;
             }
         })
@@ -314,16 +318,16 @@ impl AppState {
         match std::fs::read_to_string(path) {
             Ok(data) => match serde_json::from_str::<HashMap<String, ReviewSession>>(&data) {
                 Ok(loaded) => {
-                    eprintln!("Loaded {} reviews from disk", loaded.len());
+                    info!("Loaded {} reviews from disk", loaded.len());
                     loaded
                 }
                 Err(e) => {
-                    eprintln!("Failed to parse reviews.json: {}", e);
+                    warn!("Failed to parse reviews.json: {}", e);
                     HashMap::new()
                 }
             },
             Err(e) => {
-                eprintln!("Failed to read reviews.json: {}", e);
+                warn!("Failed to read reviews.json: {}", e);
                 HashMap::new()
             }
         }
@@ -409,6 +413,20 @@ impl AppState {
                 reviews.remove(&id);
             }
         }
+    }
+
+    /// Record the head SHA after a successful review for a PR.
+    /// The key is formatted as "owner/repo#pr_number".
+    pub async fn record_reviewed_sha(state: &Arc<AppState>, pr_key: &str, head_sha: &str) {
+        let mut shas = state.last_reviewed_shas.write().await;
+        shas.insert(pr_key.to_string(), head_sha.to_string());
+    }
+
+    /// Look up the last reviewed head SHA for a PR.
+    /// Returns `None` if this PR has never been reviewed.
+    pub async fn get_last_reviewed_sha(state: &Arc<AppState>, pr_key: &str) -> Option<String> {
+        let shas = state.last_reviewed_shas.read().await;
+        shas.get(pr_key).cloned()
     }
 }
 
@@ -925,6 +943,7 @@ mod tests {
                 storage_path: storage_path.clone(),
                 config_path,
                 review_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
+                last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             });
             let handle = AppState::save_reviews_async(&state);
             // The handle should be awaitable and complete successfully
@@ -996,6 +1015,111 @@ mod tests {
             // Drop one permit
             drop(_p1);
             assert_eq!(sem.available_permits(), 1);
+        });
+    }
+
+    #[test]
+    fn test_record_and_get_last_reviewed_sha() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let storage_path = dir.path().join("reviews.json");
+            let config_path = dir.path().join("config.json");
+            let json_backend = crate::server::storage_json::JsonStorageBackend::new(&storage_path);
+            let state = Arc::new(AppState {
+                config: Arc::new(tokio::sync::RwLock::new(crate::config::Config::default())),
+                repo_path: dir.path().to_path_buf(),
+                reviews: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                storage: Arc::new(json_backend),
+                http_client: reqwest::Client::new(),
+                storage_path,
+                config_path,
+                review_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
+                last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            });
+
+            let pr_key = "owner/repo#42";
+
+            // Initially no SHA recorded
+            assert!(AppState::get_last_reviewed_sha(&state, pr_key)
+                .await
+                .is_none());
+
+            // Record a SHA
+            AppState::record_reviewed_sha(&state, pr_key, "abc123").await;
+            assert_eq!(
+                AppState::get_last_reviewed_sha(&state, pr_key)
+                    .await
+                    .as_deref(),
+                Some("abc123"),
+            );
+
+            // Update the SHA
+            AppState::record_reviewed_sha(&state, pr_key, "def456").await;
+            assert_eq!(
+                AppState::get_last_reviewed_sha(&state, pr_key)
+                    .await
+                    .as_deref(),
+                Some("def456"),
+            );
+
+            // Different PR key is independent
+            let other_key = "owner/repo#99";
+            assert!(AppState::get_last_reviewed_sha(&state, other_key)
+                .await
+                .is_none());
+        });
+    }
+
+    #[test]
+    fn test_last_reviewed_shas_multiple_prs() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let storage_path = dir.path().join("reviews.json");
+            let config_path = dir.path().join("config.json");
+            let json_backend = crate::server::storage_json::JsonStorageBackend::new(&storage_path);
+            let state = Arc::new(AppState {
+                config: Arc::new(tokio::sync::RwLock::new(crate::config::Config::default())),
+                repo_path: dir.path().to_path_buf(),
+                reviews: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                storage: Arc::new(json_backend),
+                http_client: reqwest::Client::new(),
+                storage_path,
+                config_path,
+                review_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
+                last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            });
+
+            // Record SHAs for multiple PRs across different repos
+            AppState::record_reviewed_sha(&state, "org/repo-a#1", "sha_a1").await;
+            AppState::record_reviewed_sha(&state, "org/repo-a#2", "sha_a2").await;
+            AppState::record_reviewed_sha(&state, "org/repo-b#1", "sha_b1").await;
+
+            assert_eq!(
+                AppState::get_last_reviewed_sha(&state, "org/repo-a#1")
+                    .await
+                    .as_deref(),
+                Some("sha_a1"),
+            );
+            assert_eq!(
+                AppState::get_last_reviewed_sha(&state, "org/repo-a#2")
+                    .await
+                    .as_deref(),
+                Some("sha_a2"),
+            );
+            assert_eq!(
+                AppState::get_last_reviewed_sha(&state, "org/repo-b#1")
+                    .await
+                    .as_deref(),
+                Some("sha_b1"),
+            );
         });
     }
 }

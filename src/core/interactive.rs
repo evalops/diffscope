@@ -3,14 +3,13 @@ use anyhow::Result;
 use regex::Regex;
 use std::collections::HashSet;
 
-#[allow(dead_code)]
 pub struct InteractiveCommand {
     pub command: CommandType,
     pub args: Vec<String>,
+    #[allow(dead_code)] // Set by webhook handler when PR context is available
     pub context: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandType {
     Review,
@@ -21,7 +20,6 @@ pub enum CommandType {
     Config,
 }
 
-#[allow(dead_code)]
 impl InteractiveCommand {
     pub fn parse(comment: &str) -> Option<Self> {
         let command_regex = Regex::new(r"@diffscope\s+(\w+)(?:\s+(.*))?").ok()?;
@@ -186,6 +184,10 @@ impl InteractiveCommand {
         ))
     }
 
+    pub fn help_text() -> String {
+        Self::get_help_text()
+    }
+
     fn get_help_text() -> String {
         r#"## 🤖 DiffScope Interactive Commands
 
@@ -244,6 +246,8 @@ Interactive commands respect these configurations."#
     }
 }
 
+/// Manages per-session ignore patterns from @diffscope ignore commands.
+/// Will be wired into the review pipeline's triage filter.
 #[allow(dead_code)]
 pub struct InteractiveProcessor {
     ignored_patterns: HashSet<String>,

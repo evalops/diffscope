@@ -331,34 +331,88 @@ pub async fn handle_webhook(
                         })?
                     };
 
-                // Fetch diff and start review
-                let diff_url =
-                    format!("https://api.github.com/repos/{}/pulls/{}", repo, pr_number,);
-                let diff_resp = state
-                    .http_client
-                    .get(&diff_url)
-                    .header("Authorization", format!("Bearer {}", auth_token))
-                    .header("Accept", "application/vnd.github.v3.diff")
-                    .header("User-Agent", "DiffScope")
-                    .send()
-                    .await
-                    .map_err(|e| {
+                // Determine whether to fetch an incremental diff or the full PR diff.
+                // For "synchronize" events, if we have a previously reviewed SHA,
+                // fetch only the commits since that SHA via the compare API.
+                let pr_key = format!("{}#{}", repo, pr_number);
+                let last_reviewed_sha = if action == "synchronize" {
+                    AppState::get_last_reviewed_sha(&state, &pr_key).await
+                } else {
+                    None
+                };
+
+                let (diff_content, is_incremental) =
+                    if let Some(ref base_sha) = last_reviewed_sha {
+                        // Incremental: fetch only new commits since last review
+                        info!(
+                            repo = %repo,
+                            pr = pr_number,
+                            base_sha = %base_sha,
+                            head_sha = %head_sha,
+                            "Fetching incremental diff (push-by-push)"
+                        );
+                        let compare_url = format!(
+                            "https://api.github.com/repos/{}/compare/{}...{}",
+                            repo, base_sha, head_sha,
+                        );
+                        let compare_resp = state
+                            .http_client
+                            .get(&compare_url)
+                            .header("Authorization", format!("Bearer {}", auth_token))
+                            .header("Accept", "application/vnd.github.v3.diff")
+                            .header("User-Agent", "DiffScope")
+                            .send()
+                            .await
+                            .map_err(|e| {
+                                (
+                                    StatusCode::BAD_GATEWAY,
+                                    format!("Failed to fetch incremental diff: {}", e),
+                                )
+                            })?;
+
+                        if compare_resp.status().is_success() {
+                            let content = compare_resp.text().await.unwrap_or_default();
+                            if content.trim().is_empty() {
+                                // No changes between SHAs (e.g. force push to same content);
+                                // fall through to full diff below
+                                info!(
+                                    repo = %repo,
+                                    pr = pr_number,
+                                    "Incremental diff empty, falling back to full PR diff"
+                                );
+                                (
+                                    fetch_full_pr_diff(&state, &auth_token, &repo, pr_number)
+                                        .await?,
+                                    false,
+                                )
+                            } else {
+                                (content, true)
+                            }
+                        } else {
+                            // Compare API failed (e.g. force push rewrote history);
+                            // fall back to full PR diff
+                            let status = compare_resp.status();
+                            let body = compare_resp.text().await.unwrap_or_default();
+                            warn!(
+                                repo = %repo,
+                                pr = pr_number,
+                                status = %status,
+                                "Incremental compare failed ({}), falling back to full PR diff: {}",
+                                status,
+                                body,
+                            );
+                            (
+                                fetch_full_pr_diff(&state, &auth_token, &repo, pr_number).await?,
+                                false,
+                            )
+                        }
+                    } else {
+                        // No previous review or "opened" action — full PR diff
                         (
-                            StatusCode::BAD_GATEWAY,
-                            format!("Failed to fetch diff: {}", e),
+                            fetch_full_pr_diff(&state, &auth_token, &repo, pr_number).await?,
+                            false,
                         )
-                    })?;
-
-                if !diff_resp.status().is_success() {
-                    let status = diff_resp.status();
-                    let body = diff_resp.text().await.unwrap_or_default();
-                    return Err((
-                        StatusCode::BAD_GATEWAY,
-                        format!("GitHub returned {}: {}", status, body),
-                    ));
-                }
-
-                let diff_content = diff_resp.text().await.unwrap_or_default();
+                    };
 
                 let review_id = uuid::Uuid::new_v4().to_string();
                 let diff_source = format!("pr:{}#{}", repo, pr_number);
@@ -399,6 +453,7 @@ pub async fn handle_webhook(
                             head_sha,
                             pr_title,
                             auth_token,
+                            is_incremental,
                         },
                     )
                     .await;
@@ -408,7 +463,77 @@ pub async fn handle_webhook(
                     "ok": true,
                     "action": "review_started",
                     "review_id": review_id,
+                    "incremental": is_incremental,
                 })));
+            }
+        }
+        "issue_comment" => {
+            let payload: serde_json::Value = serde_json::from_str(&body)
+                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {}", e)))?;
+
+            let action = payload["action"].as_str().unwrap_or("");
+            let comment_body = payload["comment"]["body"].as_str().unwrap_or("");
+
+            // Only process new comments that contain @diffscope commands
+            if action == "created" {
+                if let Some(cmd) = crate::core::interactive::InteractiveCommand::parse(comment_body)
+                {
+                    let repo = payload["repository"]["full_name"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
+                    let issue_number = payload["issue"]["number"].as_u64().unwrap_or(0) as u32;
+
+                    info!(
+                        repo = %repo,
+                        issue = issue_number,
+                        command = ?cmd.command,
+                        "Processing @diffscope command"
+                    );
+
+                    // Execute the command
+                    let response_body = match cmd.command {
+                        crate::core::interactive::CommandType::Help => {
+                            crate::core::interactive::InteractiveCommand::help_text()
+                        }
+                        _ => {
+                            // Create adapter from server config for LLM commands
+                            let config = state.config.read().await;
+                            let model_config = config.to_model_config();
+                            drop(config);
+
+                            match crate::adapters::llm::create_adapter(&model_config) {
+                                Ok(adapter) => match cmd.execute(adapter.as_ref(), None).await {
+                                    Ok(result) => result,
+                                    Err(e) => format!("Command failed: {}", e),
+                                },
+                                Err(e) => format!("Failed to create adapter: {}", e),
+                            }
+                        }
+                    };
+
+                    // Post response comment if we have a token
+                    if let Some(ref auth) = token {
+                        let comment_url = format!(
+                            "https://api.github.com/repos/{}/issues/{}/comments",
+                            repo, issue_number
+                        );
+                        let _ = state
+                            .http_client
+                            .post(&comment_url)
+                            .header("Authorization", format!("Bearer {}", auth))
+                            .header("User-Agent", "DiffScope")
+                            .json(&serde_json::json!({ "body": response_body }))
+                            .send()
+                            .await;
+                    }
+
+                    return Ok(Json(serde_json::json!({
+                        "ok": true,
+                        "action": "command_processed",
+                        "command": format!("{:?}", cmd.command),
+                    })));
+                }
             }
         }
         "ping" => {
@@ -680,9 +805,51 @@ struct WebhookReviewParams {
     head_sha: String,
     pr_title: String,
     auth_token: String,
+    /// Whether this review covers only incremental changes (push-by-push delta).
+    is_incremental: bool,
 }
 
-#[tracing::instrument(name = "github.webhook_review", skip(state, params), fields(review_id = %params.review_id, repo = %params.repo, pr_number = params.pr_number, diff_bytes = params.diff_content.len()))]
+/// Fetch the full PR diff from the GitHub API.
+async fn fetch_full_pr_diff(
+    state: &Arc<AppState>,
+    auth_token: &str,
+    repo: &str,
+    pr_number: u32,
+) -> Result<String, (StatusCode, String)> {
+    let diff_url = format!("https://api.github.com/repos/{}/pulls/{}", repo, pr_number);
+    let diff_resp = state
+        .http_client
+        .get(&diff_url)
+        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Accept", "application/vnd.github.v3.diff")
+        .header("User-Agent", "DiffScope")
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to fetch diff: {}", e),
+            )
+        })?;
+
+    if !diff_resp.status().is_success() {
+        let status = diff_resp.status();
+        let body = diff_resp.text().await.unwrap_or_default();
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("GitHub returned {}: {}", status, body),
+        ));
+    }
+
+    diff_resp.text().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to read diff body: {}", e),
+        )
+    })
+}
+
+#[tracing::instrument(name = "github.webhook_review", skip(state, params), fields(review_id = %params.review_id, repo = %params.repo, pr_number = params.pr_number, diff_bytes = params.diff_content.len(), incremental = params.is_incremental))]
 async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
     let WebhookReviewParams {
         review_id,
@@ -692,6 +859,7 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
         head_sha,
         pr_title,
         auth_token,
+        is_incremental,
     } = params;
     use crate::core::comment::CommentSynthesizer;
 
@@ -745,6 +913,9 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
             event,
         )
         .await;
+        // Record the reviewed SHA for future incremental reviews
+        let pr_key = format!("{}#{}", repo, pr_number);
+        AppState::record_reviewed_sha(&state, &pr_key, &head_sha).await;
         AppState::save_reviews_async(&state);
         return;
     }
@@ -787,13 +958,17 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
             }
 
             // Create Check Run
+            let incremental_tag = if is_incremental { " (incremental)" } else { "" };
             let check_title = if pr_title.is_empty() {
                 format!(
-                    "DiffScope: {}/{}",
-                    summary.total_comments, summary.overall_score
+                    "DiffScope{}: {}/{}",
+                    incremental_tag, summary.total_comments, summary.overall_score
                 )
             } else {
-                format!("DiffScope: {} — {:.1}/10", pr_title, summary.overall_score)
+                format!(
+                    "DiffScope{}: {} — {:.1}/10",
+                    incremental_tag, pr_title, summary.overall_score
+                )
             };
             let _ = create_check_run(
                 &state.http_client,
@@ -856,6 +1031,18 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
             emit_wide_event(&event);
             AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
                 .await;
+
+            // Record the reviewed SHA for future incremental reviews
+            let pr_key = format!("{}#{}", repo, pr_number);
+            AppState::record_reviewed_sha(&state, &pr_key, &head_sha).await;
+            if is_incremental {
+                info!(
+                    repo = %repo,
+                    pr = pr_number,
+                    head_sha = %head_sha,
+                    "Incremental review completed, updated last reviewed SHA"
+                );
+            }
 
             // Generate AI-powered PR summary and post it as a comment if enabled
             if let Some(ref cfg) = summary_config {

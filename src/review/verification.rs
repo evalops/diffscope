@@ -160,10 +160,30 @@ fn parse_verification_response(content: &str, comments: &[Comment]) -> Vec<Verif
 
     for line in content.lines() {
         if let Some(caps) = FINDING_PATTERN.captures(line) {
-            let index: usize = caps.get(1).unwrap().as_str().parse().unwrap_or(0);
-            let score: u8 = caps.get(2).unwrap().as_str().parse().unwrap_or(0);
-            let accurate = caps.get(3).unwrap().as_str().to_lowercase() == "true";
-            let reason = caps.get(4).unwrap().as_str().trim().to_string();
+            let index: usize = caps
+                .get(1)
+                .expect("capture group 1 (index) must exist after regex match")
+                .as_str()
+                .parse()
+                .unwrap_or(0);
+            let score: u8 = caps
+                .get(2)
+                .expect("capture group 2 (score) must exist after regex match")
+                .as_str()
+                .parse()
+                .unwrap_or(0);
+            let accurate = caps
+                .get(3)
+                .expect("capture group 3 (accurate) must exist after regex match")
+                .as_str()
+                .to_lowercase()
+                == "true";
+            let reason = caps
+                .get(4)
+                .expect("capture group 4 (reason) must exist after regex match")
+                .as_str()
+                .trim()
+                .to_string();
 
             // Map 1-based index to comment
             if index > 0 && index <= comments.len() {

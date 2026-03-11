@@ -2,23 +2,9 @@ use crate::config::PluginConfig;
 use crate::core::{Comment, LLMContextChunk, UnifiedDiff};
 use crate::plugins::{PostProcessor, PreAnalyzer};
 use anyhow::Result;
-use async_trait::async_trait;
-use std::collections::HashMap;
 use std::sync::Arc;
 
-#[async_trait]
-#[allow(dead_code)]
-pub trait Plugin: Send + Sync {
-    fn id(&self) -> &str;
-    fn name(&self) -> &str;
-    fn version(&self) -> &str;
-
-    async fn as_pre_analyzer(&self) -> Option<Box<dyn PreAnalyzer>>;
-    async fn as_post_processor(&self) -> Option<Box<dyn PostProcessor>>;
-}
-
 pub struct PluginManager {
-    _plugins: HashMap<String, Arc<dyn Plugin>>,
     pre_analyzers: Vec<Arc<dyn PreAnalyzer>>,
     post_processors: Vec<Arc<dyn PostProcessor>>,
 }
@@ -26,7 +12,6 @@ pub struct PluginManager {
 impl PluginManager {
     pub fn new() -> Self {
         Self {
-            _plugins: HashMap::new(),
             pre_analyzers: Vec::new(),
             post_processors: Vec::new(),
         }
