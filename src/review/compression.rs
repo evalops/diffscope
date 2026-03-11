@@ -98,7 +98,11 @@ pub fn clip_diff(diff: &UnifiedDiff, max_chars: usize) -> Option<UnifiedDiff> {
     let mut chars_used = 0;
 
     for hunk in &diff.hunks {
-        let hunk_chars: usize = hunk.changes.iter().map(|c| c.content.len() + 10).sum::<usize>()
+        let hunk_chars: usize = hunk
+            .changes
+            .iter()
+            .map(|c| c.content.len() + 10)
+            .sum::<usize>()
             + hunk.context.len()
             + 20;
 
@@ -533,7 +537,10 @@ mod tests {
     fn test_clip_diff_keeps_at_least_one_hunk() {
         let diff = make_diff(
             "file.rs",
-            vec![make_hunk(vec![make_line(ChangeType::Added, &"x".repeat(1000))])],
+            vec![make_hunk(vec![make_line(
+                ChangeType::Added,
+                &"x".repeat(1000),
+            )])],
         );
         // Even with tiny budget, should keep at least one hunk
         let clipped = clip_diff(&diff, 10).unwrap();
@@ -556,10 +563,7 @@ mod tests {
 
     #[test]
     fn test_skipped_summary_includes_modified_files() {
-        let diffs = vec![
-            make_simple_diff("a.rs", 100),
-            make_simple_diff("b.rs", 100),
-        ];
+        let diffs = vec![make_simple_diff("a.rs", 100), make_simple_diff("b.rs", 100)];
         let summary = build_skipped_summary(&diffs, &[1]);
         assert!(summary.contains("b.rs"));
         assert!(summary.contains("not reviewed"));
@@ -579,10 +583,7 @@ mod tests {
 
     #[test]
     fn test_stage1_full_when_fits() {
-        let diffs = vec![
-            make_simple_diff("a.rs", 100),
-            make_simple_diff("b.rs", 100),
-        ];
+        let diffs = vec![make_simple_diff("a.rs", 100), make_simple_diff("b.rs", 100)];
         let result = compress_diffs(&diffs, 10000, 5);
         assert_eq!(result.strategy, CompressionStrategy::Full);
         assert_eq!(result.batches.len(), 1);

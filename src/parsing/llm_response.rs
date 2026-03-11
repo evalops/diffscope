@@ -44,10 +44,7 @@ pub fn parse_llm_response(
 }
 
 /// Strategy 1: Primary parser — `Line <num>: <text>` with code suggestion blocks.
-fn parse_primary(
-    content: &str,
-    file_path: &Path,
-) -> Result<Vec<core::comment::RawComment>> {
+fn parse_primary(content: &str, file_path: &Path) -> Result<Vec<core::comment::RawComment>> {
     let mut comments = Vec::new();
     static LINE_PATTERN: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)line\s+(\d+)((?:\s*(?:\[[^\]]+\]|\([^)]+\)))*)\s*:\s*(.+)").unwrap()
@@ -223,8 +220,7 @@ fn parse_markdown_bullets(content: &str, file_path: &Path) -> Vec<core::comment:
 ///   file.py:15: SQL injection vulnerability
 fn parse_file_line_format(content: &str, file_path: &Path) -> Vec<core::comment::RawComment> {
     static FILE_LINE_PATTERN: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^\s*\*{0,2}(?:[\w./]+):(\d+)\*{0,2}\s*[-\u{2013}\u{2014}:]\s*(.+)")
-            .unwrap()
+        Regex::new(r"^\s*\*{0,2}(?:[\w./]+):(\d+)\*{0,2}\s*[-\u{2013}\u{2014}:]\s*(.+)").unwrap()
     });
 
     let mut comments = Vec::new();
@@ -243,8 +239,7 @@ fn parse_file_line_format(content: &str, file_path: &Path) -> Vec<core::comment:
 /// Tries to find and parse JSON arrays from the response content.
 /// Handles JSON in code blocks or bare JSON arrays.
 fn parse_json_format(content: &str, file_path: &Path) -> Vec<core::comment::RawComment> {
-    let json_str = extract_json_from_code_block(content)
-        .or_else(|| find_json_array(content));
+    let json_str = extract_json_from_code_block(content).or_else(|| find_json_array(content));
 
     if let Some(json_str) = json_str {
         if let Ok(items) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
@@ -276,9 +271,8 @@ fn parse_json_format(content: &str, file_path: &Path) -> Vec<core::comment::RawC
 
 /// Extract JSON array content from markdown code blocks (```json ... ``` or ``` ... ```).
 fn extract_json_from_code_block(content: &str) -> Option<String> {
-    static CODE_BLOCK: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?s)```(?:json)?\s*\n(.*?)```").unwrap()
-    });
+    static CODE_BLOCK: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?s)```(?:json)?\s*\n(.*?)```").unwrap());
 
     for caps in CODE_BLOCK.captures_iter(content) {
         let block = caps.get(1).unwrap().as_str().trim();
@@ -621,7 +615,8 @@ let data = &input;
 
     #[test]
     fn parse_fallback_markdown_bullets() {
-        let input = "- Line 42: Missing null check on user input\n- Line 15: SQL injection vulnerability";
+        let input =
+            "- Line 42: Missing null check on user input\n- Line 15: SQL injection vulnerability";
         let file_path = PathBuf::from("src/lib.rs");
         let comments = parse_llm_response(input, &file_path).unwrap();
         assert_eq!(comments.len(), 2);

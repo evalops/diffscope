@@ -53,10 +53,9 @@ impl ContextFetcher {
                 let end = end.max(start);
 
                 // Dynamic context: expand start to enclosing function boundary
-                let expanded_start =
-                    find_enclosing_boundary_line(&content, file_path, start, 10)
-                        .filter(|&boundary| boundary >= start.saturating_sub(10))
-                        .unwrap_or_else(|| start.saturating_sub(5)); // fallback: 5 lines before
+                let expanded_start = find_enclosing_boundary_line(&content, file_path, start, 10)
+                    .filter(|&boundary| boundary >= start.saturating_sub(10))
+                    .unwrap_or_else(|| start.saturating_sub(5)); // fallback: 5 lines before
                 let expanded_start = expanded_start.max(1);
 
                 // Asymmetric: less context after (1 extra line)

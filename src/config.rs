@@ -1574,7 +1574,10 @@ mod tests {
             model: "claude-sonnet-4-6".to_string(),
             ..Config::default()
         };
-        assert_eq!(config.model_for_role(ModelRole::Primary), "claude-sonnet-4-6");
+        assert_eq!(
+            config.model_for_role(ModelRole::Primary),
+            "claude-sonnet-4-6"
+        );
     }
 
     #[test]
@@ -1604,7 +1607,10 @@ mod tests {
             model_reasoning: None,
             ..Config::default()
         };
-        assert_eq!(config.model_for_role(ModelRole::Reasoning), "claude-sonnet-4-6");
+        assert_eq!(
+            config.model_for_role(ModelRole::Reasoning),
+            "claude-sonnet-4-6"
+        );
     }
 
     #[test]
@@ -1614,7 +1620,10 @@ mod tests {
             model_reasoning: Some("claude-opus-4-6".to_string()),
             ..Config::default()
         };
-        assert_eq!(config.model_for_role(ModelRole::Reasoning), "claude-opus-4-6");
+        assert_eq!(
+            config.model_for_role(ModelRole::Reasoning),
+            "claude-opus-4-6"
+        );
     }
 
     #[test]
@@ -1624,7 +1633,10 @@ mod tests {
             model_embedding: None,
             ..Config::default()
         };
-        assert_eq!(config.model_for_role(ModelRole::Embedding), "text-embedding-3-small");
+        assert_eq!(
+            config.model_for_role(ModelRole::Embedding),
+            "text-embedding-3-small"
+        );
     }
 
     #[test]
@@ -1634,7 +1646,10 @@ mod tests {
             model_embedding: Some("custom-embedding-model".to_string()),
             ..Config::default()
         };
-        assert_eq!(config.model_for_role(ModelRole::Embedding), "custom-embedding-model");
+        assert_eq!(
+            config.model_for_role(ModelRole::Embedding),
+            "custom-embedding-model"
+        );
     }
 
     #[test]
@@ -1672,7 +1687,10 @@ fallback_models:
         assert_eq!(config.model, "claude-sonnet-4-6");
         assert_eq!(config.model_weak, Some("claude-haiku-4-5".to_string()));
         assert_eq!(config.model_reasoning, Some("claude-opus-4-6".to_string()));
-        assert_eq!(config.model_embedding, Some("text-embedding-3-small".to_string()));
+        assert_eq!(
+            config.model_embedding,
+            Some("text-embedding-3-small".to_string())
+        );
         assert_eq!(config.fallback_models.len(), 2);
     }
 
