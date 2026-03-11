@@ -4,6 +4,24 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
+/// Identifies the role a model plays in the review pipeline.
+///
+/// Different tasks benefit from different model tiers: cheap/fast models
+/// for triage and summarization, frontier models for deep review, and
+/// specialised models for reasoning or embeddings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelRole {
+    /// The main review model (default).
+    Primary,
+    /// Cheap/fast model for triage, summarization, NL translation.
+    Weak,
+    /// Reasoning-capable model for complex analysis and self-reflection.
+    Reasoning,
+    /// Embedding model for RAG indexing.
+    Embedding,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     #[serde(default)]
@@ -28,6 +46,22 @@ impl Default for ProviderConfig {
 pub struct Config {
     #[serde(default = "default_model")]
     pub model: String,
+
+    /// Cheap/fast model for triage, summarization, NL translation.
+    #[serde(default)]
+    pub model_weak: Option<String>,
+
+    /// Reasoning-capable model for complex analysis and self-reflection.
+    #[serde(default)]
+    pub model_reasoning: Option<String>,
+
+    /// Embedding model for RAG indexing.
+    #[serde(default)]
+    pub model_embedding: Option<String>,
+
+    /// Fallback models tried in order when the primary model fails.
+    #[serde(default)]
+    pub fallback_models: Vec<String>,
 
     #[serde(default = "default_temperature")]
     pub temperature: f32,
@@ -303,6 +337,10 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             model: default_model(),
+            model_weak: None,
+            model_reasoning: None,
+            model_embedding: None,
+            fallback_models: Vec::new(),
             temperature: default_temperature(),
             max_tokens: default_max_tokens(),
             max_context_chars: default_max_context_chars(),
@@ -867,6 +905,23 @@ impl Config {
             max_retries: self.adapter_max_retries,
             retry_delay_ms: self.adapter_retry_delay_ms,
         }
+    }
+
+    /// Get the model name for a specific role, falling back to the primary model.
+    pub fn model_for_role(&self, role: ModelRole) -> &str {
+        match role {
+            ModelRole::Primary => &self.model,
+            ModelRole::Weak => self.model_weak.as_deref().unwrap_or(&self.model),
+            ModelRole::Reasoning => self.model_reasoning.as_deref().unwrap_or(&self.model),
+            ModelRole::Embedding => self.model_embedding.as_deref().unwrap_or(&self.model),
+        }
+    }
+
+    /// Build a ModelConfig for a specific role.
+    pub fn to_model_config_for_role(&self, role: ModelRole) -> crate::adapters::llm::ModelConfig {
+        let mut config = self.to_model_config();
+        config.model_name = self.model_for_role(role).to_string();
+        config
     }
 
     /// Resolve which provider to use based on configuration.
@@ -1508,5 +1563,147 @@ mod tests {
             config.symbol_index_lsp_command.as_deref(),
             Some("rust-analyzer")
         );
+    }
+
+    #[test]
+    fn test_model_role_primary_returns_model() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            ..Config::default()
+        };
+        assert_eq!(
+            config.model_for_role(ModelRole::Primary),
+            "claude-sonnet-4-6"
+        );
+    }
+
+    #[test]
+    fn test_model_role_weak_fallback_to_primary() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_weak: None,
+            ..Config::default()
+        };
+        assert_eq!(config.model_for_role(ModelRole::Weak), "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn test_model_role_weak_explicit() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_weak: Some("claude-haiku-4-5".to_string()),
+            ..Config::default()
+        };
+        assert_eq!(config.model_for_role(ModelRole::Weak), "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn test_model_role_reasoning_fallback() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_reasoning: None,
+            ..Config::default()
+        };
+        assert_eq!(
+            config.model_for_role(ModelRole::Reasoning),
+            "claude-sonnet-4-6"
+        );
+    }
+
+    #[test]
+    fn test_model_role_reasoning_explicit() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_reasoning: Some("claude-opus-4-6".to_string()),
+            ..Config::default()
+        };
+        assert_eq!(
+            config.model_for_role(ModelRole::Reasoning),
+            "claude-opus-4-6"
+        );
+    }
+
+    #[test]
+    fn test_model_role_embedding_default() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_embedding: None,
+            ..Config::default()
+        };
+        // Falls back to primary model when no embedding model configured
+        assert_eq!(
+            config.model_for_role(ModelRole::Embedding),
+            "claude-sonnet-4-6"
+        );
+    }
+
+    #[test]
+    fn test_model_role_embedding_explicit() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_embedding: Some("custom-embedding-model".to_string()),
+            ..Config::default()
+        };
+        assert_eq!(
+            config.model_for_role(ModelRole::Embedding),
+            "custom-embedding-model"
+        );
+    }
+
+    #[test]
+    fn test_to_model_config_for_role_uses_correct_model() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_weak: Some("claude-haiku-4-5".to_string()),
+            ..Config::default()
+        };
+        let primary_config = config.to_model_config_for_role(ModelRole::Primary);
+        assert_eq!(primary_config.model_name, "claude-sonnet-4-6");
+
+        let weak_config = config.to_model_config_for_role(ModelRole::Weak);
+        assert_eq!(weak_config.model_name, "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn test_fallback_models_default_empty() {
+        let config = Config::default();
+        assert!(config.fallback_models.is_empty());
+    }
+
+    #[test]
+    fn test_config_deserialization_with_model_roles() {
+        let yaml = r#"
+model: claude-sonnet-4-6
+model_weak: claude-haiku-4-5
+model_reasoning: claude-opus-4-6
+model_embedding: text-embedding-3-small
+fallback_models:
+  - gpt-4o
+  - claude-sonnet-4-6
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.model, "claude-sonnet-4-6");
+        assert_eq!(config.model_weak, Some("claude-haiku-4-5".to_string()));
+        assert_eq!(config.model_reasoning, Some("claude-opus-4-6".to_string()));
+        assert_eq!(
+            config.model_embedding,
+            Some("text-embedding-3-small".to_string())
+        );
+        assert_eq!(config.fallback_models.len(), 2);
+    }
+
+    #[test]
+    fn test_config_deserialization_without_model_roles() {
+        // Existing configs without new fields should still work
+        let yaml = r#"
+model: claude-sonnet-4-6
+temperature: 0.3
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.model, "claude-sonnet-4-6");
+        assert!(config.model_weak.is_none());
+        assert!(config.model_reasoning.is_none());
+        assert!(config.model_embedding.is_none());
+        assert!(config.fallback_models.is_empty());
     }
 }

@@ -13,14 +13,14 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use rust_embed::Embed;
+use rust_embed::RustEmbed;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
 use crate::config::Config;
 
-#[derive(Embed)]
+#[derive(RustEmbed)]
 #[folder = "web/dist"]
 struct WebAssets;
 

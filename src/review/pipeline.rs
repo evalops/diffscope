@@ -20,6 +20,9 @@ use crate::output::OutputFormat;
 use crate::parsing::parse_llm_response;
 use crate::plugins;
 
+use super::compression;
+use super::triage;
+
 /// Rich result from the review pipeline, carrying comments plus telemetry metadata.
 #[derive(Debug, Clone, Default)]
 pub struct ReviewResult {
@@ -176,6 +179,22 @@ async fn review_diff_content_raw_inner(
         }
     }
 
+    // Adaptive compression: decide strategy based on token budget
+    let token_budget = config.max_diff_chars / 4; // rough char→token conversion
+    let compression_result = compression::compress_diffs(&diffs, token_budget.max(2000), 5);
+    info!(
+        "Compression strategy: {:?} ({} batches, {} skipped)",
+        compression_result.strategy,
+        compression_result.batches.len(),
+        compression_result.skipped_indices.len(),
+    );
+    if !compression_result.skipped_summary.is_empty() {
+        info!(
+            "Compression analysis skipped files (advisory in per-file mode):\n{}",
+            compression_result.skipped_summary
+        );
+    }
+
     // Gather git history for enhanced context
     let git_log_output = gather_git_log(repo_path);
 
@@ -232,6 +251,20 @@ async fn review_diff_content_raw_inner(
 
     let adapter: Arc<dyn adapters::llm::LLMAdapter> =
         Arc::from(adapters::llm::create_adapter(&model_config)?);
+
+    // Use weak model for verification pass (cheaper, faster)
+    let verification_adapter: Arc<dyn adapters::llm::LLMAdapter> = {
+        let weak_config = config.to_model_config_for_role(config::ModelRole::Weak);
+        if weak_config.model_name != model_config.model_name {
+            info!(
+                "Using weak model '{}' for verification pass",
+                weak_config.model_name
+            );
+            Arc::from(adapters::llm::create_adapter(&weak_config)?)
+        } else {
+            adapter.clone()
+        }
+    };
     let base_prompt_config = core::prompt::PromptConfig {
         max_context_chars: config.max_context_chars,
         max_diff_chars: config.max_diff_chars,
@@ -270,6 +303,18 @@ async fn review_diff_content_raw_inner(
         }
         if diff.is_binary || diff.hunks.is_empty() {
             info!("Skipping non-text diff: {}", diff.file_path.display());
+            files_skipped += 1;
+            continue;
+        }
+
+        // Triage: skip files that don't need expensive LLM review
+        let triage_result = triage::triage_diff(diff);
+        if triage_result.should_skip() {
+            info!(
+                "Skipping {} (triage: {})",
+                diff.file_path.display(),
+                triage_result.reason()
+            );
             files_skipped += 1;
             continue;
         }
@@ -699,6 +744,37 @@ async fn review_diff_content_raw_inner(
     let processed_comments = plugin_manager
         .run_post_processors(all_comments, &repo_path_str)
         .await?;
+
+    // Verification pass: ask the LLM to validate findings against actual code.
+    // Skip when there are no comments or too many (cost control: max 20).
+    let processed_comments = if !processed_comments.is_empty() && processed_comments.len() <= 20 {
+        let comment_count_before = processed_comments.len();
+        let fallback_comments = processed_comments.clone();
+        match super::verification::verify_comments(
+            processed_comments,
+            diff_content,
+            verification_adapter.as_ref(),
+            5, // min_score threshold
+        )
+        .await
+        {
+            Ok(verified) => {
+                info!(
+                    "Verification pass: {}/{} comments passed",
+                    verified.len(),
+                    comment_count_before
+                );
+                verified
+            }
+            Err(e) => {
+                warn!("Verification pass failed, keeping all comments: {}", e);
+                fallback_comments
+            }
+        }
+    } else {
+        processed_comments
+    };
+
     let processed_comments = apply_review_filters(processed_comments, &config, &feedback);
 
     // Apply enhanced filters from convention learning and composable pipeline
