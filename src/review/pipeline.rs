@@ -713,6 +713,37 @@ async fn review_diff_content_raw_inner(
     let processed_comments = plugin_manager
         .run_post_processors(all_comments, &repo_path_str)
         .await?;
+
+    // Verification pass: ask the LLM to validate findings against actual code.
+    // Skip when there are no comments or too many (cost control: max 20).
+    let processed_comments = if !processed_comments.is_empty() && processed_comments.len() <= 20 {
+        let comment_count_before = processed_comments.len();
+        let fallback_comments = processed_comments.clone();
+        match super::verification::verify_comments(
+            processed_comments,
+            diff_content,
+            adapter.as_ref(),
+            5, // min_score threshold
+        )
+        .await
+        {
+            Ok(verified) => {
+                info!(
+                    "Verification pass: {}/{} comments passed",
+                    verified.len(),
+                    comment_count_before
+                );
+                verified
+            }
+            Err(e) => {
+                warn!("Verification pass failed, keeping all comments: {}", e);
+                fallback_comments
+            }
+        }
+    } else {
+        processed_comments
+    };
+
     let processed_comments = apply_review_filters(processed_comments, &config, &feedback);
 
     // Apply enhanced filters from convention learning and composable pipeline
