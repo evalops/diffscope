@@ -151,7 +151,11 @@ impl StorageBackend for JsonStorageBackend {
                     .time_to
                     .as_ref()
                     .is_none_or(|to| e.created_at.is_none_or(|t| t <= *to));
-                source_ok && model_ok && status_ok && time_from_ok && time_to_ok
+                let repo_ok = filters
+                    .github_repo
+                    .as_ref()
+                    .is_none_or(|f| e.github_repo.as_deref().is_some_and(|r| r == f.as_str()));
+                source_ok && model_ok && status_ok && time_from_ok && time_to_ok && repo_ok
             })
             .collect();
 
@@ -171,7 +175,11 @@ impl StorageBackend for JsonStorageBackend {
     }
 
     async fn get_event_stats(&self, filters: &EventFilters) -> anyhow::Result<EventStats> {
-        let events = self.list_events(filters).await?;
+        // Stats must cover ALL matching events, not a paginated subset
+        let mut stats_filters = filters.clone();
+        stats_filters.limit = None;
+        stats_filters.offset = None;
+        let events = self.list_events(&stats_filters).await?;
 
         let total = events.len() as i64;
         let completed = events
@@ -334,36 +342,44 @@ impl StorageBackend for JsonStorageBackend {
     }
 
     async fn prune(&self, max_age_secs: i64, max_count: usize) -> anyhow::Result<usize> {
-        let mut reviews = self.reviews.write().await;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
+        let removed = {
+            let mut reviews = self.reviews.write().await;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
 
-        let expired: Vec<String> = reviews
-            .iter()
-            .filter(|(_, r)| now - r.started_at > max_age_secs)
-            .map(|(id, _)| id.clone())
-            .collect();
-        let mut removed = expired.len();
-        for id in &expired {
-            reviews.remove(id);
-        }
-
-        if reviews.len() > max_count {
-            let mut completed: Vec<(String, i64)> = reviews
+            let expired: Vec<String> = reviews
                 .iter()
-                .filter(|(_, r)| {
-                    r.status == ReviewStatus::Complete || r.status == ReviewStatus::Failed
-                })
-                .map(|(id, r)| (id.clone(), r.started_at))
+                .filter(|(_, r)| now - r.started_at > max_age_secs)
+                .map(|(id, _)| id.clone())
                 .collect();
-            completed.sort_by_key(|(_, ts)| *ts);
-            let to_remove = reviews.len() - max_count;
-            for (id, _) in completed.into_iter().take(to_remove) {
-                reviews.remove(&id);
-                removed += 1;
+            let mut removed = expired.len();
+            for id in &expired {
+                reviews.remove(id);
             }
+
+            if reviews.len() > max_count {
+                let mut completed: Vec<(String, i64)> = reviews
+                    .iter()
+                    .filter(|(_, r)| {
+                        r.status == ReviewStatus::Complete || r.status == ReviewStatus::Failed
+                    })
+                    .map(|(id, r)| (id.clone(), r.started_at))
+                    .collect();
+                completed.sort_by_key(|(_, ts)| *ts);
+                let to_remove = reviews.len() - max_count;
+                for (id, _) in completed.into_iter().take(to_remove) {
+                    reviews.remove(&id);
+                    removed += 1;
+                }
+            }
+
+            removed
+        }; // write lock dropped here
+
+        if removed > 0 {
+            self.flush_to_disk().await;
         }
 
         Ok(removed)
@@ -1433,6 +1449,119 @@ mod tests {
             "Error rate should be {:.2} (only explicit failures), got {:.2}",
             expected_error_rate,
             stats.error_rate
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_events_filter_by_github_repo() {
+        // BUG: list_events doesn't check filters.github_repo
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+        let now = now_ts();
+
+        let mut s1 = make_session_with_event(
+            "r1",
+            now,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "github",
+            100,
+        );
+        s1.event.as_mut().unwrap().github_repo = Some("owner/repo-a".to_string());
+        backend.save_review(&s1).await.unwrap();
+
+        let mut s2 = make_session_with_event(
+            "r2",
+            now + 1,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "github",
+            200,
+        );
+        s2.event.as_mut().unwrap().github_repo = Some("owner/repo-b".to_string());
+        backend.save_review(&s2).await.unwrap();
+
+        let filters = EventFilters {
+            github_repo: Some("owner/repo-a".to_string()),
+            ..Default::default()
+        };
+        let events = backend.list_events(&filters).await.unwrap();
+        assert_eq!(
+            events.len(),
+            1,
+            "Should only return events for repo-a, got {}",
+            events.len()
+        );
+        assert_eq!(events[0].github_repo.as_deref(), Some("owner/repo-a"));
+    }
+
+    #[tokio::test]
+    async fn test_prune_persists_to_disk() {
+        // BUG: prune removes from memory but doesn't flush to disk
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reviews.json");
+        let backend = JsonStorageBackend::new(&path);
+        let now = now_ts();
+
+        for i in 0..3 {
+            backend
+                .save_review(&make_session(
+                    &format!("r{}", i),
+                    now - 100000 + i as i64, // old enough to expire
+                    ReviewStatus::Complete,
+                ))
+                .await
+                .unwrap();
+        }
+
+        let removed = backend.prune(1000, 100).await.unwrap();
+        assert_eq!(removed, 3);
+
+        // Reload from disk — pruned reviews should be gone
+        let backend2 = JsonStorageBackend::new(&path);
+        let remaining = backend2.list_reviews(100, 0).await.unwrap();
+        assert_eq!(
+            remaining.len(),
+            0,
+            "Pruned reviews should not reappear after reload from disk, got {}",
+            remaining.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_event_stats_ignores_limit_offset() {
+        // BUG: get_event_stats calls list_events which applies limit/offset,
+        // so stats are computed on a truncated subset
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+        let now = now_ts();
+
+        for i in 0..10 {
+            backend
+                .save_review(&make_session_with_event(
+                    &format!("r{}", i),
+                    now + i as i64,
+                    ReviewStatus::Complete,
+                    "review.completed",
+                    "gpt-4o",
+                    "head",
+                    100,
+                ))
+                .await
+                .unwrap();
+        }
+
+        let filters = EventFilters {
+            limit: Some(3),
+            ..Default::default()
+        };
+        let stats = backend.get_event_stats(&filters).await.unwrap();
+        assert_eq!(
+            stats.total_reviews, 10,
+            "Stats should cover all 10 events regardless of limit, got {}",
+            stats.total_reviews
         );
     }
 }

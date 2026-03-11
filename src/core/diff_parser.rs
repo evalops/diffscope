@@ -315,8 +315,8 @@ impl DiffParser {
 
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 4 {
-            let a_path = parts[2].trim_start_matches("a/");
-            let b_path = parts[3].trim_start_matches("b/");
+            let a_path = parts[2].strip_prefix("a/").unwrap_or(parts[2]);
+            let b_path = parts[3].strip_prefix("b/").unwrap_or(parts[3]);
             let chosen = if b_path != "/dev/null" {
                 b_path
             } else {
@@ -342,10 +342,11 @@ impl DiffParser {
         } else {
             raw.split_whitespace().next().unwrap_or(raw)
         };
-        Ok(path
-            .trim_start_matches("a/")
-            .trim_start_matches("b/")
-            .to_string())
+        let path = path
+            .strip_prefix("a/")
+            .or_else(|| path.strip_prefix("b/"))
+            .unwrap_or(path);
+        Ok(path.to_string())
     }
 
     fn parse_hunk(lines: &[&str], i: &mut usize) -> Result<DiffHunk> {
@@ -357,11 +358,17 @@ impl DiffParser {
         let mut old_line = old_start;
         let mut new_line = new_start;
 
+        let is_file_header = |lines: &[&str], idx: usize| -> bool {
+            lines[idx].starts_with("--- ")
+                && lines
+                    .get(idx + 1)
+                    .is_some_and(|next| next.starts_with("+++ "))
+        };
+
         while *i < lines.len()
             && !lines[*i].starts_with("@@")
             && !lines[*i].starts_with("diff --git")
-            && !lines[*i].starts_with("--- ")
-            && !lines[*i].starts_with("+++ ")
+            && !is_file_header(lines, *i)
         {
             let line = lines[*i];
             if line.starts_with("\\ No newline at end of file") {
@@ -598,5 +605,68 @@ index abc..def 100644\n\
             diff.is_deleted,
             "parse_text_diff with empty new content should set is_deleted=true"
         );
+    }
+
+    #[test]
+    fn test_extract_path_from_header_file_in_b_directory() {
+        // BUG: trim_start_matches("a/").trim_start_matches("b/") strips both prefixes
+        // from files inside a directory named "b", e.g. "a/b/config.yaml" -> "config.yaml"
+        let path = DiffParser::extract_path_from_header("--- a/b/config.yaml", "--- ").unwrap();
+        assert_eq!(
+            path, "b/config.yaml",
+            "File in b/ directory should keep the b/ prefix"
+        );
+    }
+
+    #[test]
+    fn test_extract_path_from_header_file_in_a_directory() {
+        // Same bug: "b/a/test.txt" -> "test.txt" via double strip
+        let path = DiffParser::extract_path_from_header("+++ b/a/test.txt", "+++ ").unwrap();
+        assert_eq!(
+            path, "a/test.txt",
+            "File in a/ directory should keep the a/ prefix"
+        );
+    }
+
+    #[test]
+    fn test_parse_hunk_removed_line_starting_with_double_dash() {
+        // BUG: a removed line whose content starts with "-- " produces a diff line
+        // starting with "--- ", which the parser treats as a file header and stops.
+        let diff_text = "\
+diff --git a/test.txt b/test.txt
+--- a/test.txt
++++ b/test.txt
+@@ -1,3 +1,2 @@
+ first line
+--- this is a separator
+ third line
+";
+        let diffs = DiffParser::parse_unified_diff(diff_text).unwrap();
+        assert_eq!(diffs.len(), 1);
+        let hunk = &diffs[0].hunks[0];
+        // Should have 3 changes: context, removed, context
+        assert_eq!(
+            hunk.changes.len(),
+            3,
+            "Hunk should contain all 3 lines, not stop at the '--- ' line. Got {} changes.",
+            hunk.changes.len()
+        );
+        let removed = hunk
+            .changes
+            .iter()
+            .find(|c| c.change_type == ChangeType::Removed);
+        assert!(
+            removed.is_some(),
+            "Should have a removed line with content '-- this is a separator'"
+        );
+    }
+
+    #[test]
+    fn test_extract_file_path_file_in_a_subdirectory() {
+        // Verify the regex path correctly preserves a/ subdirectory
+        let path =
+            DiffParser::extract_file_path("diff --git a/a/nested/file.rs b/a/nested/file.rs")
+                .unwrap();
+        assert_eq!(path, "a/nested/file.rs");
     }
 }

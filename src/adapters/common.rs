@@ -151,6 +151,12 @@ fn is_known_public_api(host: &str) -> bool {
         || host.contains("mistral.ai")
         || host.contains("cohere.ai")
         || host.contains("cohere.com")
+        || host.contains("openrouter.ai")
+        || host.contains("together.ai")
+        || host.contains("groq.com")
+        || host.contains("fireworks.ai")
+        || host.contains("deepinfra.com")
+        || host.contains("perplexity.ai")
 }
 
 #[cfg(test)]

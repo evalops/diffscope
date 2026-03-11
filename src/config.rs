@@ -1034,13 +1034,7 @@ impl Config {
     /// Returns true if the configured base_url points to a local/self-hosted server.
     pub fn is_local_endpoint(&self) -> bool {
         match self.base_url.as_deref() {
-            Some(url) => {
-                url.contains("localhost")
-                    || url.contains("127.0.0.1")
-                    || url.contains("0.0.0.0")
-                    || url.contains("[::1]")
-                    || (!url.contains("openai.com") && !url.contains("anthropic.com"))
-            }
+            Some(url) => crate::adapters::common::is_local_endpoint(url),
             None => false,
         }
     }
@@ -1774,6 +1768,32 @@ temperature: 0.3
             model.contains("opus"),
             "Default model should be Opus (frontier), got: {}",
             model
+        );
+    }
+
+    #[test]
+    fn test_is_local_endpoint_openrouter_not_local() {
+        // BUG: Config::is_local_endpoint returns true for any URL that doesn't
+        // contain "openai.com" or "anthropic.com", including cloud providers
+        let config = Config {
+            base_url: Some("https://openrouter.ai/api/v1".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            !config.is_local_endpoint(),
+            "OpenRouter is a cloud provider, not a local endpoint"
+        );
+    }
+
+    #[test]
+    fn test_is_local_endpoint_azure_not_local() {
+        let config = Config {
+            base_url: Some("https://myinstance.openai.azure.com/v1".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            !config.is_local_endpoint(),
+            "Azure OpenAI is a cloud provider, not a local endpoint"
         );
     }
 }

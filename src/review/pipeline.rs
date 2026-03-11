@@ -1148,7 +1148,8 @@ fn has_excessive_repetition(text: &str) -> bool {
         return false;
     }
     let window = 20.min(text.len() / 5);
-    for start in 0..text.len().saturating_sub(window * 5) {
+    let search_end = text.len().saturating_sub(window);
+    for start in 0..search_end.max(1) {
         if !text.is_char_boundary(start) || !text.is_char_boundary(start + window) {
             continue;
         }
@@ -1909,5 +1910,25 @@ mod tests {
     fn multi_pass_specialized_config_default_false() {
         let config = config::Config::default();
         assert!(!config.multi_pass_specialized);
+    }
+
+    #[test]
+    fn test_has_excessive_repetition_boundary_120_chars() {
+        // BUG: when text.len() == 100, window=20, the old loop range was 0..0 (empty).
+        // Even after fixing the range, the check is count > 5, so we need 6 repetitions.
+        let pattern = "abcdefghij1234567890"; // 20 chars
+        let text = pattern.repeat(6); // 120 chars, 6 repetitions
+        assert_eq!(text.len(), 120);
+        assert!(
+            has_excessive_repetition(&text),
+            "120-char string with 6x repeated 20-char pattern should be detected"
+        );
+    }
+
+    #[test]
+    fn test_has_excessive_repetition_short_not_detected() {
+        // Strings under 100 chars should always return false
+        let text = "abc".repeat(30); // 90 chars
+        assert!(!has_excessive_repetition(&text));
     }
 }
