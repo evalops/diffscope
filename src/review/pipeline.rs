@@ -251,6 +251,20 @@ async fn review_diff_content_raw_inner(
 
     let adapter: Arc<dyn adapters::llm::LLMAdapter> =
         Arc::from(adapters::llm::create_adapter(&model_config)?);
+
+    // Use weak model for verification pass (cheaper, faster)
+    let verification_adapter: Arc<dyn adapters::llm::LLMAdapter> = {
+        let weak_config = config.to_model_config_for_role(config::ModelRole::Weak);
+        if weak_config.model_name != model_config.model_name {
+            info!(
+                "Using weak model '{}' for verification pass",
+                weak_config.model_name
+            );
+            Arc::from(adapters::llm::create_adapter(&weak_config)?)
+        } else {
+            adapter.clone()
+        }
+    };
     let base_prompt_config = core::prompt::PromptConfig {
         max_context_chars: config.max_context_chars,
         max_diff_chars: config.max_diff_chars,
@@ -739,7 +753,7 @@ async fn review_diff_content_raw_inner(
         match super::verification::verify_comments(
             processed_comments,
             diff_content,
-            adapter.as_ref(),
+            verification_adapter.as_ref(),
             5, // min_score threshold
         )
         .await
