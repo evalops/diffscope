@@ -265,12 +265,16 @@ fn find_function_end(lines: &[&str], start: usize, language: &str) -> usize {
                         prev_ch = ch;
                         continue;
                     }
-                    // Skip line comments: // in most languages, # in Python/Ruby/Shell
+                    // Skip line comments: // in C-family languages,
+                    // # in Python/Ruby/Shell (but not in C/C++/Rust/Java
+                    // where # is a preprocessor directive or attribute)
                     if !in_double_quote && !in_single_quote {
                         if ch == '/' && prev_ch == '/' {
                             break; // rest of line is a comment
                         }
-                        if ch == '#' && !in_double_quote && !in_single_quote {
+                        if ch == '#'
+                            && matches!(language, "py" | "rb" | "sh" | "bash" | "zsh" | "r")
+                        {
                             break; // rest of line is a comment
                         }
                     }
