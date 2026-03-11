@@ -606,4 +606,34 @@ mod tests {
             assert_eq!(parsed, reason);
         }
     }
+
+    #[test]
+    fn test_chat_role_display() {
+        assert_eq!(ChatRole::User.to_string(), "user");
+        assert_eq!(ChatRole::Assistant.to_string(), "assistant");
+        // Ensure they produce different strings (catches mutation → same output)
+        assert_ne!(ChatRole::User.to_string(), ChatRole::Assistant.to_string());
+    }
+
+    #[test]
+    fn test_default_supports_tools_is_false() {
+        use async_trait::async_trait;
+
+        struct MinimalAdapter;
+        #[async_trait]
+        impl LLMAdapter for MinimalAdapter {
+            async fn complete(&self, _request: LLMRequest) -> Result<LLMResponse> {
+                unimplemented!()
+            }
+            fn model_name(&self) -> &str {
+                "minimal"
+            }
+        }
+
+        let adapter = MinimalAdapter;
+        assert!(
+            !adapter.supports_tools(),
+            "Default supports_tools() should return false, not true"
+        );
+    }
 }

@@ -649,4 +649,156 @@ mod tests {
             .unwrap();
         assert!(result.contains("not found"));
     }
+
+    #[tokio::test]
+    async fn test_search_codebase_tool_finds_pattern() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("hello.rs"),
+            "fn main() {\n    println!(\"hello\");\n}\n",
+        )
+        .unwrap();
+
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: dir.path().to_path_buf(),
+            context_fetcher: Arc::new(ContextFetcher::new(dir.path().to_path_buf())),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: None,
+        });
+        let tool = SearchCodebaseTool { ctx };
+        let result = tool
+            .execute(json!({"pattern": "println", "max_results": 5}))
+            .await
+            .unwrap();
+        assert!(
+            result.contains("println"),
+            "Should find println in results: {}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_codebase_tool_no_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.rs"), "fn main() {}\n").unwrap();
+
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: dir.path().to_path_buf(),
+            context_fetcher: Arc::new(ContextFetcher::new(dir.path().to_path_buf())),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: None,
+        });
+        let tool = SearchCodebaseTool { ctx };
+        let result = tool
+            .execute(json!({"pattern": "zzz_nonexistent_pattern_zzz"}))
+            .await
+            .unwrap();
+        assert!(
+            result.contains("No matches"),
+            "Should indicate no matches: {}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_truncate_output_preserves_exact_boundary() {
+        // Exactly at the limit should not truncate
+        let s = "x".repeat(MAX_TOOL_OUTPUT_BYTES);
+        let result = truncate_output(s.clone());
+        assert_eq!(result.len(), MAX_TOOL_OUTPUT_BYTES);
+        assert!(!result.contains("truncated"));
+
+        // One byte over should truncate
+        let s = "x".repeat(MAX_TOOL_OUTPUT_BYTES + 1);
+        let result = truncate_output(s);
+        assert!(result.contains("[truncated to 8KB]"));
+    }
+
+    #[tokio::test]
+    async fn test_get_file_history_no_analyzer() {
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: PathBuf::from("/tmp/test"),
+            context_fetcher: Arc::new(ContextFetcher::new(PathBuf::from("/tmp/test"))),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: None,
+        });
+        let tool = GetFileHistoryTool { ctx };
+        let result = tool.execute(json!({"file_path": "test.rs"})).await;
+        assert!(result.is_err(), "Should error when git_history is None");
+    }
+
+    #[tokio::test]
+    async fn test_get_file_history_with_empty_analyzer() {
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: PathBuf::from("/tmp/test"),
+            context_fetcher: Arc::new(ContextFetcher::new(PathBuf::from("/tmp/test"))),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: Some(Arc::new(GitHistoryAnalyzer::new())),
+        });
+        let tool = GetFileHistoryTool { ctx };
+        let result = tool
+            .execute(json!({"file_path": "nonexistent.rs"}))
+            .await
+            .unwrap();
+        assert!(
+            result.contains("No history"),
+            "Should indicate no history: {}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_related_symbols_no_graph() {
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: PathBuf::from("/tmp/test"),
+            context_fetcher: Arc::new(ContextFetcher::new(PathBuf::from("/tmp/test"))),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: None,
+        });
+        let tool = GetRelatedSymbolsTool { ctx };
+        let result = tool.execute(json!({"symbols": ["foo"]})).await;
+        assert!(result.is_err(), "Should error when symbol_graph is None");
+    }
+
+    #[tokio::test]
+    async fn test_get_related_symbols_empty_graph() {
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: PathBuf::from("/tmp/test"),
+            context_fetcher: Arc::new(ContextFetcher::new(PathBuf::from("/tmp/test"))),
+            symbol_index: None,
+            symbol_graph: Some(Arc::new(SymbolGraph::new())),
+            git_history: None,
+        });
+        let tool = GetRelatedSymbolsTool { ctx };
+        let result = tool
+            .execute(json!({"symbols": ["nonexistent_symbol"]}))
+            .await
+            .unwrap();
+        assert!(
+            result.contains("No related"),
+            "Should indicate no related symbols: {}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_definitions_no_index() {
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: PathBuf::from("/tmp/test"),
+            context_fetcher: Arc::new(ContextFetcher::new(PathBuf::from("/tmp/test"))),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: None,
+        });
+        let tool = GetDefinitionsTool { ctx };
+        let result = tool
+            .execute(json!({"file_path": "test.rs", "symbols": ["foo"]}))
+            .await;
+        assert!(result.is_err(), "Should error when symbol_index is None");
+    }
 }
