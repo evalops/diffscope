@@ -96,12 +96,35 @@ impl PRSummaryGenerator {
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
 
-            match extension {
-                "rs" | "py" | "js" | "ts" | "go" | "java" => stats.code_files += 1,
-                "md" | "txt" | "rst" => stats.doc_files += 1,
-                "yml" | "yaml" | "toml" | "json" => stats.config_files += 1,
-                "test" | "spec" => stats.test_files += 1,
-                _ => {}
+            let file_name = diff
+                .file_path
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or("");
+
+            let file_stem = diff
+                .file_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+
+            // Detect test files from common naming patterns
+            let is_test = file_name.contains(".test.")
+                || file_name.contains(".spec.")
+                || file_name.contains("_test.")
+                || file_stem.ends_with("_test")
+                || file_stem.ends_with("_spec")
+                || file_name.starts_with("test_");
+
+            if is_test {
+                stats.test_files += 1;
+            } else {
+                match extension {
+                    "rs" | "py" | "js" | "ts" | "go" | "java" => stats.code_files += 1,
+                    "md" | "txt" | "rst" => stats.doc_files += 1,
+                    "yml" | "yaml" | "toml" | "json" => stats.config_files += 1,
+                    _ => {}
+                }
             }
 
             // Count changes
@@ -510,5 +533,226 @@ fn extract_mermaid_block(content: &str) -> Option<String> {
         None
     } else {
         Some(fallback)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::diff_parser::{ChangeType as DiffChangeType, DiffHunk, DiffLine};
+    use std::path::PathBuf;
+
+    fn make_diff(path: &str) -> UnifiedDiff {
+        UnifiedDiff {
+            file_path: PathBuf::from(path),
+            old_content: None,
+            new_content: None,
+            hunks: vec![DiffHunk {
+                old_start: 1,
+                old_lines: 1,
+                new_start: 1,
+                new_lines: 2,
+                context: String::new(),
+                changes: vec![
+                    DiffLine {
+                        content: "old line".to_string(),
+                        change_type: DiffChangeType::Removed,
+                        old_line_no: Some(1),
+                        new_line_no: None,
+                    },
+                    DiffLine {
+                        content: "new line 1".to_string(),
+                        change_type: DiffChangeType::Added,
+                        old_line_no: None,
+                        new_line_no: Some(1),
+                    },
+                    DiffLine {
+                        content: "new line 2".to_string(),
+                        change_type: DiffChangeType::Added,
+                        old_line_no: None,
+                        new_line_no: Some(2),
+                    },
+                ],
+            }],
+            is_binary: false,
+            is_deleted: false,
+            is_new: false,
+        }
+    }
+
+    // ── Bug: test file detection was checking for ".test"/".spec" extensions ──
+    //
+    // Real test files use patterns like `foo.test.js`, `foo_test.rs`,
+    // `foo.spec.ts`, `test_utils.py`, etc. Their extension() is still
+    // `.js`, `.rs`, `.ts`, `.py` — NOT `.test` or `.spec`.
+    // The old code used `match extension { "test" | "spec" => ... }` which
+    // never matched real test files.
+
+    #[test]
+    fn test_calculate_stats_js_test_file() {
+        let diffs = vec![make_diff("src/utils.test.js")];
+        let stats = PRSummaryGenerator::calculate_stats(&diffs);
+        assert_eq!(
+            stats.test_files, 1,
+            "foo.test.js should be counted as a test file, not code"
+        );
+        assert_eq!(
+            stats.code_files, 0,
+            "foo.test.js should NOT be counted as a code file"
+        );
+    }
+
+    #[test]
+    fn test_calculate_stats_rs_test_file() {
+        let diffs = vec![make_diff("src/parser_test.rs")];
+        let stats = PRSummaryGenerator::calculate_stats(&diffs);
+        assert_eq!(
+            stats.test_files, 1,
+            "parser_test.rs should be counted as a test file"
+        );
+    }
+
+    #[test]
+    fn test_calculate_stats_spec_file() {
+        let diffs = vec![make_diff("tests/auth.spec.ts")];
+        let stats = PRSummaryGenerator::calculate_stats(&diffs);
+        assert_eq!(
+            stats.test_files, 1,
+            "auth.spec.ts should be counted as a test file"
+        );
+    }
+
+    #[test]
+    fn test_calculate_stats_python_test_file() {
+        let diffs = vec![make_diff("tests/test_parser.py")];
+        let stats = PRSummaryGenerator::calculate_stats(&diffs);
+        assert_eq!(
+            stats.test_files, 1,
+            "test_parser.py should be counted as a test file"
+        );
+    }
+
+    #[test]
+    fn test_calculate_stats_regular_code_file() {
+        let diffs = vec![make_diff("src/main.rs")];
+        let stats = PRSummaryGenerator::calculate_stats(&diffs);
+        assert_eq!(stats.code_files, 1);
+        assert_eq!(stats.test_files, 0);
+    }
+
+    #[test]
+    fn test_calculate_stats_doc_file() {
+        let diffs = vec![make_diff("docs/README.md")];
+        let stats = PRSummaryGenerator::calculate_stats(&diffs);
+        assert_eq!(stats.doc_files, 1);
+    }
+
+    #[test]
+    fn test_calculate_stats_config_file() {
+        let diffs = vec![make_diff("config.yml")];
+        let stats = PRSummaryGenerator::calculate_stats(&diffs);
+        assert_eq!(stats.config_files, 1);
+    }
+
+    #[test]
+    fn test_calculate_stats_line_counts() {
+        let diffs = vec![make_diff("src/lib.rs")];
+        let stats = PRSummaryGenerator::calculate_stats(&diffs);
+        assert_eq!(stats.lines_added, 2);
+        assert_eq!(stats.lines_removed, 1);
+        assert_eq!(stats.files_changed, 1);
+    }
+
+    #[test]
+    fn test_calculate_stats_mixed_files() {
+        let diffs = vec![
+            make_diff("src/main.rs"),
+            make_diff("src/main_test.rs"),
+            make_diff("README.md"),
+            make_diff("config.toml"),
+        ];
+        let stats = PRSummaryGenerator::calculate_stats(&diffs);
+        assert_eq!(stats.files_changed, 4);
+        assert_eq!(stats.code_files, 1);
+        assert_eq!(stats.test_files, 1);
+        assert_eq!(stats.doc_files, 1);
+        assert_eq!(stats.config_files, 1);
+    }
+
+    #[test]
+    fn test_parse_summary_response() {
+        let content = "SUMMARY: Add new auth flow\nTYPE: feature\nKEY_CHANGES:\n- Added OAuth2 support\n- Removed old session tokens\nBREAKING_CHANGES: Old session tokens are no longer valid\nTESTING_NOTES: Test login flow end-to-end";
+        let stats = ChangeStats::default();
+        let summary = PRSummaryGenerator::parse_summary_response(content, stats).unwrap();
+        assert_eq!(summary.title, "Add new auth flow");
+        assert_eq!(summary.key_changes.len(), 2);
+        assert!(summary.breaking_changes.is_some());
+        assert!(!summary.testing_notes.is_empty());
+    }
+
+    #[test]
+    fn test_parse_summary_response_no_breaking() {
+        let content = "SUMMARY: Minor fix\nTYPE: fix\nKEY_CHANGES:\n- Fixed null check\nBREAKING_CHANGES: none\nTESTING_NOTES: Run unit tests";
+        let stats = ChangeStats::default();
+        let summary = PRSummaryGenerator::parse_summary_response(content, stats).unwrap();
+        assert!(summary.breaking_changes.is_none());
+    }
+
+    #[test]
+    fn test_extract_mermaid_diagram() {
+        let content = "DIAGRAM: Here's the flow\n```mermaid\nflowchart LR\nA --> B\n```\n";
+        let diagram = extract_mermaid_diagram(content);
+        assert!(diagram.is_some());
+        assert!(diagram.unwrap().contains("flowchart"));
+    }
+
+    #[test]
+    fn test_extract_mermaid_diagram_none() {
+        let content = "DIAGRAM: none\n";
+        let diagram = extract_mermaid_diagram(content);
+        assert!(diagram.is_none());
+    }
+
+    #[test]
+    fn test_extract_mermaid_block_from_code() {
+        let content = "```mermaid\nsequenceDiagram\nA->>B: Hello\n```\n";
+        let block = extract_mermaid_block(content);
+        assert!(block.is_some());
+        assert!(block.unwrap().contains("sequenceDiagram"));
+    }
+
+    #[test]
+    fn test_extract_mermaid_block_none_keyword() {
+        let content = "There is none to show here.";
+        let block = extract_mermaid_block(content);
+        assert!(block.is_none());
+    }
+
+    #[test]
+    fn test_pr_summary_to_markdown() {
+        let summary = PRSummary {
+            title: "Test PR".to_string(),
+            description: "Description".to_string(),
+            change_type: ChangeType::Feature,
+            key_changes: vec!["Change 1".to_string()],
+            breaking_changes: Some("API changed".to_string()),
+            testing_notes: "Test all endpoints".to_string(),
+            stats: ChangeStats {
+                files_changed: 3,
+                lines_added: 50,
+                lines_removed: 10,
+                code_files: 2,
+                test_files: 1,
+                doc_files: 0,
+                config_files: 0,
+            },
+            visual_diff: None,
+        };
+        let md = summary.to_markdown();
+        assert!(md.contains("Test PR"));
+        assert!(md.contains("Change 1"));
+        assert!(md.contains("Breaking Changes"));
+        assert!(md.contains("Test all endpoints"));
+        assert!(md.contains("Tests Modified"));
     }
 }

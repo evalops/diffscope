@@ -90,7 +90,7 @@ impl ChangelogGenerator {
     pub fn new(repo_path: &str) -> Result<Self> {
         let repo = Repository::discover(repo_path)?;
         let conventional_regex = Regex::new(
-            r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?:\(([^)]+)\))?(?:!)?:\s*(.+)",
+            r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?:\(([^)]+)\))?(!)?:\s*(.+)",
         )?;
 
         Ok(Self {
@@ -152,15 +152,10 @@ impl ChangelogGenerator {
 
     fn parse_commit(&self, commit: &git2::Commit) -> Result<Option<ChangelogEntry>> {
         let message = commit.message().unwrap_or("");
-        let first_line = message.lines().next().unwrap_or("");
 
-        // Try to parse as conventional commit
-        if let Some(captures) = self.conventional_regex.captures(first_line) {
-            let change_type = ChangeType::from_str(captures.get(1).unwrap().as_str());
-            let scope = captures.get(2).map(|m| m.as_str().to_string());
-            let description = captures.get(3).unwrap().as_str().to_string();
-            let breaking = first_line.contains('!') || message.contains("BREAKING CHANGE");
-
+        if let Some((change_type, scope, description, breaking)) =
+            parse_conventional_commit_message(message, &self.conventional_regex)
+        {
             Ok(Some(ChangelogEntry {
                 commit_hash: format!("{:.7}", commit.id()),
                 message: description,
@@ -174,6 +169,7 @@ impl ChangelogGenerator {
             }))
         } else {
             // Non-conventional commit - try to categorize
+            let first_line = message.lines().next().unwrap_or("");
             let change_type = if first_line.to_lowercase().contains("fix") {
                 ChangeType::Fix
             } else if first_line.to_lowercase().contains("add") {
@@ -366,5 +362,110 @@ impl ChangelogGenerator {
         }
 
         output
+    }
+}
+
+/// Parse a conventional commit message into its components.
+///
+/// Uses the regex with groups: 1=type, 2=scope(opt), 3=`!`(opt), 4=description.
+/// Breaking is detected from the `!` marker before `:` or "BREAKING CHANGE" in body,
+/// NOT from `!` appearing anywhere in the description text.
+fn parse_conventional_commit_message(
+    message: &str,
+    conventional_regex: &Regex,
+) -> Option<(ChangeType, Option<String>, String, bool)> {
+    let first_line = message.lines().next().unwrap_or("");
+    let captures = conventional_regex.captures(first_line)?;
+
+    let change_type = ChangeType::from_str(captures.get(1)?.as_str());
+    let scope = captures.get(2).map(|m| m.as_str().to_string());
+    let breaking_marker = captures.get(3).is_some();
+    let description = captures.get(4)?.as_str().to_string();
+    let breaking = breaking_marker || message.contains("BREAKING CHANGE");
+
+    Some((change_type, scope, description, breaking))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn conventional_regex() -> Regex {
+        Regex::new(
+            r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?:\(([^)]+)\))?(!)?:\s*(.+)",
+        )
+        .unwrap()
+    }
+
+    // ── Bug: `first_line.contains('!')` false positive for breaking changes ──
+    //
+    // The old code used `first_line.contains('!')` which matches `!` anywhere
+    // in the commit message line, including in the description text.
+    // For example, "feat: add ! button to UI" was wrongly flagged as breaking.
+    // The conventional commit spec says `!` must appear right before `:` to
+    // indicate a breaking change (e.g., "feat!: remove old API").
+
+    #[test]
+    fn test_breaking_change_exclamation_in_description_is_not_breaking() {
+        let re = conventional_regex();
+        let result = parse_conventional_commit_message("feat: add ! button to UI", &re).unwrap();
+        assert!(
+            !result.3,
+            "Exclamation mark in description text should NOT flag as breaking"
+        );
+    }
+
+    #[test]
+    fn test_breaking_change_from_bang_before_colon() {
+        let re = conventional_regex();
+        let result =
+            parse_conventional_commit_message("feat!: remove deprecated API", &re).unwrap();
+        assert!(result.3, "feat!: should be detected as breaking");
+        assert_eq!(result.2, "remove deprecated API");
+    }
+
+    #[test]
+    fn test_breaking_change_from_scoped_bang() {
+        let re = conventional_regex();
+        let result =
+            parse_conventional_commit_message("fix(auth)!: change token format", &re).unwrap();
+        assert!(result.3, "fix(scope)!: should be detected as breaking");
+        assert_eq!(result.1.as_deref(), Some("auth"));
+    }
+
+    #[test]
+    fn test_breaking_change_from_body() {
+        let re = conventional_regex();
+        let result = parse_conventional_commit_message(
+            "feat: new auth flow\n\nBREAKING CHANGE: old tokens are invalid",
+            &re,
+        )
+        .unwrap();
+        assert!(result.3, "BREAKING CHANGE in body should flag as breaking");
+    }
+
+    #[test]
+    fn test_not_breaking_regular_commit() {
+        let re = conventional_regex();
+        let result = parse_conventional_commit_message("fix: handle edge case", &re).unwrap();
+        assert!(!result.3, "Regular fix commit should not be breaking");
+        assert_eq!(result.0, ChangeType::Fix);
+    }
+
+    #[test]
+    fn test_conventional_commit_with_scope() {
+        let re = conventional_regex();
+        let result =
+            parse_conventional_commit_message("feat(parser): add JSON support", &re).unwrap();
+        assert_eq!(result.0, ChangeType::Feature);
+        assert_eq!(result.1.as_deref(), Some("parser"));
+        assert_eq!(result.2, "add JSON support");
+        assert!(!result.3);
+    }
+
+    #[test]
+    fn test_non_conventional_returns_none() {
+        let re = conventional_regex();
+        assert!(parse_conventional_commit_message("Update README", &re).is_none());
     }
 }
