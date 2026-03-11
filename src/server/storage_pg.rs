@@ -401,7 +401,7 @@ impl StorageBackend for PgStorageBackend {
             "SELECT \
                  COUNT(*), \
                  COUNT(*) FILTER (WHERE event_type = 'review.completed'), \
-                 COUNT(*) FILTER (WHERE event_type != 'review.completed'), \
+                 COUNT(*) FILTER (WHERE event_type = 'review.failed'), \
                  COALESCE(SUM(COALESCE(tokens_total, 0)), 0), \
                  COALESCE(AVG(duration_ms)::FLOAT8, 0), \
                  (AVG(overall_score) FILTER (WHERE overall_score IS NOT NULL))::FLOAT8 \
@@ -501,7 +501,7 @@ impl StorageBackend for PgStorageBackend {
             &format!(
                 "SELECT created_at::date, \
                  COUNT(*) FILTER (WHERE event_type = 'review.completed'), \
-                 COUNT(*) FILTER (WHERE event_type != 'review.completed') \
+                 COUNT(*) FILTER (WHERE event_type = 'review.failed') \
                  FROM review_events {where_clause} GROUP BY created_at::date ORDER BY created_at::date"
             )
         )
