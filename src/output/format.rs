@@ -546,6 +546,11 @@ pub fn build_change_walkthrough(diffs: &[core::UnifiedDiff]) -> String {
             "modified"
         };
 
+        if entries.len() >= max_entries {
+            truncated = true;
+            break;
+        }
+
         entries.push(format!(
             "- `{}` ({}; +{}, -{})",
             diff.file_path.display(),
@@ -553,11 +558,6 @@ pub fn build_change_walkthrough(diffs: &[core::UnifiedDiff]) -> String {
             added,
             removed
         ));
-
-        if entries.len() >= max_entries {
-            truncated = true;
-            break;
-        }
     }
 
     if entries.is_empty() {
@@ -909,5 +909,52 @@ mod tests {
             a_pos < m_pos && m_pos < z_pos,
             "Files should appear in sorted order: a_first({a_pos}) < m_middle({m_pos}) < z_last({z_pos})"
         );
+    }
+
+    // ── Bug: walkthrough falsely reports truncation at exactly max_entries ──
+    //
+    // The truncation check ran after pushing the entry, so when exactly
+    // max_entries (50) files exist, it would say "truncated" even though
+    // all entries were included.
+
+    #[test]
+    fn test_walkthrough_not_truncated_at_exactly_max() {
+        let diffs: Vec<core::UnifiedDiff> = (0..50)
+            .map(|i| core::UnifiedDiff {
+                file_path: PathBuf::from(format!("file{}.rs", i)),
+                old_content: None,
+                new_content: None,
+                is_new: false,
+                is_deleted: false,
+                is_binary: false,
+                hunks: vec![core::diff_parser::DiffHunk {
+                    old_start: 1,
+                    old_lines: 1,
+                    new_start: 1,
+                    new_lines: 1,
+                    context: String::new(),
+                    changes: vec![core::diff_parser::DiffLine {
+                        content: "line".to_string(),
+                        change_type: core::diff_parser::ChangeType::Added,
+                        old_line_no: None,
+                        new_line_no: Some(1),
+                    }],
+                }],
+            })
+            .collect();
+
+        let output = build_change_walkthrough(&diffs);
+        assert!(
+            !output.contains("truncated"),
+            "50 files (exactly max_entries) should not be truncated"
+        );
+        // All 50 files should be present
+        for i in 0..50 {
+            assert!(
+                output.contains(&format!("file{}.rs", i)),
+                "Missing file{}.rs in walkthrough",
+                i
+            );
+        }
     }
 }

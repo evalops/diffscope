@@ -138,9 +138,9 @@ TAGS: [comma-separated relevant tags]
             let hunk_header = format!(
                 "### Hunk: Lines {}-{} (was {}-{})\n\n",
                 hunk.new_start,
-                hunk.new_start + hunk.new_lines,
+                hunk.new_start + hunk.new_lines.saturating_sub(1),
                 hunk.old_start,
-                hunk.old_start + hunk.old_lines
+                hunk.old_start + hunk.old_lines.saturating_sub(1)
             );
             if max_diff_chars > 0 && diff_chars.saturating_add(hunk_header.len()) > max_diff_chars {
                 diff_truncated = true;
@@ -209,5 +209,57 @@ TAGS: [comma-separated relevant tags]
         prompt.push_str("Focus on the most impactful issues. Provide specific, actionable suggestions with code examples where helpful.\n");
 
         Ok(prompt)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::diff_parser::{ChangeType, DiffHunk, DiffLine};
+    use std::path::PathBuf;
+
+    // ── Bug: hunk header shows one-past-end line number ──────────────
+    //
+    // A hunk with new_start=10, new_lines=5 covers lines 10-14 (inclusive).
+    // The old code displayed "Lines 10-15", which is off by one.
+
+    #[test]
+    fn test_hunk_header_line_range_is_inclusive() {
+        let diff = UnifiedDiff {
+            file_path: PathBuf::from("test.rs"),
+            old_content: None,
+            new_content: None,
+            is_new: false,
+            is_deleted: false,
+            is_binary: false,
+            hunks: vec![DiffHunk {
+                old_start: 5,
+                old_lines: 3,
+                new_start: 10,
+                new_lines: 5,
+                context: String::new(),
+                changes: vec![DiffLine {
+                    content: "line".to_string(),
+                    change_type: ChangeType::Added,
+                    old_line_no: None,
+                    new_line_no: Some(10),
+                }],
+            }],
+        };
+        let (_system, user) =
+            SmartReviewPromptBuilder::build_enhanced_review_prompt(&diff, &[], 1000, 10000, None)
+                .unwrap();
+        // Should say "Lines 10-14" (inclusive), not "Lines 10-15"
+        assert!(
+            user.contains("Lines 10-14"),
+            "Hunk header should use inclusive end line; prompt contains: {}",
+            user.lines()
+                .find(|l| l.contains("Hunk:"))
+                .unwrap_or("(no hunk header found)")
+        );
+        assert!(
+            user.contains("was 5-7"),
+            "Old range should also be inclusive: 5 + 3 - 1 = 7"
+        );
     }
 }
