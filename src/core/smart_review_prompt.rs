@@ -135,12 +135,19 @@ TAGS: [comma-separated relevant tags]
 
         // Format the diff with line numbers and change indicators
         for hunk in &diff.hunks {
+            let new_end = if hunk.new_lines == 0 {
+                hunk.new_start
+            } else {
+                hunk.new_start + hunk.new_lines - 1
+            };
+            let old_end = if hunk.old_lines == 0 {
+                hunk.old_start
+            } else {
+                hunk.old_start + hunk.old_lines - 1
+            };
             let hunk_header = format!(
                 "### Hunk: Lines {}-{} (was {}-{})\n\n",
-                hunk.new_start,
-                hunk.new_start + hunk.new_lines.saturating_sub(1),
-                hunk.old_start,
-                hunk.old_start + hunk.old_lines.saturating_sub(1)
+                hunk.new_start, new_end, hunk.old_start, old_end
             );
             if max_diff_chars > 0 && diff_chars.saturating_add(hunk_header.len()) > max_diff_chars {
                 diff_truncated = true;
@@ -260,6 +267,44 @@ mod tests {
         assert!(
             user.contains("was 5-7"),
             "Old range should also be inclusive: 5 + 3 - 1 = 7"
+        );
+    }
+
+    #[test]
+    fn test_hunk_header_zero_lines_no_overflow() {
+        // Deletion-only hunk: new_lines=0 must not produce usize::MAX via
+        // saturating_sub(1) on 0.
+        let diff = UnifiedDiff {
+            file_path: PathBuf::from("test.rs"),
+            old_content: None,
+            new_content: None,
+            is_new: false,
+            is_deleted: false,
+            is_binary: false,
+            hunks: vec![DiffHunk {
+                old_start: 10,
+                old_lines: 3,
+                new_start: 10,
+                new_lines: 0, // deletion-only
+                context: String::new(),
+                changes: vec![DiffLine {
+                    content: "removed".to_string(),
+                    change_type: ChangeType::Removed,
+                    old_line_no: Some(10),
+                    new_line_no: None,
+                }],
+            }],
+        };
+        let (_system, user) =
+            SmartReviewPromptBuilder::build_enhanced_review_prompt(&diff, &[], 1000, 10000, None)
+                .unwrap();
+        // Should say "Lines 10-10", NOT "Lines 10-18446744073709551615"
+        assert!(
+            user.contains("Lines 10-10"),
+            "Zero new_lines should produce start-start range; got: {}",
+            user.lines()
+                .find(|l| l.contains("Hunk:"))
+                .unwrap_or("(no hunk header found)")
         );
     }
 }

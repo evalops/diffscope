@@ -1,7 +1,6 @@
 use crate::adapters::llm::{LLMAdapter, LLMRequest};
 use anyhow::Result;
 use regex::Regex;
-use std::collections::HashSet;
 
 pub struct InteractiveCommand {
     pub command: CommandType,
@@ -250,35 +249,38 @@ Interactive commands respect these configurations."#
 /// Will be wired into the review pipeline's triage filter.
 #[allow(dead_code)]
 pub struct InteractiveProcessor {
-    ignored_patterns: HashSet<String>,
+    /// Raw patterns for substring matching (no wildcards).
+    literal_patterns: Vec<String>,
+    /// Compiled regexes for glob patterns (contain `*`).
+    glob_regexes: Vec<Regex>,
 }
 
 #[allow(dead_code)]
 impl InteractiveProcessor {
     pub fn new() -> Self {
         Self {
-            ignored_patterns: HashSet::new(),
+            literal_patterns: Vec::new(),
+            glob_regexes: Vec::new(),
         }
     }
 
     pub fn add_ignore_pattern(&mut self, pattern: &str) {
-        self.ignored_patterns.insert(pattern.to_string());
+        if pattern.contains('*') {
+            let escaped = regex::escape(pattern).replace(r"\*", ".*");
+            let regex_pattern = format!("^{}$", escaped);
+            if let Ok(re) = Regex::new(&regex_pattern) {
+                self.glob_regexes.push(re);
+            }
+        } else {
+            self.literal_patterns.push(pattern.to_string());
+        }
     }
 
     pub fn should_ignore(&self, path: &str) -> bool {
-        self.ignored_patterns.iter().any(|pattern| {
-            // Simple glob matching
-            if pattern.contains('*') {
-                // Escape regex metacharacters, then convert glob * to .*
-                let escaped = regex::escape(pattern).replace(r"\*", ".*");
-                let regex_pattern = format!("^{}$", escaped);
-                regex::Regex::new(&regex_pattern)
-                    .map(|re| re.is_match(path))
-                    .unwrap_or(false)
-            } else {
-                path.contains(pattern)
-            }
-        })
+        self.literal_patterns
+            .iter()
+            .any(|p| path.contains(p.as_str()))
+            || self.glob_regexes.iter().any(|re| re.is_match(path))
     }
 }
 

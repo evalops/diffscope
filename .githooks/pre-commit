@@ -2,24 +2,27 @@
 set -e
 
 echo "==> Running cargo fmt --check..."
-cargo fmt --check
-if [ $? -ne 0 ]; then
+cargo fmt --check || {
     echo "ERROR: cargo fmt found formatting issues. Run 'cargo fmt' to fix."
     exit 1
-fi
+}
 
 echo "==> Running cargo clippy..."
-cargo clippy --all-targets -- -D warnings
-if [ $? -ne 0 ]; then
+cargo clippy --all-targets -- -D warnings || {
     echo "ERROR: cargo clippy found warnings. Fix them before committing."
     exit 1
-fi
+}
 
-echo "==> Running cargo test..."
-cargo test
-if [ $? -ne 0 ]; then
-    echo "ERROR: Tests failed. Fix them before committing."
-    exit 1
+# Tests are slower — run by default but skip with SKIP_TESTS=1
+if [ "${SKIP_TESTS:-0}" = "1" ]; then
+    echo "==> Skipping tests (SKIP_TESTS=1). CI will catch failures."
+else
+    echo "==> Running cargo test..."
+    cargo test || {
+        echo "ERROR: Tests failed. Fix them before committing."
+        echo "Tip: SKIP_TESTS=1 git commit ... to skip tests locally (CI will still run them)."
+        exit 1
+    }
 fi
 
 echo "==> All pre-commit checks passed."
