@@ -27,14 +27,26 @@ jobs:
           git fetch origin ${{ github.base_ref }} --depth=1
           git diff origin/${{ github.base_ref }}...HEAD > pr.diff
           
+      - name: Check API key
+        id: check_key
+        run: |
+          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::DiffScope review skipped — OPENAI_API_KEY secret not configured"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run DiffScope
+        if: steps.check_key.outputs.skip != 'true'
         uses: docker://ghcr.io/haasonsaas/diffscope:latest
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         with:
           args: review --diff pr.diff --output-format json --output comments.json
-          
+
       - name: Post comments
+        if: steps.check_key.outputs.skip != 'true'
         uses: actions/github-script@v7
         with:
           script: |
