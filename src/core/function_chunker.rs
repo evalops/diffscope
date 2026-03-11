@@ -916,7 +916,7 @@ fn next_func() {
 
     #[test]
     fn test_find_function_end_single_quoted_string_with_brace() {
-        // BUG: single-quoted strings aren't tracked, so `'{'` is counted as a real brace
+        // Regression: single-quoted strings must be tracked so `'{'` isn't a real brace
         let lines: Vec<&str> = vec![
             "function foo() {",    // line 0: depth = 1
             "    let s = '{';",    // line 1: depth should stay 1, but goes to 2
@@ -936,8 +936,8 @@ fn next_func() {
 
     #[test]
     fn test_find_function_end_rust_lifetime_not_string() {
-        // BUG: Rust lifetime annotations ('a, 'static) toggle in_single_quote,
-        // causing the opening brace on the same line to be ignored.
+        // Regression: Rust lifetime annotations ('a, 'static) must not toggle
+        // in_single_quote, which would cause the opening brace to be ignored.
         let lines: Vec<&str> = vec![
             "pub fn new(name: &'static str) -> Self {", // line 0: has lifetime '
             "    Self { name }",                        // line 1

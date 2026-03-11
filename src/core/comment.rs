@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn test_deduplicate_preserves_highest_severity() {
-        // BUG: dedup_by keeps the first element of a consecutive pair,
+        // Regression: dedup_by keeps the first element of a consecutive pair,
         // but doesn't consider severity. If Warning comes before Error
         // (due to stable sort on file/line/content), the Error is dropped.
         let raw_comments = vec![

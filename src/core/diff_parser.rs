@@ -544,7 +544,7 @@ index 0000000..f735c20\n\
 
     #[test]
     fn test_parse_hunk_empty_lines_not_skipped() {
-        // BUG: empty lines in diff body are skipped, causing line number desync.
+        // Regression: empty lines in diff body were previously skipped.
         // An empty line (no leading space) in some diff tools represents an empty
         // context line. The parser should treat it as context, not skip it.
         let diff_text = "\
@@ -579,7 +579,7 @@ index abc..def 100644\n\
 
     #[test]
     fn test_parse_text_diff_sets_is_new_for_new_file() {
-        // BUG: parse_text_diff always sets is_new=false even when old_content is empty
+        // Regression: parse_text_diff must set is_new when old_content is empty
         let diff =
             DiffParser::parse_text_diff("", "new content\n", PathBuf::from("new_file.rs")).unwrap();
         assert!(
@@ -590,7 +590,7 @@ index abc..def 100644\n\
 
     #[test]
     fn test_parse_text_diff_sets_is_deleted_for_deleted_file() {
-        // BUG: parse_text_diff always sets is_deleted=false even when new_content is empty
+        // Regression: parse_text_diff must set is_deleted when new_content is empty
         let diff =
             DiffParser::parse_text_diff("old content\n", "", PathBuf::from("deleted_file.rs"))
                 .unwrap();

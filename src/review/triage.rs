@@ -966,7 +966,7 @@ mod tests {
                 make_line(2, ChangeType::Added, "#!"),
             ],
         );
-        // BUG: currently returns NeedsReview because `#` doesn't match `"# "` prefix
+        // Regression: bare `#` and `#!` must be treated as comments
         assert_eq!(triage_diff(&diff), TriageResult::SkipCommentOnly);
     }
 

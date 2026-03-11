@@ -1377,7 +1377,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_rate_only_counts_explicit_failures() {
-        // BUG: `failed = total - completed` misclassifies non-failure events as failures.
+        // Regression: `failed = total - completed` used to misclassify non-failure events.
         // Events with type "review.started" or "review.timeout" are counted as failures.
         let dir = tempfile::tempdir().unwrap();
         let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
@@ -1425,8 +1425,8 @@ mod tests {
             .get_event_stats(&EventFilters::default())
             .await
             .unwrap();
-        // Only "review.failed" should count as a failure (1 out of 3)
-        // BUG: currently reports 2/3 because timeout is also counted as failed
+        // Only "review.failed" should count as a failure (1 out of 3).
+        // "review.timeout" is a separate event type and should not inflate error_rate.
         let expected_error_rate = 1.0 / 3.0;
         assert!(
             (stats.error_rate - expected_error_rate).abs() < 0.01,

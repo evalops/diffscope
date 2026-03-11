@@ -211,12 +211,21 @@ impl PipelineStage for DeduplicateStage {
     }
 
     fn execute(&self, ctx: &mut PipelineContext) -> Result<()> {
+        use crate::core::comment::Severity;
+        let severity_rank = |s: &Severity| match s {
+            Severity::Error => 0,
+            Severity::Warning => 1,
+            Severity::Info => 2,
+            Severity::Suggestion => 3,
+        };
         ctx.comments.sort_by(|a, b| {
             a.file_path
                 .cmp(&b.file_path)
                 .then(a.line_number.cmp(&b.line_number))
                 .then(a.content.cmp(&b.content))
+                .then(severity_rank(&a.severity).cmp(&severity_rank(&b.severity)))
         });
+        // dedup_by keeps b (the earlier element); our sort puts highest severity first
         ctx.comments.dedup_by(|a, b| {
             a.file_path == b.file_path && a.line_number == b.line_number && a.content == b.content
         });
@@ -686,6 +695,28 @@ mod tests {
         stage.execute(&mut ctx).unwrap();
         // Different content at same line should be preserved
         assert_eq!(ctx.comments.len(), 2);
+    }
+
+    // Regression: DeduplicateStage must keep the highest severity when deduplicating
+    #[test]
+    fn test_deduplicate_preserves_highest_severity() {
+        let mut ctx = PipelineContext::new();
+        let mut info = make_comment("test.rs", 10, "duplicate issue", 0.7);
+        info.severity = Severity::Info;
+        let mut error = make_comment("test.rs", 10, "duplicate issue", 0.7);
+        error.severity = Severity::Error;
+        // Insert lower severity first to ensure sort fixes order
+        ctx.comments.push(info);
+        ctx.comments.push(error);
+
+        let stage = DeduplicateStage;
+        stage.execute(&mut ctx).unwrap();
+        assert_eq!(ctx.comments.len(), 1);
+        assert_eq!(
+            ctx.comments[0].severity,
+            Severity::Error,
+            "DeduplicateStage should keep the highest severity"
+        );
     }
 
     // Regression: SortBySeverityStage must sort Error > Warning > Info

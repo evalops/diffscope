@@ -56,22 +56,17 @@ pub fn resolve_pattern_repositories(
     resolved
 }
 
-fn is_git_source(source: &str) -> bool {
-    if source.starts_with("https://") || source.starts_with("git@") {
-        return true;
-    }
-    if source.starts_with("http://") && source.ends_with(".git") {
-        return true;
-    }
-    false
-}
-
-/// Validate that a pattern repository source URL uses an allowed scheme.
-/// Only `https://`, `git@`, and `http://` (with `.git` suffix) are permitted.
+/// Check whether a source string looks like a git URL and uses an allowed scheme.
+/// Accepts `https://`, `ssh://`, `git@` (SSH shorthand), and `http://` (with `.git` suffix).
 fn is_safe_git_url(source: &str) -> bool {
     source.starts_with("https://")
+        || source.starts_with("ssh://")
         || source.starts_with("git@")
         || (source.starts_with("http://") && source.ends_with(".git"))
+}
+
+fn is_git_source(source: &str) -> bool {
+    is_safe_git_url(source)
 }
 
 fn prepare_pattern_repository_checkout(source: &str) -> Option<PathBuf> {
@@ -79,7 +74,7 @@ fn prepare_pattern_repository_checkout(source: &str) -> Option<PathBuf> {
 
     if !is_safe_git_url(source) {
         warn!(
-            "Rejecting pattern repository '{}': only https:// and git@ URLs are allowed",
+            "Rejecting pattern repository '{}': only https://, ssh://, and git@ URLs are allowed",
             source
         );
         return None;
@@ -527,7 +522,11 @@ mod tests {
     #[test]
     fn test_is_git_source_rejects_other_schemes() {
         assert!(!is_git_source("ftp://example.com/repo.git"));
-        assert!(!is_git_source("ssh://example.com/repo"));
+    }
+
+    #[test]
+    fn test_is_git_source_accepts_ssh() {
+        assert!(is_git_source("ssh://example.com/repo"));
     }
 
     #[test]
@@ -539,6 +538,8 @@ mod tests {
     #[test]
     fn test_is_safe_git_url_allows_ssh() {
         assert!(is_safe_git_url("git@github.com:org/repo.git"));
+        assert!(is_safe_git_url("ssh://example.com/repo"));
+        assert!(is_safe_git_url("ssh://git@gitlab.internal/org/rules.git"));
     }
 
     #[test]
@@ -551,7 +552,6 @@ mod tests {
     #[test]
     fn test_is_safe_git_url_rejects_arbitrary_schemes() {
         assert!(!is_safe_git_url("ftp://example.com/repo"));
-        assert!(!is_safe_git_url("ssh://example.com/repo"));
         assert!(!is_safe_git_url("gopher://example.com/repo"));
     }
 
