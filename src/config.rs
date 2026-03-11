@@ -913,10 +913,7 @@ impl Config {
             ModelRole::Primary => &self.model,
             ModelRole::Weak => self.model_weak.as_deref().unwrap_or(&self.model),
             ModelRole::Reasoning => self.model_reasoning.as_deref().unwrap_or(&self.model),
-            ModelRole::Embedding => self
-                .model_embedding
-                .as_deref()
-                .unwrap_or("text-embedding-3-small"),
+            ModelRole::Embedding => self.model_embedding.as_deref().unwrap_or(&self.model),
         }
     }
 
@@ -1633,9 +1630,10 @@ mod tests {
             model_embedding: None,
             ..Config::default()
         };
+        // Falls back to primary model when no embedding model configured
         assert_eq!(
             config.model_for_role(ModelRole::Embedding),
-            "text-embedding-3-small"
+            "claude-sonnet-4-6"
         );
     }
 

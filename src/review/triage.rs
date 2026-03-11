@@ -41,7 +41,13 @@ const LOCK_FILES: &[&str] = &[
 ];
 
 /// Comment line prefixes (after trimming leading whitespace).
-const COMMENT_PREFIXES: &[&str] = &["//", "#", "/*", "*/", "* ", "--", "<!--", "\"\"\"", "'''"];
+const COMMENT_PREFIXES: &[&str] = &["//", "# ", "/*", "*/", "* ", "--", "<!--", "\"\"\"", "'''"];
+
+/// Patterns that start with `#` but are NOT comments (Rust attributes, C preprocessor, etc.).
+const HASH_NON_COMMENT_PREFIXES: &[&str] = &[
+    "#[", "#!", "#include", "#define", "#ifdef", "#ifndef", "#endif", "#pragma", "#undef", "#elif",
+    "#else", "#if ", "#error", "#warning", "#line",
+];
 
 /// Classify a diff using fast heuristics (no LLM call).
 ///
@@ -108,8 +114,10 @@ fn is_generated_file(path: &str) -> bool {
     // Path contains marker segments
     if path.contains(".generated.")
         || path.contains(".g.")
-        || path.contains("_generated/")
-        || path.contains("generated/")
+        || path.starts_with("_generated/")
+        || path.contains("/_generated/")
+        || path.starts_with("generated/")
+        || path.contains("/generated/")
     {
         return true;
     }
@@ -170,6 +178,14 @@ fn is_comment_line(content: &str) -> bool {
     if trimmed.is_empty() {
         // Blank lines in a comment-only change are fine
         return true;
+    }
+    // Handle `#` lines: exclude Rust attributes, C preprocessor, etc.
+    if trimmed.starts_with('#')
+        && HASH_NON_COMMENT_PREFIXES
+            .iter()
+            .any(|p| trimmed.starts_with(p))
+    {
+        return false;
     }
     COMMENT_PREFIXES
         .iter()
@@ -634,6 +650,52 @@ mod tests {
                 make_line(1, ChangeType::Added, "*ptr = compute();"),
                 make_line(2, ChangeType::Added, "*buffer = data;"),
             ],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_comment_only_does_not_match_rust_attributes() {
+        let diff = make_diff(
+            "src/lib.rs",
+            vec![
+                make_line(1, ChangeType::Added, "#[derive(Debug, Clone, Serialize)]"),
+                make_line(
+                    2,
+                    ChangeType::Added,
+                    "#[serde(rename_all = \"snake_case\")]",
+                ),
+            ],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_comment_only_does_not_match_c_preprocessor() {
+        let diff = make_diff(
+            "src/main.c",
+            vec![
+                make_line(1, ChangeType::Added, "#include <stdio.h>"),
+                make_line(2, ChangeType::Added, "#define MAX_SIZE 100"),
+            ],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_comment_only_does_not_match_rust_inner_attributes() {
+        let diff = make_diff(
+            "src/lib.rs",
+            vec![make_line(1, ChangeType::Added, "#![allow(unused)]")],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_generated_does_not_match_user_generated_dir() {
+        let diff = make_diff(
+            "src/user_generated/profile.rs",
+            vec![make_line(1, ChangeType::Added, "pub struct Profile {}")],
         );
         assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
     }
