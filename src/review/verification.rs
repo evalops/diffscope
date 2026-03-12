@@ -33,9 +33,10 @@ const AUTO_ZERO_PATTERNS: &[&str] = &[
 const VERIFICATION_SYSTEM_PROMPT: &str = r#"You are a code review verifier. Your job is to validate review findings against actual code.
 
 For each finding, assess:
-1. Does the referenced issue actually exist in the code?
-2. Is the description accurate?
-3. Would the suggested fix (if any) work correctly?
+1. Does the referenced file and line actually exist in the diff? If the finding references code that is not in the diff, it is likely hallucinated.
+2. Does the comment accurately describe what the code does? Re-read the actual code and verify the claim.
+3. Is the suggestion actually an improvement over the existing code? Would it introduce new bugs or break existing behavior?
+4. Is this a false positive or hallucinated issue? Be skeptical of findings that describe problems not visible in the code.
 
 Score each finding 0-10:
 - 8-10: Critical bugs or security issues that are clearly present

@@ -610,6 +610,19 @@ export function Settings() {
         </div>
       </Section>
 
+      <Section title="VERIFICATION PASS" defaultOpen={false}>
+        <Toggle
+          label="Enable Verification Pass"
+          description="Run a second LLM pass to validate findings against actual code"
+          checked={form.verification_pass !== false}
+          onChange={v => setForm({ ...form, verification_pass: v })}
+        />
+        <div className="space-y-3 mt-3">
+          {field('Min Score', 'verification_min_score', 'number', '5', 'Minimum verification score (0-10) to keep a comment')}
+          {field('Max Comments', 'verification_max_comments', 'number', '20', 'Maximum comments to send through verification (cost control)')}
+        </div>
+      </Section>
+
       <Section title="FEEDBACK SUPPRESSION" defaultOpen={false}>
         <div className="space-y-3">
           {field('Suppression Threshold', 'feedback_suppression_threshold', 'number', '3', 'Minimum rejections before suppression kicks in')}

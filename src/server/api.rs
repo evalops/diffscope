@@ -707,6 +707,19 @@ pub async fn submit_feedback(
         )
         .await;
 
+    // Record enhanced feedback pattern stats
+    {
+        let config = state.config.read().await;
+        let mut feedback_store = crate::review::load_feedback_store(&config);
+        let file_pattern = if comment_ext.is_empty() {
+            None
+        } else {
+            Some(format!("*.{}", comment_ext))
+        };
+        feedback_store.record_feedback(&comment_category, file_pattern.as_deref(), is_accepted);
+        let _ = crate::review::save_feedback_store(&config.feedback_path, &feedback_store);
+    }
+
     // Record in convention store for learned patterns
     let config = state.config.read().await;
     let convention_path = config

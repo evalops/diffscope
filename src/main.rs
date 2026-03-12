@@ -145,6 +145,13 @@ struct Cli {
         help = "Total token budget for agent loop (cost guard)"
     )]
     agent_max_total_tokens: Option<usize>,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Enable or disable the verification pass (default: true)"
+    )]
+    verification_pass: Option<bool>,
 }
 
 #[derive(Subcommand)]
@@ -397,6 +404,7 @@ async fn main() -> Result<()> {
         agent_review: cli.agent_review,
         agent_max_iterations: cli.agent_max_iterations,
         agent_max_total_tokens: cli.agent_max_total_tokens,
+        verification_pass: cli.verification_pass,
     });
     config.normalize();
 

@@ -255,6 +255,11 @@ async fn review_diff_content_raw_inner(
     let mut plugin_manager = plugins::plugin::PluginManager::new();
     plugin_manager.load_builtin_plugins(&config.plugins).await?;
     let feedback = load_feedback_store(&config);
+    let feedback_context = if config.enhanced_feedback {
+        super::feedback::generate_feedback_context(&feedback)
+    } else {
+        String::new()
+    };
 
     let model_config = config.to_model_config();
 
@@ -262,15 +267,16 @@ async fn review_diff_content_raw_inner(
         Arc::from(adapters::llm::create_adapter(&model_config)?);
     info!("Review adapter: {}", adapter.model_name());
 
-    // Use weak model for verification pass (cheaper, faster)
+    // Use configured model role for verification pass (default: Weak)
     let verification_adapter: Arc<dyn adapters::llm::LLMAdapter> = {
-        let weak_config = config.to_model_config_for_role(config::ModelRole::Weak);
-        if weak_config.model_name != model_config.model_name {
+        let verification_config = config.to_model_config_for_role(config.verification_model_role);
+        if verification_config.model_name != model_config.model_name {
             info!(
-                "Using weak model '{}' for verification pass",
-                weak_config.model_name
+                "Using '{}' model '{}' for verification pass",
+                format!("{:?}", config.verification_model_role).to_lowercase(),
+                verification_config.model_name
             );
-            Arc::from(adapters::llm::create_adapter(&weak_config)?)
+            Arc::from(adapters::llm::create_adapter(&verification_config)?)
         } else {
             adapter.clone()
         }
@@ -460,6 +466,12 @@ async fn review_diff_content_raw_inner(
                 local_prompt_config
                     .system_prompt
                     .push_str(&enhanced_guidance);
+            }
+            if !feedback_context.is_empty() {
+                local_prompt_config.system_prompt.push_str("\n\n");
+                local_prompt_config
+                    .system_prompt
+                    .push_str(&feedback_context);
             }
             if let Some(ref instructions) = auto_instructions {
                 local_prompt_config
@@ -833,15 +845,18 @@ async fn review_diff_content_raw_inner(
         .await?;
 
     // Verification pass: ask the LLM to validate findings against actual code.
-    // Skip when there are no comments or too many (cost control: max 20).
-    let processed_comments = if !processed_comments.is_empty() && processed_comments.len() <= 20 {
+    // Skip when disabled, no comments, or too many (cost control).
+    let processed_comments = if config.verification_pass
+        && !processed_comments.is_empty()
+        && processed_comments.len() <= config.verification_max_comments
+    {
         let comment_count_before = processed_comments.len();
         let fallback_comments = processed_comments.clone();
         match super::verification::verify_comments(
             processed_comments,
             diff_content,
             verification_adapter.as_ref(),
-            5, // min_score threshold
+            config.verification_min_score,
         )
         .await
         {
@@ -858,6 +873,17 @@ async fn review_diff_content_raw_inner(
                 fallback_comments
             }
         }
+    } else {
+        processed_comments
+    };
+
+    // Apply feedback-adjusted confidence scores before filtering
+    let processed_comments = if config.enhanced_feedback {
+        super::filters::apply_feedback_confidence_adjustment(
+            processed_comments,
+            &feedback,
+            config.feedback_min_observations,
+        )
     } else {
         processed_comments
     };

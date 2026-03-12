@@ -10,6 +10,7 @@ use crate::core::context::ContextFetcher;
 use crate::core::git_history::GitHistoryAnalyzer;
 use crate::core::symbol_graph::SymbolGraph;
 use crate::core::symbol_index::SymbolIndex;
+use tracing::debug;
 
 /// Metadata about an available agent tool, for the API catalog.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +53,11 @@ pub fn list_all_tool_info() -> Vec<AgentToolInfo> {
             name: "get_file_history".to_string(),
             description: "Get git history and churn metrics for a file: commit count, bug fix count, distinct authors, risk score.".to_string(),
             requires: Some("git history".to_string()),
+        },
+        AgentToolInfo {
+            name: "get_blame".to_string(),
+            description: "Get git blame information for a file: who last changed each line and why. Useful for understanding authorship and catching regressions.".to_string(),
+            requires: None,
         },
     ]
 }
@@ -114,6 +120,10 @@ pub fn build_review_tools(
 
     if ctx.git_history.is_some() && is_enabled("get_file_history") {
         tools.push(Box::new(GetFileHistoryTool { ctx: ctx.clone() }));
+    }
+
+    if is_enabled("get_blame") {
+        tools.push(Box::new(GitBlameTool { ctx: ctx.clone() }));
     }
 
     tools
@@ -541,6 +551,123 @@ impl ReviewTool for GetDefinitionsTool {
     }
 }
 
+// ── get_blame ──────────────────────────────────────────────────────────
+
+struct GitBlameTool {
+    ctx: Arc<ReviewToolContext>,
+}
+
+#[async_trait]
+impl ReviewTool for GitBlameTool {
+    fn name(&self) -> &str {
+        "get_blame"
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "get_blame".to_string(),
+            description: "Get git blame information for a file. Shows who last changed each line and the commit message. Useful for understanding authorship and catching regressions.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file relative to the repository root"
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to blame (1-based, inclusive). Omit to start from the beginning."
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to blame (1-based, inclusive). Omit to blame to the end."
+                    }
+                },
+                "required": ["file_path"]
+            }),
+        }
+    }
+
+    async fn execute(&self, input: serde_json::Value) -> Result<String> {
+        let file_path = input["file_path"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("file_path is required"))?;
+        let start_line = input["start_line"].as_u64().map(|n| n as usize);
+        let end_line = input["end_line"].as_u64().map(|n| n as usize);
+
+        let full_path = self.ctx.repo_path.join(file_path);
+        if !full_path.exists() {
+            return Ok(format!("Error: file not found: {}", file_path));
+        }
+
+        // Prevent path traversal
+        let canonical = full_path.canonicalize()?;
+        let repo_canonical = self.ctx.repo_path.canonicalize()?;
+        if !canonical.starts_with(&repo_canonical) {
+            return Ok("Error: path traversal not allowed".to_string());
+        }
+
+        let file_path_owned = file_path.to_string();
+        let repo_path = self.ctx.repo_path.clone();
+
+        // git2::Repository is not Send, so we must open it inside spawn_blocking
+        let result = tokio::task::spawn_blocking(move || -> Result<String> {
+            let repo = git2::Repository::open(&repo_path)?;
+            let blame = match repo.blame_file(std::path::Path::new(&file_path_owned), None) {
+                Ok(b) => b,
+                Err(e) => return Ok(format!("Error: could not blame file: {}", e)),
+            };
+
+            // Read file to count lines
+            let content = std::fs::read_to_string(repo_path.join(&file_path_owned))?;
+            let line_count = content.lines().count();
+
+            let start = start_line.unwrap_or(1).max(1);
+            let end = end_line.unwrap_or(line_count).min(line_count);
+
+            let mut output = String::new();
+            for line_num in start..=end {
+                if let Some(hunk) = blame.get_line(line_num) {
+                    let oid = hunk.final_commit_id();
+                    let short_hash = &oid.to_string()[..7.min(oid.to_string().len())];
+                    let sig = hunk.final_signature();
+                    let author = sig.name().unwrap_or("unknown");
+                    let when = sig.when();
+                    let epoch = when.seconds();
+                    let date = chrono::DateTime::from_timestamp(epoch, 0)
+                        .map(|dt| dt.format("%Y-%m-%d").to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    // Get commit message (first line only)
+                    let message = repo
+                        .find_commit(oid)
+                        .ok()
+                        .and_then(|c| {
+                            c.message()
+                                .map(|m| m.lines().next().unwrap_or("").to_string())
+                        })
+                        .unwrap_or_default();
+
+                    output.push_str(&format!(
+                        "L{}: {} ({}) [{}] {}\n",
+                        line_num, author, date, short_hash, message
+                    ));
+                }
+            }
+
+            if output.is_empty() {
+                Ok("No blame data available for the specified range.".to_string())
+            } else {
+                Ok(output)
+            }
+        })
+        .await??;
+
+        debug!("get_blame result length: {} bytes", result.len());
+        Ok(truncate_output(result))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,10 +696,11 @@ mod tests {
             git_history: None,
         });
         let tools = build_review_tools(ctx, None);
-        // At minimum: read_file + search_codebase
-        assert_eq!(tools.len(), 2);
+        // At minimum: read_file + search_codebase + get_blame
+        assert_eq!(tools.len(), 3);
         assert_eq!(tools[0].name(), "read_file");
         assert_eq!(tools[1].name(), "search_codebase");
+        assert_eq!(tools[2].name(), "get_blame");
     }
 
     #[test]
@@ -585,7 +713,7 @@ mod tests {
             git_history: Some(Arc::new(GitHistoryAnalyzer::new())),
         });
         let tools = build_review_tools(ctx, None);
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"read_file"));
         assert!(names.contains(&"search_codebase"));
@@ -593,6 +721,7 @@ mod tests {
         assert!(names.contains(&"get_definitions"));
         assert!(names.contains(&"get_related_symbols"));
         assert!(names.contains(&"get_file_history"));
+        assert!(names.contains(&"get_blame"));
     }
 
     #[test]
@@ -614,11 +743,14 @@ mod tests {
     #[test]
     fn test_list_all_tool_info() {
         let info = list_all_tool_info();
-        assert_eq!(info.len(), 6);
+        assert_eq!(info.len(), 7);
         assert_eq!(info[0].name, "read_file");
         assert!(info[0].requires.is_none());
         assert_eq!(info[2].name, "lookup_symbol");
         assert!(info[2].requires.is_some());
+        // get_blame is unconditional (no requires)
+        let blame_info = info.iter().find(|t| t.name == "get_blame").unwrap();
+        assert!(blame_info.requires.is_none());
     }
 
     #[test]
@@ -962,6 +1094,13 @@ mod tests {
             .unwrap()
             .requires
             .is_some());
+        // Blame tool has no requires
+        assert!(info
+            .iter()
+            .find(|t| t.name == "get_blame")
+            .unwrap()
+            .requires
+            .is_none());
     }
 
     #[test]
@@ -1053,13 +1192,172 @@ mod tests {
             git_history: None,
         });
         let tools = build_review_tools(ctx, None);
-        assert_eq!(tools.len(), 4); // read_file, search_codebase, lookup_symbol, get_definitions
+        assert_eq!(tools.len(), 5); // read_file, search_codebase, lookup_symbol, get_definitions, get_blame
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"read_file"));
         assert!(names.contains(&"search_codebase"));
         assert!(names.contains(&"lookup_symbol"));
         assert!(names.contains(&"get_definitions"));
+        assert!(names.contains(&"get_blame"));
         assert!(!names.contains(&"get_related_symbols"));
         assert!(!names.contains(&"get_file_history"));
+    }
+
+    // ── Git blame tool tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_blame_file_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: dir.path().to_path_buf(),
+            context_fetcher: Arc::new(ContextFetcher::new(dir.path().to_path_buf())),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: None,
+        });
+        let tool = GitBlameTool { ctx };
+        let result = tool
+            .execute(json!({"file_path": "nonexistent.rs"}))
+            .await
+            .unwrap();
+        assert!(result.contains("not found"), "Got: {}", result);
+    }
+
+    #[tokio::test]
+    async fn test_get_blame_path_traversal_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: dir.path().to_path_buf(),
+            context_fetcher: Arc::new(ContextFetcher::new(dir.path().to_path_buf())),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: None,
+        });
+        let tool = GitBlameTool { ctx };
+        let result = tool
+            .execute(json!({"file_path": "../../../etc/passwd"}))
+            .await;
+        if let Ok(msg) = result {
+            assert!(
+                msg.contains("not allowed") || msg.contains("not found"),
+                "Got: {}",
+                msg
+            );
+        }
+    }
+
+    /// Helper to set up a temporary git repo with one committed file using git2.
+    /// Returns the tempdir (must be kept alive).
+    fn setup_git_repo(file_name: &str, content: &str, commit_msg: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+
+        let repo = git2::Repository::init(dir_path).unwrap();
+
+        // Write file
+        std::fs::write(dir_path.join(file_name), content).unwrap();
+
+        // Stage and commit
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new(file_name)).unwrap();
+        index.write().unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+
+        let sig = git2::Signature::now("Test User", "test@test.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, commit_msg, &tree, &[])
+            .unwrap();
+
+        dir
+    }
+
+    #[tokio::test]
+    async fn test_get_blame_success_on_real_repo() {
+        let dir = setup_git_repo(
+            "hello.rs",
+            "fn main() {\n    println!(\"hello\");\n}\n",
+            "initial commit",
+        );
+
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: dir.path().to_path_buf(),
+            context_fetcher: Arc::new(ContextFetcher::new(dir.path().to_path_buf())),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: None,
+        });
+        let tool = GitBlameTool { ctx };
+        let result = tool
+            .execute(json!({"file_path": "hello.rs"}))
+            .await
+            .unwrap();
+        assert!(
+            result.contains("Test User"),
+            "Should contain author name: {}",
+            result
+        );
+        assert!(
+            result.contains("initial commit"),
+            "Should contain commit message: {}",
+            result
+        );
+        assert!(
+            result.contains("L1:"),
+            "Should contain line numbers: {}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_blame_line_range() {
+        let dir = setup_git_repo(
+            "multi.rs",
+            "line1\nline2\nline3\nline4\nline5\n",
+            "add multi",
+        );
+
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: dir.path().to_path_buf(),
+            context_fetcher: Arc::new(ContextFetcher::new(dir.path().to_path_buf())),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: None,
+        });
+        let tool = GitBlameTool { ctx };
+        let result = tool
+            .execute(json!({"file_path": "multi.rs", "start_line": 2, "end_line": 4}))
+            .await
+            .unwrap();
+        assert!(
+            !result.contains("L1:"),
+            "Should not contain line 1: {}",
+            result
+        );
+        assert!(result.contains("L2:"), "Should contain line 2: {}", result);
+        assert!(result.contains("L3:"), "Should contain line 3: {}", result);
+        assert!(result.contains("L4:"), "Should contain line 4: {}", result);
+        assert!(
+            !result.contains("L5:"),
+            "Should not contain line 5: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_get_blame_definition_has_required_fields() {
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: PathBuf::from("/tmp/test"),
+            context_fetcher: Arc::new(ContextFetcher::new(PathBuf::from("/tmp/test"))),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: None,
+        });
+        let tool = GitBlameTool { ctx };
+        let def = tool.definition();
+        assert_eq!(def.name, "get_blame");
+        assert!(!def.description.is_empty());
+        assert!(def.input_schema.is_object());
+        let required = def.input_schema["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v.as_str() == Some("file_path")));
     }
 }

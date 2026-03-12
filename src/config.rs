@@ -289,6 +289,31 @@ pub struct Config {
     /// Which agent tools are enabled. None = all tools enabled.
     #[serde(default)]
     pub agent_tools_enabled: Option<Vec<String>>,
+
+    /// Whether to run the verification pass on review comments (default true).
+    #[serde(default = "default_true")]
+    pub verification_pass: bool,
+
+    /// Which model role to use for the verification pass (default Weak).
+    #[serde(default = "default_verification_model_role")]
+    pub verification_model_role: ModelRole,
+
+    /// Minimum verification score to keep a comment (0-10, default 5).
+    #[serde(default = "default_verification_min_score")]
+    pub verification_min_score: u8,
+
+    /// Maximum number of comments to send through verification (default 20).
+    #[serde(default = "default_verification_max_comments")]
+    pub verification_max_comments: usize,
+
+    /// Enable enhanced feedback loop with per-category/file-pattern tracking
+    /// and feedback-adjusted confidence scores (default false).
+    #[serde(default)]
+    pub enhanced_feedback: bool,
+
+    /// Minimum number of feedback observations before adjusting confidence (default 5).
+    #[serde(default = "default_feedback_min_observations")]
+    pub feedback_min_observations: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -431,6 +456,12 @@ impl Default for Config {
             agent_max_iterations: default_agent_max_iterations(),
             agent_max_total_tokens: None,
             agent_tools_enabled: None,
+            verification_pass: true,
+            verification_model_role: default_verification_model_role(),
+            verification_min_score: default_verification_min_score(),
+            verification_max_comments: default_verification_max_comments(),
+            enhanced_feedback: false,
+            feedback_min_observations: default_feedback_min_observations(),
         }
     }
 }
@@ -490,6 +521,7 @@ pub struct CliOverrides {
     pub agent_review: bool,
     pub agent_max_iterations: Option<usize>,
     pub agent_max_total_tokens: Option<usize>,
+    pub verification_pass: Option<bool>,
 }
 
 impl Config {
@@ -562,6 +594,9 @@ impl Config {
         }
         if let Some(v) = cli.agent_max_total_tokens {
             self.agent_max_total_tokens = Some(v);
+        }
+        if let Some(v) = cli.verification_pass {
+            self.verification_pass = v;
         }
     }
 
@@ -1227,6 +1262,22 @@ fn default_false() -> bool {
 
 fn default_agent_max_iterations() -> usize {
     10
+}
+
+fn default_verification_model_role() -> ModelRole {
+    ModelRole::Weak
+}
+
+fn default_verification_min_score() -> u8 {
+    5
+}
+
+fn default_verification_max_comments() -> usize {
+    20
+}
+
+fn default_feedback_min_observations() -> usize {
+    5
 }
 
 fn normalize_comment_types(values: &[String]) -> Vec<String> {

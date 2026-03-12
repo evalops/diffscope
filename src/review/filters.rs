@@ -178,6 +178,49 @@ pub fn apply_confidence_threshold(
     kept
 }
 
+/// Adjust comment confidence scores based on historical feedback acceptance rates.
+///
+/// For each comment, looks up the composite key "category|*.ext" first,
+/// then falls back to category-only. If enough observations exist,
+/// adjusts confidence: `confidence *= (0.5 + acceptance_rate * 0.5)`.
+/// This maps 0% acceptance → 0.5x, 100% acceptance → 1.0x.
+pub fn apply_feedback_confidence_adjustment(
+    comments: Vec<core::Comment>,
+    feedback: &FeedbackStore,
+    min_observations: usize,
+) -> Vec<core::Comment> {
+    comments
+        .into_iter()
+        .map(|mut comment| {
+            let category = comment.category.to_string();
+            let ext = comment
+                .file_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!("*.{}", e));
+
+            // Try composite key first, then category-only
+            let stats = ext
+                .as_ref()
+                .and_then(|pattern| {
+                    let key = format!("{}|{}", category, pattern);
+                    feedback.by_category_file_pattern.get(&key)
+                })
+                .or_else(|| feedback.by_category.get(&category));
+
+            if let Some(stats) = stats {
+                if stats.total() >= min_observations {
+                    let rate = stats.acceptance_rate();
+                    let adjustment = 0.5 + rate * 0.5;
+                    comment.confidence = (comment.confidence * adjustment).clamp(0.0, 1.0);
+                }
+            }
+
+            comment
+        })
+        .collect()
+}
+
 pub fn apply_review_filters(
     comments: Vec<core::Comment>,
     config: &config::Config,
@@ -278,6 +321,7 @@ mod tests {
                     rejected: 3,
                 },
             )]),
+            ..Default::default()
         };
 
         let comments = vec![
@@ -313,6 +357,7 @@ mod tests {
                     rejected: 10,
                 },
             )]),
+            ..Default::default()
         };
 
         let comment = build_comment(
@@ -338,6 +383,7 @@ mod tests {
                     rejected: 10,
                 },
             )]),
+            ..Default::default()
         };
 
         let comment = build_comment(
@@ -470,5 +516,133 @@ mod tests {
         let filtered = apply_feedback_suppression_with_thresholds(comments, &feedback, 3, 2);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].id, "c2");
+    }
+
+    // ── Feedback confidence adjustment tests ──────────────────────────────
+
+    #[test]
+    fn feedback_confidence_no_data_unchanged() {
+        let feedback = FeedbackStore::default();
+        let comments = vec![build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.8,
+        )];
+        let result = apply_feedback_confidence_adjustment(comments, &feedback, 5);
+        assert_eq!(result[0].confidence, 0.8);
+    }
+
+    #[test]
+    fn feedback_confidence_below_threshold_unchanged() {
+        let mut feedback = FeedbackStore::default();
+        // Only 3 observations, below min_observations of 5
+        feedback.record_feedback("Bug", None, false);
+        feedback.record_feedback("Bug", None, false);
+        feedback.record_feedback("Bug", None, false);
+
+        let comments = vec![build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.8,
+        )];
+        let result = apply_feedback_confidence_adjustment(comments, &feedback, 5);
+        assert_eq!(result[0].confidence, 0.8);
+    }
+
+    #[test]
+    fn feedback_confidence_zero_acceptance_halves() {
+        let mut feedback = FeedbackStore::default();
+        for _ in 0..10 {
+            feedback.record_feedback("Bug", None, false);
+        }
+
+        let comments = vec![build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.8,
+        )];
+        let result = apply_feedback_confidence_adjustment(comments, &feedback, 5);
+        // 0% acceptance → 0.5 * 0.8 = 0.4
+        assert!(
+            (result[0].confidence - 0.4).abs() < 0.01,
+            "Got: {}",
+            result[0].confidence
+        );
+    }
+
+    #[test]
+    fn feedback_confidence_full_acceptance_unchanged() {
+        let mut feedback = FeedbackStore::default();
+        for _ in 0..10 {
+            feedback.record_feedback("Bug", None, true);
+        }
+
+        let comments = vec![build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.8,
+        )];
+        let result = apply_feedback_confidence_adjustment(comments, &feedback, 5);
+        // 100% acceptance → 1.0 * 0.8 = 0.8
+        assert!(
+            (result[0].confidence - 0.8).abs() < 0.01,
+            "Got: {}",
+            result[0].confidence
+        );
+    }
+
+    #[test]
+    fn feedback_confidence_composite_key_takes_precedence() {
+        let mut feedback = FeedbackStore::default();
+        // Category-level: 100% acceptance (would give 1.0x)
+        for _ in 0..10 {
+            feedback.record_feedback("Bug", None, true);
+        }
+        // Composite key "Bug|*.rs": 0% acceptance (would give 0.5x)
+        for _ in 0..10 {
+            feedback.record_feedback("Bug", Some("*.rs"), false);
+        }
+
+        let comments = vec![build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.8,
+        )];
+        let result = apply_feedback_confidence_adjustment(comments, &feedback, 5);
+        // Composite key should take precedence: 0% → 0.5 * 0.8 = 0.4
+        // Note: the composite stats include the category-only accepts too,
+        // so composite has accepted=0, rejected=10. Category has accepted=10+0=10, rejected=0+10=10
+        // Actually record_feedback("Bug", Some("*.rs"), false) adds to by_category too
+        // So by_category["Bug"] = accepted:10, rejected:10 = 50% acceptance
+        // by_category_file_pattern["Bug|*.rs"] = accepted:0, rejected:10 = 0%
+        // Composite wins: 0.5 * 0.8 = 0.4
+        assert!(
+            (result[0].confidence - 0.4).abs() < 0.01,
+            "Got: {}",
+            result[0].confidence
+        );
+    }
+
+    #[test]
+    fn feedback_confidence_clamped_to_one() {
+        let mut feedback = FeedbackStore::default();
+        for _ in 0..10 {
+            feedback.record_feedback("Bug", None, true);
+        }
+
+        // Even with high confidence, should not exceed 1.0
+        let comments = vec![build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            1.0,
+        )];
+        let result = apply_feedback_confidence_adjustment(comments, &feedback, 5);
+        assert!(result[0].confidence <= 1.0);
     }
 }
