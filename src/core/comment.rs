@@ -178,27 +178,28 @@ impl CommentSynthesizer {
     }
 
     fn process_raw_comment(raw: RawComment) -> Result<Option<Comment>> {
+        let lower = raw.content.to_lowercase();
         let severity = raw
             .severity
             .clone()
-            .unwrap_or_else(|| Self::determine_severity(&raw.content));
+            .unwrap_or_else(|| Self::determine_severity(&lower));
         let category = raw
             .category
             .clone()
-            .unwrap_or_else(|| Self::determine_category(&raw.content));
+            .unwrap_or_else(|| Self::determine_category(&lower));
         let confidence = raw
             .confidence
-            .unwrap_or_else(|| Self::calculate_confidence(&raw.content, &severity, &category));
+            .unwrap_or_else(|| Self::calculate_confidence(&lower, &severity, &category));
         let confidence = confidence.clamp(0.0, 1.0);
         let tags = if raw.tags.is_empty() {
-            Self::extract_tags(&raw.content, &category)
+            Self::extract_tags(&lower, &category)
         } else {
             raw.tags.clone()
         };
         let fix_effort = raw
             .fix_effort
             .clone()
-            .unwrap_or_else(|| Self::determine_fix_effort(&raw.content, &category));
+            .unwrap_or_else(|| Self::determine_fix_effort(&lower, &category));
         let code_suggestion = Self::generate_code_suggestion(&raw);
         let id = Self::generate_comment_id(&raw.file_path, &raw.content, &category);
 
@@ -223,8 +224,8 @@ impl CommentSynthesizer {
         compute_comment_id(file_path, content, category)
     }
 
-    fn determine_severity(content: &str) -> Severity {
-        let lower = content.to_lowercase();
+    /// `lower` must already be lowercased.
+    fn determine_severity(lower: &str) -> Severity {
         if lower.contains("error") || lower.contains("critical") {
             Severity::Error
         } else if lower.contains("warning") || lower.contains("issue") {
@@ -236,9 +237,8 @@ impl CommentSynthesizer {
         }
     }
 
-    fn determine_category(content: &str) -> Category {
-        let lower = content.to_lowercase();
-
+    /// `lower` must already be lowercased.
+    fn determine_category(lower: &str) -> Category {
         // Security — broad keyword coverage across all 5 vulnerability classes
         if lower.contains("security")
             || lower.contains("vulnerability")
@@ -364,10 +364,9 @@ impl CommentSynthesizer {
         }
     }
 
-    fn calculate_confidence(content: &str, severity: &Severity, _category: &Category) -> f32 {
+    /// `lower` must already be lowercased.
+    fn calculate_confidence(lower: &str, severity: &Severity, _category: &Category) -> f32 {
         let mut confidence: f32 = 0.7; // Base confidence
-
-        let lower = content.to_lowercase();
 
         // ── Injection (high-confidence, well-defined patterns) ──
         if lower.contains("sql injection") {
@@ -550,7 +549,7 @@ impl CommentSynthesizer {
         }
 
         // ── Correctness ──
-        if lower.contains("null pointer") || lower.contains("buffer overflow") {
+        if lower.contains("null pointer") {
             confidence += 0.2;
         }
         if lower.contains("performance issue") || lower.contains("n+1") {
@@ -572,9 +571,9 @@ impl CommentSynthesizer {
         confidence.clamp(0.1, 1.0)
     }
 
-    fn extract_tags(content: &str, category: &Category) -> Vec<String> {
+    /// `lower` must already be lowercased.
+    fn extract_tags(lower: &str, category: &Category) -> Vec<String> {
         let mut tags = vec![category.as_str().to_string()];
-        let lower = content.to_lowercase();
 
         // ── Injection tags ──
         if lower.contains("sql") && lower.contains("injection") {
@@ -709,7 +708,7 @@ impl CommentSynthesizer {
         if lower.contains("ecb") && lower.contains("mode") {
             tags.push("ecb-mode".to_string());
         }
-        if lower.contains("insecure tls") || lower.contains("ssl") && lower.contains("insecure") {
+        if lower.contains("insecure tls") || (lower.contains("ssl") && lower.contains("insecure")) {
             tags.push("insecure-tls".to_string());
         }
         if lower.contains("insecure random")
@@ -861,9 +860,8 @@ impl CommentSynthesizer {
         tags
     }
 
-    fn determine_fix_effort(content: &str, category: &Category) -> FixEffort {
-        let lower = content.to_lowercase();
-
+    /// `lower` must already be lowercased.
+    fn determine_fix_effort(lower: &str, category: &Category) -> FixEffort {
         // High effort indicators
         if lower.contains("architecture")
             || lower.contains("refactor")
