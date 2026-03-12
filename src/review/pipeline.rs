@@ -23,6 +23,13 @@ use crate::plugins;
 use super::compression;
 use super::triage;
 
+/// Agent activity metadata from the agent loop.
+#[derive(Debug, Clone)]
+pub struct AgentActivity {
+    pub total_iterations: usize,
+    pub tool_calls: Vec<core::agent_loop::AgentToolCallLog>,
+}
+
 /// Rich result from the review pipeline, carrying comments plus telemetry metadata.
 #[derive(Debug, Clone, Default)]
 pub struct ReviewResult {
@@ -39,6 +46,8 @@ pub struct ReviewResult {
     pub comments_by_pass: HashMap<String, usize>,
     /// Hotspot detection results from multi-pass analysis.
     pub hotspots: Vec<core::multi_pass::HotspotResult>,
+    /// Agent loop activity (None for one-shot reviews).
+    pub agent_activity: Option<AgentActivity>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -560,6 +569,7 @@ async fn review_diff_content_raw_inner(
         max_iterations: config.agent_max_iterations,
         max_total_tokens: config.agent_max_total_tokens,
     };
+    let agent_tools_filter = config.agent_tools_enabled.clone();
 
     let on_progress_ref = &on_progress;
     let files_skipped_snapshot = files_skipped;
@@ -569,15 +579,16 @@ async fn review_diff_content_raw_inner(
             let adapter = adapter.clone();
             let agent_ctx = agent_tool_ctx.clone();
             let loop_config = agent_loop_config.clone();
+            let tools_filter = agent_tools_filter.clone();
             async move {
                 if is_local {
                     eprintln!("Sending {} to local model...", job.file_path.display());
                 }
                 let request_start = Instant::now();
 
-                let response = if let Some(ctx) = agent_ctx {
+                let (response, agent_data) = if let Some(ctx) = agent_ctx {
                     // Agent mode: iterative tool-calling loop
-                    let tools = core::agent_tools::build_review_tools(ctx);
+                    let tools = core::agent_tools::build_review_tools(ctx, tools_filter.as_deref());
                     let tool_defs: Vec<_> = tools.iter().map(|t| t.definition()).collect();
                     let chat_request =
                         adapters::llm::ChatRequest::from_llm_request(job.request, &tool_defs);
@@ -590,16 +601,25 @@ async fn review_diff_content_raw_inner(
                     )
                     .await
                     {
-                        Ok(result) => Ok(adapters::llm::LLMResponse {
-                            content: result.content,
-                            model: result.model,
-                            usage: Some(result.total_usage),
-                        }),
-                        Err(e) => Err(e),
+                        Ok(result) => {
+                            let activity = AgentActivity {
+                                total_iterations: result.iterations,
+                                tool_calls: result.tool_calls,
+                            };
+                            (
+                                Ok(adapters::llm::LLMResponse {
+                                    content: result.content,
+                                    model: result.model,
+                                    usage: Some(result.total_usage),
+                                }),
+                                Some(activity),
+                            )
+                        }
+                        Err(e) => (Err(e), None),
                     }
                 } else {
                     // Standard one-shot mode
-                    adapter.complete(job.request).await
+                    (adapter.complete(job.request).await, None)
                 };
 
                 let latency_ms = request_start.elapsed().as_millis() as u64;
@@ -618,6 +638,7 @@ async fn review_diff_content_raw_inner(
                     job.pass_kind,
                     response,
                     latency_ms,
+                    agent_data,
                 )
             }
         })
@@ -627,16 +648,27 @@ async fn review_diff_content_raw_inner(
 
     // Phase 3: Process results in file order
     let mut indexed_results = results;
-    indexed_results.sort_by_key(|(idx, _, _, _, _, _, _)| *idx);
+    indexed_results.sort_by_key(|(idx, _, _, _, _, _, _, _)| *idx);
 
     let mut total_prompt_tokens: usize = 0;
     let mut total_completion_tokens: usize = 0;
     let mut total_tokens: usize = 0;
     let mut file_metrics: Vec<FileMetric> = Vec::new();
     let mut comments_by_pass: HashMap<String, usize> = HashMap::new();
+    let mut aggregate_agent_iterations: usize = 0;
+    let mut aggregate_agent_tool_calls: Vec<core::agent_loop::AgentToolCallLog> = Vec::new();
+    let mut has_agent_activity = false;
 
-    for (diff_index, active_rules, path_config, file_path, pass_kind, response, latency_ms) in
-        indexed_results
+    for (
+        diff_index,
+        active_rules,
+        path_config,
+        file_path,
+        pass_kind,
+        response,
+        latency_ms,
+        agent_data,
+    ) in indexed_results
     {
         let diff = &diffs[diff_index];
 
@@ -660,6 +692,13 @@ async fn review_diff_content_raw_inner(
                 total_prompt_tokens += resp_prompt_tokens;
                 total_completion_tokens += resp_completion_tokens;
                 total_tokens += resp_total_tokens;
+
+                // Accumulate agent activity if present
+                if let Some(activity) = agent_data {
+                    has_agent_activity = true;
+                    aggregate_agent_iterations += activity.total_iterations;
+                    aggregate_agent_tool_calls.extend(activity.tool_calls);
+                }
 
                 // Validate LLM response before parsing
                 if let Err(validation_err) = validate_llm_response(&response.content) {
@@ -846,6 +885,14 @@ async fn review_diff_content_raw_inner(
         convention_suppressed_count,
         comments_by_pass,
         hotspots: enhanced_ctx.hotspots.clone(),
+        agent_activity: if has_agent_activity {
+            Some(AgentActivity {
+                total_iterations: aggregate_agent_iterations,
+                tool_calls: aggregate_agent_tool_calls,
+            })
+        } else {
+            None
+        },
     })
 }
 

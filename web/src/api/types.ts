@@ -78,6 +78,8 @@ export interface ReviewEvent {
   hotspot_details?: HotspotDetail[]
   convention_suppressed?: number
   comments_by_pass?: Record<string, number>
+  agent_iterations?: number
+  agent_tool_calls?: AgentToolCallEvent[]
   github_posted: boolean
   github_repo?: string
   github_pr?: number
@@ -293,4 +295,16 @@ export interface StartPrReviewRequest {
   repo: string
   pr_number: number
   post_results: boolean
+}
+
+export interface AgentToolInfo {
+  name: string
+  description: string
+  requires?: string
+}
+
+export interface AgentToolCallEvent {
+  iteration: number
+  tool_name: string
+  duration_ms: number
 }

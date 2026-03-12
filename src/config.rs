@@ -285,6 +285,10 @@ pub struct Config {
     /// Optional total token budget for agent loop.
     #[serde(default)]
     pub agent_max_total_tokens: Option<usize>,
+
+    /// Which agent tools are enabled. None = all tools enabled.
+    #[serde(default)]
+    pub agent_tools_enabled: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -426,6 +430,7 @@ impl Default for Config {
             agent_review: false,
             agent_max_iterations: default_agent_max_iterations(),
             agent_max_total_tokens: None,
+            agent_tools_enabled: None,
         }
     }
 }

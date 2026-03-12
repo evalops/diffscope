@@ -725,6 +725,8 @@ impl EventRow {
                 .and_then(|v| serde_json::from_value(v).ok()),
             convention_suppressed: self.convention_suppressed.map(|v| v as usize),
             comments_by_pass,
+            agent_iterations: None,
+            agent_tool_calls: None,
             github_posted: self.github_posted,
             github_repo: self.github_repo,
             github_pr: self.github_pr.map(|v| v as u32),

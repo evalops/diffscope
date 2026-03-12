@@ -111,6 +111,7 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .route("/gh/repos", get(api::get_gh_repos))
         .route("/gh/prs", get(api::get_gh_prs))
         .route("/gh/review", post(api::start_pr_review))
+        .route("/agent/tools", get(api::get_agent_tools))
         .route("/gh/auth/device", post(github::start_device_flow))
         .route("/gh/auth/poll", post(github::poll_device_flow))
         .route("/gh/auth", delete(github::disconnect_github))

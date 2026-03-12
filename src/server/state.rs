@@ -29,6 +29,14 @@ pub struct HotspotDetail {
     pub reasons: Vec<String>,
 }
 
+/// Serializable agent tool call event for the wide event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentToolCallEvent {
+    pub iteration: usize,
+    pub tool_name: String,
+    pub duration_ms: u64,
+}
+
 /// A "wide event" capturing the full lifecycle of a single review operation.
 /// Emitted once at completion as a single structured log entry and stored
 /// alongside the review session for frontend display.
@@ -85,6 +93,12 @@ pub struct ReviewEvent {
     // --- specialized pass breakdown ---
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub comments_by_pass: HashMap<String, usize>,
+
+    // --- agent review ---
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_iterations: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_tool_calls: Option<Vec<AgentToolCallEvent>>,
 
     // --- GitHub integration ---
     pub github_posted: bool,
@@ -516,6 +530,8 @@ impl ReviewEventBuilder {
                 hotspot_details: None,
                 convention_suppressed: None,
                 comments_by_pass: HashMap::new(),
+                agent_iterations: None,
+                agent_tool_calls: None,
                 github_posted: false,
                 github_repo: None,
                 github_pr: None,
@@ -636,6 +652,23 @@ impl ReviewEventBuilder {
 
     pub fn comments_by_pass(mut self, by_pass: HashMap<String, usize>) -> Self {
         self.event.comments_by_pass = by_pass;
+        self
+    }
+
+    pub fn agent_activity(mut self, activity: Option<&crate::review::AgentActivity>) -> Self {
+        if let Some(a) = activity {
+            self.event.agent_iterations = Some(a.total_iterations);
+            self.event.agent_tool_calls = Some(
+                a.tool_calls
+                    .iter()
+                    .map(|tc| AgentToolCallEvent {
+                        iteration: tc.iteration,
+                        tool_name: tc.tool_name.clone(),
+                        duration_ms: tc.duration_ms,
+                    })
+                    .collect(),
+            );
+        }
         self
     }
 

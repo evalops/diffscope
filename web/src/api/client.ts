@@ -33,6 +33,8 @@ export const api = {
 
   getDoctor: () => request<import('./types').DoctorResponse>('/doctor'),
 
+  getAgentTools: () => request<import('./types').AgentToolInfo[]>('/agent/tools'),
+
   getConfig: () => request<Record<string, unknown>>('/config'),
 
   updateConfig: (updates: Record<string, unknown>) =>

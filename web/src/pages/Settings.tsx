@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Save, RefreshCw, Check, ChevronDown, ChevronRight, Eye, EyeOff, GitPullRequestDraft } from 'lucide-react'
-import { useConfig, useUpdateConfig } from '../api/hooks'
+import { useConfig, useUpdateConfig, useAgentTools } from '../api/hooks'
 import { api } from '../api/client'
 import { MODEL_PRESETS } from '../lib/models'
 import type { TestProviderResponse, GhStatusResponse } from '../api/types'
@@ -55,12 +55,13 @@ function Section({ title, children, defaultOpen = true }: {
 
 // --------------- tab definitions ---------------
 
-type TabId = 'providers' | 'review' | 'model' | 'repos' | 'advanced'
+type TabId = 'providers' | 'review' | 'model' | 'agent' | 'repos' | 'advanced'
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'providers', label: 'Providers' },
   { id: 'review', label: 'Review' },
   { id: 'model', label: 'Model' },
+  { id: 'agent', label: 'Agent' },
   { id: 'repos', label: 'Repos' },
   { id: 'advanced', label: 'Advanced' },
 ]
@@ -126,6 +127,7 @@ type ConnStatus = 'untested' | 'ok' | 'failed'
 export function Settings() {
   const { data: config, isLoading } = useConfig()
   const updateConfig = useUpdateConfig()
+  const { data: agentTools } = useAgentTools()
   const [form, setForm] = useState<Record<string, unknown>>({})
   const [saved, setSaved] = useState(false)
   const [activeTab, setActiveTab] = useState<TabId>(() => {
@@ -632,22 +634,6 @@ export function Settings() {
         </div>
       </Section>
 
-      <Section title="AGENT REVIEW" defaultOpen={false}>
-        <p className="text-[10px] text-text-muted mb-3">
-          When enabled, the LLM can iteratively request additional context during review — reading files, searching the codebase, and looking up symbols — instead of relying on a single one-shot prompt.
-        </p>
-        <Toggle
-          label="Enable Agent Review"
-          description="Let the LLM call tools to gather context during review (requires Anthropic or OpenAI)"
-          checked={form.agent_review === true}
-          onChange={v => setForm({ ...form, agent_review: v })}
-        />
-        <div className="space-y-3 mt-3">
-          {field('Max Iterations', 'agent_max_iterations', 'number', '10', 'Maximum LLM round-trips per file (1-50, default: 10)')}
-          {field('Token Budget', 'agent_max_total_tokens', 'number', '', 'Total token limit across all iterations (empty = unlimited)')}
-        </div>
-      </Section>
-
       <Section title="EXCLUDE PATTERNS" defaultOpen={false}>
         <div>
           <label className="block text-[12px] font-medium text-text-secondary mb-1">Glob patterns to exclude from review</label>
@@ -667,10 +653,97 @@ export function Settings() {
     </div>
   )
 
+  const renderAgentTab = () => {
+    const toolsEnabled = form.agent_tools_enabled as string[] | null | undefined
+    const allTools = agentTools ?? []
+
+    const isToolEnabled = (name: string) => {
+      if (toolsEnabled == null) return true // null = all enabled
+      return toolsEnabled.includes(name)
+    }
+
+    const toggleTool = (name: string) => {
+      if (toolsEnabled == null) {
+        // Currently all enabled; disabling one initializes the list minus that tool
+        const newList = allTools.map(t => t.name).filter(n => n !== name)
+        setForm({ ...form, agent_tools_enabled: newList })
+      } else {
+        const enabled = isToolEnabled(name)
+        if (enabled) {
+          const newList = toolsEnabled.filter(n => n !== name)
+          setForm({ ...form, agent_tools_enabled: newList.length > 0 ? newList : [] })
+        } else {
+          const newList = [...toolsEnabled, name]
+          // If all tools are now enabled, set back to null
+          if (newList.length >= allTools.length) {
+            setForm({ ...form, agent_tools_enabled: null })
+          } else {
+            setForm({ ...form, agent_tools_enabled: newList })
+          }
+        }
+      }
+    }
+
+    return (
+      <div className="space-y-3">
+        <Section title="AGENT MODE">
+          <p className="text-[10px] text-text-muted mb-3">
+            When enabled, the LLM can iteratively request additional context during review — reading files, searching the codebase, and looking up symbols — instead of relying on a single one-shot prompt.
+          </p>
+          <Toggle
+            label="Enable Agent Review"
+            description="Let the LLM call tools to gather context during review (requires Anthropic or OpenAI)"
+            checked={form.agent_review === true}
+            onChange={v => setForm({ ...form, agent_review: v })}
+          />
+          <div className="space-y-3 mt-3">
+            {field('Max Iterations', 'agent_max_iterations', 'number', '10', 'Maximum LLM round-trips per file (1-50, default: 10)')}
+            {field('Token Budget', 'agent_max_total_tokens', 'number', '', 'Total token limit across all iterations (empty = unlimited)')}
+          </div>
+        </Section>
+
+        <Section title="AGENT TOOLS">
+          {allTools.length === 0 ? (
+            <p className="text-[11px] text-text-muted">Loading tools...</p>
+          ) : (
+            <div className="space-y-1">
+              {allTools.map(tool => (
+                <div key={tool.name} className="flex items-center justify-between py-2">
+                  <div className="flex-1 min-w-0 mr-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px] text-text-primary font-code">{tool.name}</span>
+                      {tool.requires && (
+                        <span className="text-[9px] text-text-muted bg-surface px-1.5 py-0.5 rounded">
+                          requires {tool.requires}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-text-muted mt-0.5">{tool.description}</div>
+                  </div>
+                  <button
+                    onClick={() => toggleTool(tool.name)}
+                    className={`relative w-10 h-[22px] rounded-full transition-colors flex-shrink-0 ${
+                      isToolEnabled(tool.name) ? 'bg-toggle-on' : 'bg-toggle-off'
+                    }`}
+                  >
+                    <span className={`absolute top-[3px] w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                      isToolEnabled(tool.name) ? 'left-[22px]' : 'left-[3px]'
+                    }`} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Section>
+      </div>
+    )
+  }
+
   const tabContent = {
     providers: renderProvidersTab,
     review: renderReviewTab,
     model: renderModelTab,
+    agent: renderAgentTab,
     repos: renderReposTab,
     advanced: renderAdvancedTab,
   } as const

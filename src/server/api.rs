@@ -169,6 +169,10 @@ pub async fn get_status(State(state): State<Arc<AppState>>) -> Json<StatusRespon
     })
 }
 
+pub async fn get_agent_tools() -> Json<Vec<crate::core::agent_tools::AgentToolInfo>> {
+    Json(crate::core::agent_tools::list_all_tool_info())
+}
+
 #[tracing::instrument(name = "api.start_review", skip(state, request), fields(diff_source = %request.diff_source))]
 pub async fn start_review(
     State(state): State<Arc<AppState>>,
@@ -463,6 +467,7 @@ async fn run_review_task(
                     )
                     .convention_suppressed(review_result.convention_suppressed_count)
                     .comments_by_pass(review_result.comments_by_pass)
+                    .agent_activity(review_result.agent_activity.as_ref())
                     .build();
             emit_wide_event(&event);
             AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
@@ -1914,6 +1919,7 @@ async fn run_pr_review_task(
                     )
                     .convention_suppressed(review_result.convention_suppressed_count)
                     .comments_by_pass(review_result.comments_by_pass)
+                    .agent_activity(review_result.agent_activity.as_ref())
                     .github(&repo, pr_number)
                     .github_posted(github_posted)
                     .build();

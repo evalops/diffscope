@@ -120,6 +120,14 @@ export function useEventStats(params?: { time_from?: string; time_to?: string })
   })
 }
 
+export function useAgentTools() {
+  return useQuery({
+    queryKey: ['agent-tools'],
+    queryFn: api.getAgentTools,
+    staleTime: Infinity,
+  })
+}
+
 export function useStartPrReview() {
   const queryClient = useQueryClient()
   return useMutation({

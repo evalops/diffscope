@@ -19,7 +19,7 @@ pub use pipeline::{
     review_diff_content_with_repo, ProgressCallback, ProgressUpdate,
 };
 #[allow(unused_imports)]
-pub(crate) use pipeline::{FileMetric, ReviewResult};
+pub(crate) use pipeline::{AgentActivity, FileMetric, ReviewResult};
 pub use rule_helpers::{
     apply_rule_overrides, build_pr_summary_comment_body, inject_rule_context, load_review_rules,
     normalize_rule_id, summarize_rule_hits,

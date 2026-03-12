@@ -47,6 +47,14 @@ pub enum AgentEvent {
     },
 }
 
+/// Log entry for a single tool call during the agent loop.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AgentToolCallLog {
+    pub iteration: usize,
+    pub tool_name: String,
+    pub duration_ms: u64,
+}
+
 /// Result of running the agent loop.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -59,6 +67,8 @@ pub struct AgentLoopResult {
     pub total_usage: Usage,
     /// Number of LLM round-trips performed.
     pub iterations: usize,
+    /// Log of all tool calls made during the loop.
+    pub tool_calls: Vec<AgentToolCallLog>,
 }
 
 /// Run an iterative agent loop: LLM call → tool execution → repeat until done.
@@ -95,6 +105,7 @@ pub async fn run_agent_loop(
                 total_tokens: 0,
             }),
             iterations: 1,
+            tool_calls: Vec::new(),
         });
     }
 
@@ -106,6 +117,7 @@ pub async fn run_agent_loop(
     };
     let mut accumulated_text = String::new();
     let mut model = String::new();
+    let mut tool_call_log: Vec<AgentToolCallLog> = Vec::new();
 
     for iteration in 0..config.max_iterations {
         let request = ChatRequest {
@@ -171,6 +183,7 @@ pub async fn run_agent_loop(
                 model,
                 total_usage,
                 iterations: iteration + 1,
+                tool_calls: tool_call_log,
             });
         }
 
@@ -190,6 +203,7 @@ pub async fn run_agent_loop(
                 model,
                 total_usage,
                 iterations: iteration + 1,
+                tool_calls: tool_call_log,
             });
         }
 
@@ -225,6 +239,11 @@ pub async fn run_agent_loop(
             };
 
             let duration_ms = start.elapsed().as_millis() as u64;
+            tool_call_log.push(AgentToolCallLog {
+                iteration,
+                tool_name: call_name.clone(),
+                duration_ms,
+            });
             if let Some(ref cb) = on_event {
                 cb(AgentEvent::ToolCalled {
                     iteration,
@@ -267,6 +286,7 @@ pub async fn run_agent_loop(
                     model,
                     total_usage,
                     iterations: iteration + 1,
+                    tool_calls: tool_call_log,
                 });
             }
         }
@@ -290,6 +310,7 @@ pub async fn run_agent_loop(
         model,
         total_usage,
         iterations: config.max_iterations,
+        tool_calls: tool_call_log,
     })
 }
 

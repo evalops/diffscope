@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,6 +10,51 @@ use crate::core::context::ContextFetcher;
 use crate::core::git_history::GitHistoryAnalyzer;
 use crate::core::symbol_graph::SymbolGraph;
 use crate::core::symbol_index::SymbolIndex;
+
+/// Metadata about an available agent tool, for the API catalog.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentToolInfo {
+    pub name: String,
+    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requires: Option<String>,
+}
+
+/// Return a static catalog of all agent tools with their descriptions.
+pub fn list_all_tool_info() -> Vec<AgentToolInfo> {
+    vec![
+        AgentToolInfo {
+            name: "read_file".to_string(),
+            description: "Read the contents of a file in the repository. Returns the file content with line numbers.".to_string(),
+            requires: None,
+        },
+        AgentToolInfo {
+            name: "search_codebase".to_string(),
+            description: "Search the codebase for a regex pattern. Returns matching lines with file paths and line numbers.".to_string(),
+            requires: None,
+        },
+        AgentToolInfo {
+            name: "lookup_symbol".to_string(),
+            description: "Look up a symbol (function, struct, class, etc.) in the codebase index. Returns definition locations and code snippets.".to_string(),
+            requires: Some("symbol index".to_string()),
+        },
+        AgentToolInfo {
+            name: "get_definitions".to_string(),
+            description: "Get the definitions of specific symbols as they appear in a given file, using the symbol index for precise lookup.".to_string(),
+            requires: Some("symbol index".to_string()),
+        },
+        AgentToolInfo {
+            name: "get_related_symbols".to_string(),
+            description: "Find symbols related to the given symbols (callers, callees, implementations, etc.) using the symbol graph.".to_string(),
+            requires: Some("symbol graph".to_string()),
+        },
+        AgentToolInfo {
+            name: "get_file_history".to_string(),
+            description: "Get git history and churn metrics for a file: commit count, bug fix count, distinct authors, risk score.".to_string(),
+            requires: Some("git history".to_string()),
+        },
+    ]
+}
 
 /// Maximum bytes returned by any single tool execution (8 KB).
 const MAX_TOOL_OUTPUT_BYTES: usize = 8 * 1024;
@@ -30,22 +76,43 @@ pub trait ReviewTool: Send + Sync {
 }
 
 /// Build the standard set of review tools from the given context.
-pub fn build_review_tools(ctx: Arc<ReviewToolContext>) -> Vec<Box<dyn ReviewTool>> {
-    let mut tools: Vec<Box<dyn ReviewTool>> = vec![
-        Box::new(ReadFileTool { ctx: ctx.clone() }),
-        Box::new(SearchCodebaseTool { ctx: ctx.clone() }),
-    ];
+///
+/// If `enabled_filter` is `Some`, only tools whose names appear in the list are included.
+/// If `None`, all available tools are included.
+pub fn build_review_tools(
+    ctx: Arc<ReviewToolContext>,
+    enabled_filter: Option<&[String]>,
+) -> Vec<Box<dyn ReviewTool>> {
+    let is_enabled = |name: &str| -> bool {
+        match enabled_filter {
+            None => true,
+            Some(list) => list.iter().any(|s| s == name),
+        }
+    };
 
-    if ctx.symbol_index.is_some() {
-        tools.push(Box::new(LookupSymbolTool { ctx: ctx.clone() }));
-        tools.push(Box::new(GetDefinitionsTool { ctx: ctx.clone() }));
+    let mut tools: Vec<Box<dyn ReviewTool>> = Vec::new();
+
+    if is_enabled("read_file") {
+        tools.push(Box::new(ReadFileTool { ctx: ctx.clone() }));
+    }
+    if is_enabled("search_codebase") {
+        tools.push(Box::new(SearchCodebaseTool { ctx: ctx.clone() }));
     }
 
-    if ctx.symbol_graph.is_some() {
+    if ctx.symbol_index.is_some() {
+        if is_enabled("lookup_symbol") {
+            tools.push(Box::new(LookupSymbolTool { ctx: ctx.clone() }));
+        }
+        if is_enabled("get_definitions") {
+            tools.push(Box::new(GetDefinitionsTool { ctx: ctx.clone() }));
+        }
+    }
+
+    if ctx.symbol_graph.is_some() && is_enabled("get_related_symbols") {
         tools.push(Box::new(GetRelatedSymbolsTool { ctx: ctx.clone() }));
     }
 
-    if ctx.git_history.is_some() {
+    if ctx.git_history.is_some() && is_enabled("get_file_history") {
         tools.push(Box::new(GetFileHistoryTool { ctx: ctx.clone() }));
     }
 
@@ -501,7 +568,7 @@ mod tests {
             symbol_graph: None,
             git_history: None,
         });
-        let tools = build_review_tools(ctx);
+        let tools = build_review_tools(ctx, None);
         // At minimum: read_file + search_codebase
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].name(), "read_file");
@@ -517,7 +584,7 @@ mod tests {
             symbol_graph: Some(Arc::new(SymbolGraph::new())),
             git_history: Some(Arc::new(GitHistoryAnalyzer::new())),
         });
-        let tools = build_review_tools(ctx);
+        let tools = build_review_tools(ctx, None);
         assert_eq!(tools.len(), 6);
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
         assert!(names.contains(&"read_file"));
@@ -529,6 +596,32 @@ mod tests {
     }
 
     #[test]
+    fn test_build_review_tools_filtered() {
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: PathBuf::from("/tmp/test"),
+            context_fetcher: Arc::new(ContextFetcher::new(PathBuf::from("/tmp/test"))),
+            symbol_index: Some(Arc::new(SymbolIndex::default())),
+            symbol_graph: Some(Arc::new(SymbolGraph::new())),
+            git_history: Some(Arc::new(GitHistoryAnalyzer::new())),
+        });
+        let enabled = vec!["read_file".to_string(), "search_codebase".to_string()];
+        let tools = build_review_tools(ctx, Some(&enabled));
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name(), "read_file");
+        assert_eq!(tools[1].name(), "search_codebase");
+    }
+
+    #[test]
+    fn test_list_all_tool_info() {
+        let info = list_all_tool_info();
+        assert_eq!(info.len(), 6);
+        assert_eq!(info[0].name, "read_file");
+        assert!(info[0].requires.is_none());
+        assert_eq!(info[2].name, "lookup_symbol");
+        assert!(info[2].requires.is_some());
+    }
+
+    #[test]
     fn test_tool_definitions_have_required_fields() {
         let ctx = Arc::new(ReviewToolContext {
             repo_path: PathBuf::from("/tmp/test"),
@@ -537,7 +630,7 @@ mod tests {
             symbol_graph: Some(Arc::new(SymbolGraph::new())),
             git_history: Some(Arc::new(GitHistoryAnalyzer::new())),
         });
-        let tools = build_review_tools(ctx);
+        let tools = build_review_tools(ctx, None);
         for tool in &tools {
             let def = tool.definition();
             assert!(!def.name.is_empty());

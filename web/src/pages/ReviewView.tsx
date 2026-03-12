@@ -360,6 +360,7 @@ function formatBytes(bytes: number): string {
 function EventPanel({ event }: { event: ReviewEvent }) {
   const [showFileMetrics, setShowFileMetrics] = useState(false)
   const [showHotspots, setShowHotspots] = useState(false)
+  const [showAgentActivity, setShowAgentActivity] = useState(false)
 
   const fmtTokens = (n: number) => n.toLocaleString()
 
@@ -407,6 +408,11 @@ function EventPanel({ event }: { event: ReviewEvent }) {
             <div className="font-code text-text-primary truncate" title={event.model}>{event.model}</div>
             {event.provider && <div><span className="text-text-muted">via</span> {event.provider}</div>}
             {event.base_url && <div className="font-code text-text-muted truncate text-[10px]" title={event.base_url}>{event.base_url}</div>}
+            {event.agent_iterations != null && event.agent_iterations > 0 && (
+              <div className="mt-1 pt-1 border-t border-border/50">
+                <div className="text-accent font-medium">Agent ({event.agent_iterations} iterations)</div>
+              </div>
+            )}
             {event.tokens_total != null && event.tokens_total > 0 && (
               <div className="mt-1 pt-1 border-t border-border/50">
                 <div><span className="text-text-muted">Tokens:</span> <span className="font-code text-text-primary">{fmtTokens(event.tokens_total)}</span></div>
@@ -471,6 +477,36 @@ function EventPanel({ event }: { event: ReviewEvent }) {
                 </div>
               ))}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* Agent activity */}
+      {event.agent_iterations != null && event.agent_iterations > 0 && event.agent_tool_calls && (
+        <div className="mt-2 pt-2 border-t border-border/50">
+          <button onClick={() => setShowAgentActivity(!showAgentActivity)} className="text-[11px] text-text-muted hover:text-text-secondary flex items-center gap-1">
+            <span className={`transition-transform ${showAgentActivity ? 'rotate-90' : ''}`}>&#9654;</span>
+            Agent Activity ({event.agent_iterations} iterations, {event.agent_tool_calls.length} tool calls)
+          </button>
+          {showAgentActivity && (
+            <table className="mt-1 w-full text-[11px]">
+              <thead>
+                <tr className="text-text-muted text-left">
+                  <th className="font-medium pr-3 py-0.5">Iteration</th>
+                  <th className="font-medium pr-3 py-0.5">Tool</th>
+                  <th className="font-medium py-0.5 text-right">Duration</th>
+                </tr>
+              </thead>
+              <tbody>
+                {event.agent_tool_calls.map((tc, i) => (
+                  <tr key={i} className="text-text-secondary">
+                    <td className="font-code text-text-muted pr-3 py-0.5">#{tc.iteration + 1}</td>
+                    <td className="font-code text-text-primary pr-3 py-0.5">{tc.tool_name}</td>
+                    <td className="font-code text-right py-0.5">{formatDuration(tc.duration_ms)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       )}
