@@ -132,9 +132,7 @@ impl CommentSynthesizer {
         let mut comments = Vec::new();
 
         for raw in raw_comments {
-            if let Some(comment) = Self::process_raw_comment(raw)? {
-                comments.push(comment);
-            }
+            comments.push(Self::process_raw_comment(raw)?);
         }
 
         Self::deduplicate_comments(&mut comments);
@@ -177,7 +175,7 @@ impl CommentSynthesizer {
         }
     }
 
-    fn process_raw_comment(raw: RawComment) -> Result<Option<Comment>> {
+    fn process_raw_comment(raw: RawComment) -> Result<Comment> {
         let lower = raw.content.to_lowercase();
         let severity = raw
             .severity
@@ -203,7 +201,7 @@ impl CommentSynthesizer {
         let code_suggestion = Self::generate_code_suggestion(&raw);
         let id = Self::generate_comment_id(&raw.file_path, &raw.content, &category);
 
-        Ok(Some(Comment {
+        Ok(Comment {
             id,
             file_path: raw.file_path,
             line_number: raw.line_number,
@@ -217,7 +215,7 @@ impl CommentSynthesizer {
             tags,
             fix_effort,
             feedback: None,
-        }))
+        })
     }
 
     fn generate_comment_id(file_path: &Path, content: &str, category: &Category) -> String {
@@ -306,7 +304,7 @@ impl CommentSynthesizer {
             || lower.contains("verbose error")
             || lower.contains("information disclosure")
             || lower.contains("security header")
-            || lower.contains("missing header")
+            || lower.contains("missing security header")
             // Unsafe code patterns
             || lower.contains("unsafe block")
             || lower.contains("unsafe {")
@@ -331,9 +329,10 @@ impl CommentSynthesizer {
             || lower.contains("no pagination")
             || lower.contains("unbounded query")
             || lower.contains("graphql depth")
-            || lower.contains("file upload")
             || lower.contains("insecure upload")
-            || lower.contains("input validation")
+            || lower.contains("unrestricted upload")
+            || (lower.contains("file upload") && (lower.contains("insecure") || lower.contains("unrestricted") || lower.contains("vulnerability") || lower.contains("security")))
+            || (lower.contains("input validation") && (lower.contains("missing") || lower.contains("vulnerability") || lower.contains("security") || lower.contains("injection")))
         {
             Category::Security
         } else if lower.contains("performance")
@@ -345,7 +344,10 @@ impl CommentSynthesizer {
             Category::Bug
         } else if lower.contains("style") || lower.contains("format") || lower.contains("naming") {
             Category::Style
-        } else if lower.contains("doc") || lower.contains("comment") {
+        } else if lower.contains("documentation")
+            || lower.contains("docstring")
+            || lower.contains("comment")
+        {
             Category::Documentation
         } else if lower.contains("test") || lower.contains("coverage") {
             Category::Testing
@@ -460,7 +462,9 @@ impl CommentSynthesizer {
 
         // ── Cryptography ──
         if lower.contains("weak cipher")
-            || lower.contains("des ")
+            || lower.contains(" des ")
+            || lower.starts_with("des ")
+            || lower.contains("3des")
             || lower.contains("rc4")
             || lower.contains("ecb mode")
         {
@@ -699,7 +703,9 @@ impl CommentSynthesizer {
 
         // ── Cryptography tags ──
         if lower.contains("weak cipher")
-            || lower.contains("des ")
+            || lower.contains(" des ")
+            || lower.starts_with("des ")
+            || lower.contains("3des")
             || lower.contains("rc4")
             || lower.contains("blowfish")
         {
@@ -743,7 +749,7 @@ impl CommentSynthesizer {
         if lower.contains("debug mode") {
             tags.push("debug-mode".to_string());
         }
-        if lower.contains("security header") || lower.contains("missing header") {
+        if lower.contains("security header") || lower.contains("missing security header") {
             tags.push("security-headers".to_string());
         }
         if lower.contains("information disclosure") || lower.contains("data exposure") {
@@ -823,15 +829,20 @@ impl CommentSynthesizer {
         }
 
         // ── CWE / OWASP tags ──
-        // Extract CWE numbers from content
-        if let Some(pos) = lower.find("cwe-") {
-            let cwe_rest = &lower[pos..];
-            let cwe_tag: String = cwe_rest
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '-')
-                .collect();
-            if cwe_tag.len() > 4 {
-                tags.push(cwe_tag);
+        // Extract all CWE numbers from content
+        {
+            let mut search_from = 0;
+            while let Some(offset) = lower[search_from..].find("cwe-") {
+                let pos = search_from + offset;
+                let cwe_rest = &lower[pos..];
+                let cwe_tag: String = cwe_rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '-')
+                    .collect();
+                if cwe_tag.len() > 4 && !tags.contains(&cwe_tag) {
+                    tags.push(cwe_tag);
+                }
+                search_from = pos + 4; // skip past "cwe-" to find next
             }
         }
 
@@ -898,7 +909,10 @@ impl CommentSynthesizer {
 
         // Fallback: generate a basic suggestion from the textual suggestion field
         if let Some(suggestion) = &raw.suggestion {
-            if suggestion.contains("use") || suggestion.contains("replace") {
+            let has_action_word = suggestion
+                .split_whitespace()
+                .any(|w| w.eq_ignore_ascii_case("use") || w.eq_ignore_ascii_case("replace"));
+            if has_action_word {
                 return Some(CodeSuggestion {
                     original_code: "// Original code would be extracted from context".to_string(),
                     suggested_code: suggestion.clone(),

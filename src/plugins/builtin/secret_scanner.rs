@@ -57,8 +57,7 @@ static RE_PRIVATE_KEY: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)(-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?:\sBLOCK)?-----)").unwrap()
 });
 static RE_JWT: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b(ey[a-zA-Z0-9]{17,}\.ey[a-zA-Z0-9/\\_\-]{17,}\.[a-zA-Z0-9/\\_\-]{10,}=*)\b")
-        .unwrap()
+    Regex::new(r"\b(ey[a-zA-Z0-9]{17,}\.ey[a-zA-Z0-9/_-]{17,}\.[a-zA-Z0-9/_-]{10,}=*)\b").unwrap()
 });
 static RE_GCP_KEY: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(AIza[\w\-]{35})\b").unwrap());
 static RE_GCP_SA: Lazy<Regex> =
@@ -73,7 +72,7 @@ static RE_SENDGRID: Lazy<Regex> =
 static RE_TWILIO: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(SK[0-9a-fA-F]{32})\b").unwrap());
 static RE_NPM: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(npm_[a-z0-9]{36})\b").unwrap());
 static RE_CONN_STRING: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)((?:postgres|mysql|mongodb|redis|amqp|mssql)://[^:\s]+:[^@\s]+@[^\s]+)")
+    Regex::new(r"(?i)((?:postgres(?:ql)?|mysql|mongodb|redis|amqp|mssql)://[^:\s]+:[^@\s]+@[^\s]+)")
         .unwrap()
 });
 static RE_GENERIC_CRED: Lazy<Regex> = Lazy::new(|| {
@@ -391,11 +390,21 @@ fn is_false_positive(value: &str) -> bool {
 
 /// Redact a secret value, showing only the first few and last few chars.
 fn redact(value: &str) -> String {
-    if value.len() <= 8 {
-        return "*".repeat(value.len());
+    let char_count = value.chars().count();
+    if char_count <= 8 {
+        return "*".repeat(char_count);
     }
-    let show = 4.min(value.len() / 4);
-    format!("{}...{}", &value[..show], &value[value.len() - show..])
+    let show = 4.min(char_count / 4);
+    // Use char_indices to find safe byte boundaries for multi-byte UTF-8
+    let prefix_end = value
+        .char_indices()
+        .nth(show)
+        .map_or(value.len(), |(i, _)| i);
+    let suffix_start = value
+        .char_indices()
+        .nth(char_count - show)
+        .map_or(value.len(), |(i, _)| i);
+    format!("{}...{}", &value[..prefix_end], &value[suffix_start..])
 }
 
 pub struct SecretScanner;
@@ -570,6 +579,19 @@ mod tests {
     }
 
     #[test]
+    fn test_detects_postgresql_connection_string() {
+        let findings = SecretScanner::scan_line(
+            "DATABASE_URL=postgresql://admin:supersecret@db.example.com:5432/mydb",
+            3,
+        );
+        assert!(
+            !findings.is_empty(),
+            "Should detect postgresql:// connection string"
+        );
+        assert_eq!(findings[0].rule_id, "sec.secrets.connection-string");
+    }
+
+    #[test]
     fn test_ignores_placeholder() {
         let findings = SecretScanner::scan_line("password = \"your-secret-here\"", 1);
         // "your-secret-here" should be caught by placeholder regex
@@ -616,6 +638,13 @@ mod tests {
     fn test_redact_long() {
         let redacted = redact("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh12");
         assert!(redacted.starts_with("ghp_"));
+        assert!(redacted.contains("..."));
+    }
+
+    #[test]
+    fn test_redact_multibyte_utf8() {
+        // Must not panic on multi-byte UTF-8 characters
+        let redacted = redact("pässwörd_töken_sëcret_välue_here");
         assert!(redacted.contains("..."));
     }
 
