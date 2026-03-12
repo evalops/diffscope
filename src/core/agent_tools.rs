@@ -894,4 +894,172 @@ mod tests {
             .await;
         assert!(result.is_err(), "Should error when symbol_index is None");
     }
+
+    // ── AgentToolInfo + filtering tests ───────────────────────────────────
+
+    #[test]
+    fn test_list_all_tool_info_descriptions_not_empty() {
+        for info in list_all_tool_info() {
+            assert!(!info.name.is_empty(), "tool name should not be empty");
+            assert!(
+                !info.description.is_empty(),
+                "description for {} should not be empty",
+                info.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_list_all_tool_info_names_unique() {
+        let info = list_all_tool_info();
+        let names: Vec<&str> = info.iter().map(|t| t.name.as_str()).collect();
+        let mut seen = std::collections::HashSet::new();
+        for name in &names {
+            assert!(seen.insert(*name), "duplicate tool name: {}", name);
+        }
+    }
+
+    #[test]
+    fn test_list_all_tool_info_requires_fields() {
+        let info = list_all_tool_info();
+        // read_file and search_codebase have no requires
+        assert!(info
+            .iter()
+            .find(|t| t.name == "read_file")
+            .unwrap()
+            .requires
+            .is_none());
+        assert!(info
+            .iter()
+            .find(|t| t.name == "search_codebase")
+            .unwrap()
+            .requires
+            .is_none());
+        // Symbol tools require symbol index
+        assert!(info
+            .iter()
+            .find(|t| t.name == "lookup_symbol")
+            .unwrap()
+            .requires
+            .is_some());
+        assert!(info
+            .iter()
+            .find(|t| t.name == "get_definitions")
+            .unwrap()
+            .requires
+            .is_some());
+        // Graph tool requires symbol graph
+        assert!(info
+            .iter()
+            .find(|t| t.name == "get_related_symbols")
+            .unwrap()
+            .requires
+            .is_some());
+        // History tool requires git history
+        assert!(info
+            .iter()
+            .find(|t| t.name == "get_file_history")
+            .unwrap()
+            .requires
+            .is_some());
+    }
+
+    #[test]
+    fn test_list_all_tool_info_serializable() {
+        let info = list_all_tool_info();
+        let json = serde_json::to_string(&info).unwrap();
+        let deserialized: Vec<AgentToolInfo> = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.len(), info.len());
+        for (orig, de) in info.iter().zip(deserialized.iter()) {
+            assert_eq!(orig.name, de.name);
+            assert_eq!(orig.description, de.description);
+            assert_eq!(orig.requires, de.requires);
+        }
+    }
+
+    #[test]
+    fn test_build_review_tools_filter_empty_list() {
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: PathBuf::from("/tmp/test"),
+            context_fetcher: Arc::new(ContextFetcher::new(PathBuf::from("/tmp/test"))),
+            symbol_index: Some(Arc::new(SymbolIndex::default())),
+            symbol_graph: Some(Arc::new(SymbolGraph::new())),
+            git_history: Some(Arc::new(GitHistoryAnalyzer::new())),
+        });
+        let empty: Vec<String> = vec![];
+        let tools = build_review_tools(ctx, Some(&empty));
+        assert_eq!(tools.len(), 0, "empty filter should yield no tools");
+    }
+
+    #[test]
+    fn test_build_review_tools_filter_single_tool() {
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: PathBuf::from("/tmp/test"),
+            context_fetcher: Arc::new(ContextFetcher::new(PathBuf::from("/tmp/test"))),
+            symbol_index: Some(Arc::new(SymbolIndex::default())),
+            symbol_graph: Some(Arc::new(SymbolGraph::new())),
+            git_history: Some(Arc::new(GitHistoryAnalyzer::new())),
+        });
+        let filter = vec!["lookup_symbol".to_string()];
+        let tools = build_review_tools(ctx, Some(&filter));
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "lookup_symbol");
+    }
+
+    #[test]
+    fn test_build_review_tools_filter_respects_context_availability() {
+        // Even if filter says "lookup_symbol", it won't be included without symbol_index
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: PathBuf::from("/tmp/test"),
+            context_fetcher: Arc::new(ContextFetcher::new(PathBuf::from("/tmp/test"))),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: None,
+        });
+        let filter = vec![
+            "read_file".to_string(),
+            "lookup_symbol".to_string(),
+            "get_related_symbols".to_string(),
+            "get_file_history".to_string(),
+        ];
+        let tools = build_review_tools(ctx, Some(&filter));
+        assert_eq!(tools.len(), 1, "only read_file should be available");
+        assert_eq!(tools[0].name(), "read_file");
+    }
+
+    #[test]
+    fn test_build_review_tools_filter_unknown_name_ignored() {
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: PathBuf::from("/tmp/test"),
+            context_fetcher: Arc::new(ContextFetcher::new(PathBuf::from("/tmp/test"))),
+            symbol_index: None,
+            symbol_graph: None,
+            git_history: None,
+        });
+        let filter = vec!["read_file".to_string(), "nonexistent_tool".to_string()];
+        let tools = build_review_tools(ctx, Some(&filter));
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name(), "read_file");
+    }
+
+    #[test]
+    fn test_build_review_tools_none_filter_with_partial_context() {
+        // None filter (all enabled) but only some context available
+        let ctx = Arc::new(ReviewToolContext {
+            repo_path: PathBuf::from("/tmp/test"),
+            context_fetcher: Arc::new(ContextFetcher::new(PathBuf::from("/tmp/test"))),
+            symbol_index: Some(Arc::new(SymbolIndex::default())),
+            symbol_graph: None,
+            git_history: None,
+        });
+        let tools = build_review_tools(ctx, None);
+        assert_eq!(tools.len(), 4); // read_file, search_codebase, lookup_symbol, get_definitions
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"search_codebase"));
+        assert!(names.contains(&"lookup_symbol"));
+        assert!(names.contains(&"get_definitions"));
+        assert!(!names.contains(&"get_related_symbols"));
+        assert!(!names.contains(&"get_file_history"));
+    }
 }

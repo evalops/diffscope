@@ -1414,4 +1414,544 @@ mod tests {
         assert_eq!(result.iterations, 1);
         assert_eq!(result.total_usage.total_tokens, 100);
     }
+
+    // ── tool_calls field tests ────────────────────────────────────────────
+
+    /// No-tool-support path should return empty tool_calls vec.
+    #[tokio::test]
+    async fn test_tool_calls_empty_when_no_tool_support() {
+        let adapter = MockChatAdapter::new(
+            vec![ChatResponse {
+                content: vec![ContentBlock::Text {
+                    text: "One-shot.".to_string(),
+                }],
+                model: "m".to_string(),
+                usage: Some(Usage {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                }),
+                stop_reason: StopReason::EndTurn,
+            }],
+            false,
+        );
+
+        let tools: Vec<Box<dyn ReviewTool>> = vec![];
+        let config = AgentLoopConfig::default();
+        let result = run_agent_loop(&adapter, make_initial_request(), &tools, &config, None)
+            .await
+            .unwrap();
+
+        assert!(
+            result.tool_calls.is_empty(),
+            "no-tool-support should yield empty tool_calls"
+        );
+    }
+
+    /// EndTurn without tool calls should return empty tool_calls vec.
+    #[tokio::test]
+    async fn test_tool_calls_empty_on_direct_end_turn() {
+        let adapter = MockChatAdapter::new(
+            vec![ChatResponse {
+                content: vec![ContentBlock::Text {
+                    text: "LGTM!".to_string(),
+                }],
+                model: "m".to_string(),
+                usage: Some(Usage {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                }),
+                stop_reason: StopReason::EndTurn,
+            }],
+            true,
+        );
+
+        let tools: Vec<Box<dyn ReviewTool>> = vec![];
+        let config = AgentLoopConfig::default();
+        let result = run_agent_loop(&adapter, make_initial_request(), &tools, &config, None)
+            .await
+            .unwrap();
+
+        assert!(
+            result.tool_calls.is_empty(),
+            "direct EndTurn should yield empty tool_calls"
+        );
+    }
+
+    /// Single tool call should produce exactly one AgentToolCallLog entry.
+    #[tokio::test]
+    async fn test_tool_calls_single_call() {
+        let adapter = MockChatAdapter::new(
+            vec![
+                ChatResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "c1".to_string(),
+                        name: "read_file".to_string(),
+                        input: serde_json::json!({"file_path": "main.rs"}),
+                    }],
+                    model: "m".to_string(),
+                    usage: Some(Usage {
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                        total_tokens: 15,
+                    }),
+                    stop_reason: StopReason::ToolUse,
+                },
+                ChatResponse {
+                    content: vec![ContentBlock::Text {
+                        text: "Done.".to_string(),
+                    }],
+                    model: "m".to_string(),
+                    usage: Some(Usage {
+                        prompt_tokens: 20,
+                        completion_tokens: 5,
+                        total_tokens: 25,
+                    }),
+                    stop_reason: StopReason::EndTurn,
+                },
+            ],
+            true,
+        );
+
+        let tools: Vec<Box<dyn ReviewTool>> = vec![Box::new(MockTool {
+            name: "read_file".to_string(),
+            response: "fn main() {}".to_string(),
+        })];
+        let config = AgentLoopConfig::default();
+        let result = run_agent_loop(&adapter, make_initial_request(), &tools, &config, None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].tool_name, "read_file");
+        assert_eq!(result.tool_calls[0].iteration, 0);
+        assert!(result.tool_calls[0].duration_ms < 1000); // sanity: mock is fast
+    }
+
+    /// Multiple tool calls across iterations should all be logged in order.
+    /// Catches mutations: missing `push` or wrong iteration tracking.
+    #[tokio::test]
+    async fn test_tool_calls_multi_iteration_accumulation() {
+        let adapter = MockChatAdapter::new(
+            vec![
+                // Iteration 0: two tool calls
+                ChatResponse {
+                    content: vec![
+                        ContentBlock::ToolUse {
+                            id: "c1".to_string(),
+                            name: "read_file".to_string(),
+                            input: serde_json::json!({}),
+                        },
+                        ContentBlock::ToolUse {
+                            id: "c2".to_string(),
+                            name: "search_codebase".to_string(),
+                            input: serde_json::json!({}),
+                        },
+                    ],
+                    model: "m".to_string(),
+                    usage: Some(Usage {
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                        total_tokens: 15,
+                    }),
+                    stop_reason: StopReason::ToolUse,
+                },
+                // Iteration 1: one tool call
+                ChatResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "c3".to_string(),
+                        name: "read_file".to_string(),
+                        input: serde_json::json!({}),
+                    }],
+                    model: "m".to_string(),
+                    usage: Some(Usage {
+                        prompt_tokens: 20,
+                        completion_tokens: 5,
+                        total_tokens: 25,
+                    }),
+                    stop_reason: StopReason::ToolUse,
+                },
+                // Iteration 2: end turn
+                ChatResponse {
+                    content: vec![ContentBlock::Text {
+                        text: "Done.".to_string(),
+                    }],
+                    model: "m".to_string(),
+                    usage: Some(Usage {
+                        prompt_tokens: 30,
+                        completion_tokens: 5,
+                        total_tokens: 35,
+                    }),
+                    stop_reason: StopReason::EndTurn,
+                },
+            ],
+            true,
+        );
+
+        let tools: Vec<Box<dyn ReviewTool>> = vec![
+            Box::new(MockTool {
+                name: "read_file".to_string(),
+                response: "content".to_string(),
+            }),
+            Box::new(MockTool {
+                name: "search_codebase".to_string(),
+                response: "results".to_string(),
+            }),
+        ];
+        let config = AgentLoopConfig::default();
+        let result = run_agent_loop(&adapter, make_initial_request(), &tools, &config, None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.iterations, 3);
+        assert_eq!(result.tool_calls.len(), 3, "should log all 3 tool calls");
+
+        // Verify iteration numbers
+        assert_eq!(result.tool_calls[0].iteration, 0);
+        assert_eq!(result.tool_calls[0].tool_name, "read_file");
+        assert_eq!(result.tool_calls[1].iteration, 0);
+        assert_eq!(result.tool_calls[1].tool_name, "search_codebase");
+        assert_eq!(result.tool_calls[2].iteration, 1);
+        assert_eq!(result.tool_calls[2].tool_name, "read_file");
+    }
+
+    /// Tool calls should be preserved when exiting due to empty tool_calls.
+    #[tokio::test]
+    async fn test_tool_calls_preserved_on_empty_tool_use_exit() {
+        let adapter = MockChatAdapter::new(
+            vec![
+                // Iteration 0: real tool call
+                ChatResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "c1".to_string(),
+                        name: "read_file".to_string(),
+                        input: serde_json::json!({}),
+                    }],
+                    model: "m".to_string(),
+                    usage: Some(Usage {
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                        total_tokens: 15,
+                    }),
+                    stop_reason: StopReason::ToolUse,
+                },
+                // Iteration 1: ToolUse stop reason but no tool calls
+                ChatResponse {
+                    content: vec![ContentBlock::Text {
+                        text: "Nothing more.".to_string(),
+                    }],
+                    model: "m".to_string(),
+                    usage: Some(Usage {
+                        prompt_tokens: 20,
+                        completion_tokens: 5,
+                        total_tokens: 25,
+                    }),
+                    stop_reason: StopReason::ToolUse,
+                },
+            ],
+            true,
+        );
+
+        let tools: Vec<Box<dyn ReviewTool>> = vec![Box::new(MockTool {
+            name: "read_file".to_string(),
+            response: "ok".to_string(),
+        })];
+        let config = AgentLoopConfig::default();
+        let result = run_agent_loop(&adapter, make_initial_request(), &tools, &config, None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.iterations, 2);
+        assert_eq!(
+            result.tool_calls.len(),
+            1,
+            "should preserve the one real tool call"
+        );
+        assert_eq!(result.tool_calls[0].tool_name, "read_file");
+    }
+
+    /// Tool calls should be preserved when exiting due to token budget.
+    #[tokio::test]
+    async fn test_tool_calls_preserved_on_token_budget_exit() {
+        let adapter = MockChatAdapter::new(
+            vec![
+                ChatResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "c1".to_string(),
+                        name: "search_codebase".to_string(),
+                        input: serde_json::json!({}),
+                    }],
+                    model: "m".to_string(),
+                    usage: Some(Usage {
+                        prompt_tokens: 500,
+                        completion_tokens: 500,
+                        total_tokens: 1000,
+                    }),
+                    stop_reason: StopReason::ToolUse,
+                },
+                ChatResponse {
+                    content: vec![ContentBlock::Text {
+                        text: "unreachable".to_string(),
+                    }],
+                    model: "m".to_string(),
+                    usage: None,
+                    stop_reason: StopReason::EndTurn,
+                },
+            ],
+            true,
+        );
+
+        let tools: Vec<Box<dyn ReviewTool>> = vec![Box::new(MockTool {
+            name: "search_codebase".to_string(),
+            response: "found".to_string(),
+        })];
+        let config = AgentLoopConfig {
+            max_iterations: 10,
+            max_total_tokens: Some(500),
+        };
+        let result = run_agent_loop(&adapter, make_initial_request(), &tools, &config, None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.iterations, 1);
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].tool_name, "search_codebase");
+    }
+
+    /// Tool calls should be preserved when exiting due to max iterations.
+    #[tokio::test]
+    async fn test_tool_calls_preserved_on_max_iterations_exit() {
+        let mut responses = Vec::new();
+        for i in 0..3 {
+            responses.push(ChatResponse {
+                content: vec![ContentBlock::ToolUse {
+                    id: format!("c{}", i),
+                    name: "read_file".to_string(),
+                    input: serde_json::json!({}),
+                }],
+                model: "m".to_string(),
+                usage: Some(Usage {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                }),
+                stop_reason: StopReason::ToolUse,
+            });
+        }
+
+        let adapter = MockChatAdapter::new(responses, true);
+        let tools: Vec<Box<dyn ReviewTool>> = vec![Box::new(MockTool {
+            name: "read_file".to_string(),
+            response: "content".to_string(),
+        })];
+        let config = AgentLoopConfig {
+            max_iterations: 2,
+            max_total_tokens: None,
+        };
+        let result = run_agent_loop(&adapter, make_initial_request(), &tools, &config, None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.iterations, 2);
+        assert_eq!(result.tool_calls.len(), 2);
+        assert_eq!(result.tool_calls[0].iteration, 0);
+        assert_eq!(result.tool_calls[1].iteration, 1);
+    }
+
+    /// MaxTokens exit should have empty tool_calls (tools are not executed on MaxTokens).
+    #[tokio::test]
+    async fn test_tool_calls_empty_on_max_tokens_exit() {
+        let adapter = MockChatAdapter::new(
+            vec![ChatResponse {
+                content: vec![
+                    ContentBlock::Text {
+                        text: "Partial".to_string(),
+                    },
+                    ContentBlock::ToolUse {
+                        id: "c1".to_string(),
+                        name: "read_file".to_string(),
+                        input: serde_json::json!({}),
+                    },
+                ],
+                model: "m".to_string(),
+                usage: Some(Usage {
+                    prompt_tokens: 100,
+                    completion_tokens: 50,
+                    total_tokens: 150,
+                }),
+                stop_reason: StopReason::MaxTokens,
+            }],
+            true,
+        );
+
+        let tools: Vec<Box<dyn ReviewTool>> = vec![Box::new(MockTool {
+            name: "read_file".to_string(),
+            response: "content".to_string(),
+        })];
+        let config = AgentLoopConfig::default();
+        let result = run_agent_loop(&adapter, make_initial_request(), &tools, &config, None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.iterations, 1);
+        assert!(
+            result.tool_calls.is_empty(),
+            "MaxTokens exit should not log tool calls (tools were not executed)"
+        );
+    }
+
+    /// Unknown tool calls should still be logged in tool_calls.
+    #[tokio::test]
+    async fn test_tool_calls_logged_for_unknown_tools() {
+        let adapter = MockChatAdapter::new(
+            vec![
+                ChatResponse {
+                    content: vec![ContentBlock::ToolUse {
+                        id: "c1".to_string(),
+                        name: "nonexistent_tool".to_string(),
+                        input: serde_json::json!({}),
+                    }],
+                    model: "m".to_string(),
+                    usage: Some(Usage {
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                        total_tokens: 15,
+                    }),
+                    stop_reason: StopReason::ToolUse,
+                },
+                ChatResponse {
+                    content: vec![ContentBlock::Text {
+                        text: "Done.".to_string(),
+                    }],
+                    model: "m".to_string(),
+                    usage: Some(Usage {
+                        prompt_tokens: 20,
+                        completion_tokens: 5,
+                        total_tokens: 25,
+                    }),
+                    stop_reason: StopReason::EndTurn,
+                },
+            ],
+            true,
+        );
+
+        let tools: Vec<Box<dyn ReviewTool>> = vec![];
+        let config = AgentLoopConfig::default();
+        let result = run_agent_loop(&adapter, make_initial_request(), &tools, &config, None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].tool_name, "nonexistent_tool");
+        assert_eq!(result.tool_calls[0].iteration, 0);
+    }
+
+    /// AgentToolCallLog should serialize/deserialize correctly.
+    #[test]
+    fn test_agent_tool_call_log_serde() {
+        let log = AgentToolCallLog {
+            iteration: 3,
+            tool_name: "read_file".to_string(),
+            duration_ms: 42,
+        };
+        let json = serde_json::to_string(&log).unwrap();
+        assert!(json.contains("\"iteration\":3"));
+        assert!(json.contains("\"tool_name\":\"read_file\""));
+        assert!(json.contains("\"duration_ms\":42"));
+
+        let deserialized: AgentToolCallLog = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.iteration, 3);
+        assert_eq!(deserialized.tool_name, "read_file");
+        assert_eq!(deserialized.duration_ms, 42);
+    }
+
+    /// ToolCalled events should match tool_calls log entries exactly.
+    #[tokio::test]
+    async fn test_tool_calls_match_events() {
+        let adapter = MockChatAdapter::new(
+            vec![
+                ChatResponse {
+                    content: vec![
+                        ContentBlock::ToolUse {
+                            id: "c1".to_string(),
+                            name: "read_file".to_string(),
+                            input: serde_json::json!({}),
+                        },
+                        ContentBlock::ToolUse {
+                            id: "c2".to_string(),
+                            name: "search_codebase".to_string(),
+                            input: serde_json::json!({}),
+                        },
+                    ],
+                    model: "m".to_string(),
+                    usage: Some(Usage {
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                        total_tokens: 15,
+                    }),
+                    stop_reason: StopReason::ToolUse,
+                },
+                ChatResponse {
+                    content: vec![ContentBlock::Text {
+                        text: "Done.".to_string(),
+                    }],
+                    model: "m".to_string(),
+                    usage: Some(Usage {
+                        prompt_tokens: 20,
+                        completion_tokens: 5,
+                        total_tokens: 25,
+                    }),
+                    stop_reason: StopReason::EndTurn,
+                },
+            ],
+            true,
+        );
+
+        let events: Arc<Mutex<Vec<AgentEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = events.clone();
+        let callback: Arc<dyn Fn(AgentEvent) + Send + Sync> =
+            Arc::new(move |event| events_clone.lock().unwrap().push(event));
+
+        let tools: Vec<Box<dyn ReviewTool>> = vec![
+            Box::new(MockTool {
+                name: "read_file".to_string(),
+                response: "ok".to_string(),
+            }),
+            Box::new(MockTool {
+                name: "search_codebase".to_string(),
+                response: "ok".to_string(),
+            }),
+        ];
+        let config = AgentLoopConfig::default();
+        let result = run_agent_loop(
+            &adapter,
+            make_initial_request(),
+            &tools,
+            &config,
+            Some(callback),
+        )
+        .await
+        .unwrap();
+
+        let events = events.lock().unwrap();
+        let tool_events: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ToolCalled {
+                    iteration,
+                    tool_name,
+                    duration_ms,
+                } => Some((*iteration, tool_name.clone(), *duration_ms)),
+                _ => None,
+            })
+            .collect();
+
+        // tool_calls and events should match 1:1
+        assert_eq!(result.tool_calls.len(), tool_events.len());
+        for (log, (ev_iter, ev_name, _ev_dur)) in result.tool_calls.iter().zip(tool_events.iter()) {
+            assert_eq!(log.iteration, *ev_iter);
+            assert_eq!(log.tool_name, *ev_name);
+        }
+    }
 }

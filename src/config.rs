@@ -1832,4 +1832,99 @@ temperature: 0.3
             "Azure OpenAI is a cloud provider, not a local endpoint"
         );
     }
+
+    // --- agent_tools_enabled tests ---
+
+    #[test]
+    fn test_agent_tools_enabled_default_is_none() {
+        let config = Config::default();
+        assert!(
+            config.agent_tools_enabled.is_none(),
+            "Default should be None (all tools enabled)"
+        );
+    }
+
+    #[test]
+    fn test_agent_tools_enabled_serialize_none() {
+        // When None, the field serializes as null (consistent with other Option fields)
+        let config = Config::default();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(
+            yaml.contains("agent_tools_enabled"),
+            "Field should be present in serialized YAML even when None"
+        );
+    }
+
+    #[test]
+    fn test_agent_tools_enabled_serialize_some() {
+        let config = Config {
+            agent_tools_enabled: Some(vec!["read_file".to_string(), "search_code".to_string()]),
+            ..Config::default()
+        };
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(yaml.contains("agent_tools_enabled"));
+        assert!(yaml.contains("read_file"));
+        assert!(yaml.contains("search_code"));
+    }
+
+    #[test]
+    fn test_agent_tools_enabled_deserialize_missing_field() {
+        // Existing configs without the field should deserialize with None
+        let yaml = r#"
+model: claude-opus-4-6
+temperature: 0.3
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.agent_tools_enabled.is_none());
+    }
+
+    #[test]
+    fn test_agent_tools_enabled_deserialize_explicit_list() {
+        let yaml = r#"
+model: claude-opus-4-6
+agent_tools_enabled:
+  - read_file
+  - search_code
+  - list_files
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let tools = config.agent_tools_enabled.unwrap();
+        assert_eq!(tools.len(), 3);
+        assert_eq!(tools[0], "read_file");
+        assert_eq!(tools[1], "search_code");
+        assert_eq!(tools[2], "list_files");
+    }
+
+    #[test]
+    fn test_agent_tools_enabled_deserialize_empty_list() {
+        let yaml = r#"
+model: claude-opus-4-6
+agent_tools_enabled: []
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let tools = config.agent_tools_enabled.unwrap();
+        assert!(
+            tools.is_empty(),
+            "Empty list should deserialize as Some([])"
+        );
+    }
+
+    #[test]
+    fn test_agent_tools_enabled_round_trip() {
+        let original = Config {
+            agent_tools_enabled: Some(vec!["read_file".to_string(), "search_code".to_string()]),
+            ..Config::default()
+        };
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let restored: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(original.agent_tools_enabled, restored.agent_tools_enabled);
+    }
+
+    #[test]
+    fn test_agent_tools_enabled_round_trip_none() {
+        let original = Config::default();
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let restored: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(original.agent_tools_enabled, restored.agent_tools_enabled);
+    }
 }

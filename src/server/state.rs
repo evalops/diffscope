@@ -1155,4 +1155,233 @@ mod tests {
             );
         });
     }
+
+    // ── Agent activity builder tests ─────────────────────────────────────
+
+    #[test]
+    fn test_builder_agent_activity_none() {
+        let event = ReviewEventBuilder::new("r-ag0", "review.completed", "head", "gpt-4o")
+            .agent_activity(None)
+            .build();
+        assert!(event.agent_iterations.is_none());
+        assert!(event.agent_tool_calls.is_none());
+    }
+
+    #[test]
+    fn test_builder_agent_activity_with_data() {
+        let activity = crate::review::AgentActivity {
+            total_iterations: 3,
+            tool_calls: vec![
+                crate::core::agent_loop::AgentToolCallLog {
+                    iteration: 0,
+                    tool_name: "read_file".to_string(),
+                    duration_ms: 15,
+                },
+                crate::core::agent_loop::AgentToolCallLog {
+                    iteration: 0,
+                    tool_name: "search_codebase".to_string(),
+                    duration_ms: 42,
+                },
+                crate::core::agent_loop::AgentToolCallLog {
+                    iteration: 1,
+                    tool_name: "read_file".to_string(),
+                    duration_ms: 8,
+                },
+            ],
+        };
+
+        let event = ReviewEventBuilder::new("r-ag1", "review.completed", "head", "claude-opus-4-6")
+            .agent_activity(Some(&activity))
+            .build();
+
+        assert_eq!(event.agent_iterations, Some(3));
+        let calls = event.agent_tool_calls.as_ref().unwrap();
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].iteration, 0);
+        assert_eq!(calls[0].tool_name, "read_file");
+        assert_eq!(calls[0].duration_ms, 15);
+        assert_eq!(calls[1].iteration, 0);
+        assert_eq!(calls[1].tool_name, "search_codebase");
+        assert_eq!(calls[1].duration_ms, 42);
+        assert_eq!(calls[2].iteration, 1);
+        assert_eq!(calls[2].tool_name, "read_file");
+        assert_eq!(calls[2].duration_ms, 8);
+    }
+
+    #[test]
+    fn test_builder_agent_activity_empty_tool_calls() {
+        let activity = crate::review::AgentActivity {
+            total_iterations: 1,
+            tool_calls: vec![],
+        };
+
+        let event = ReviewEventBuilder::new("r-ag2", "review.completed", "head", "gpt-4o")
+            .agent_activity(Some(&activity))
+            .build();
+
+        assert_eq!(event.agent_iterations, Some(1));
+        assert!(event.agent_tool_calls.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_builder_agent_activity_default_none() {
+        // Without calling .agent_activity(), fields should be None
+        let event = ReviewEventBuilder::new("r-ag3", "review.completed", "head", "gpt-4o").build();
+        assert!(event.agent_iterations.is_none());
+        assert!(event.agent_tool_calls.is_none());
+    }
+
+    #[test]
+    fn test_agent_fields_serialize_skip_when_none() {
+        let event = ReviewEventBuilder::new("r-ag4", "review.completed", "head", "gpt-4o").build();
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            !json.contains("agent_iterations"),
+            "agent_iterations should be skipped when None"
+        );
+        assert!(
+            !json.contains("agent_tool_calls"),
+            "agent_tool_calls should be skipped when None"
+        );
+    }
+
+    #[test]
+    fn test_agent_fields_serialize_when_present() {
+        let activity = crate::review::AgentActivity {
+            total_iterations: 2,
+            tool_calls: vec![crate::core::agent_loop::AgentToolCallLog {
+                iteration: 0,
+                tool_name: "read_file".to_string(),
+                duration_ms: 10,
+            }],
+        };
+
+        let event = ReviewEventBuilder::new("r-ag5", "review.completed", "head", "gpt-4o")
+            .agent_activity(Some(&activity))
+            .build();
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"agent_iterations\":2"));
+        assert!(json.contains("\"agent_tool_calls\""));
+        assert!(json.contains("\"tool_name\":\"read_file\""));
+        assert!(json.contains("\"duration_ms\":10"));
+    }
+
+    #[test]
+    fn test_agent_fields_deserialize_round_trip() {
+        let activity = crate::review::AgentActivity {
+            total_iterations: 5,
+            tool_calls: vec![
+                crate::core::agent_loop::AgentToolCallLog {
+                    iteration: 0,
+                    tool_name: "search_codebase".to_string(),
+                    duration_ms: 100,
+                },
+                crate::core::agent_loop::AgentToolCallLog {
+                    iteration: 2,
+                    tool_name: "get_file_history".to_string(),
+                    duration_ms: 250,
+                },
+            ],
+        };
+
+        let event = ReviewEventBuilder::new("r-ag6", "review.completed", "head", "gpt-4o")
+            .agent_activity(Some(&activity))
+            .build();
+
+        let json = serde_json::to_string(&event).unwrap();
+        let deserialized: ReviewEvent = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.agent_iterations, Some(5));
+        let calls = deserialized.agent_tool_calls.unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].tool_name, "search_codebase");
+        assert_eq!(calls[0].duration_ms, 100);
+        assert_eq!(calls[1].tool_name, "get_file_history");
+        assert_eq!(calls[1].iteration, 2);
+    }
+
+    #[test]
+    fn test_agent_fields_deserialize_missing_fields() {
+        // JSON without agent fields should deserialize with None values
+        let json = r#"{
+            "review_id": "r-test",
+            "event_type": "review.completed",
+            "diff_source": "head",
+            "model": "gpt-4o",
+            "duration_ms": 100,
+            "diff_bytes": 500,
+            "diff_files_total": 3,
+            "diff_files_reviewed": 2,
+            "diff_files_skipped": 1,
+            "comments_total": 0,
+            "comments_by_severity": {},
+            "comments_by_category": {},
+            "hotspots_detected": 0,
+            "high_risk_files": 0,
+            "github_posted": false
+        }"#;
+        let event: ReviewEvent = serde_json::from_str(json).unwrap();
+        assert!(event.agent_iterations.is_none());
+        assert!(event.agent_tool_calls.is_none());
+    }
+
+    #[test]
+    fn test_agent_tool_call_event_serde() {
+        let tc = AgentToolCallEvent {
+            iteration: 2,
+            tool_name: "lookup_symbol".to_string(),
+            duration_ms: 77,
+        };
+        let json = serde_json::to_string(&tc).unwrap();
+        let deserialized: AgentToolCallEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.iteration, 2);
+        assert_eq!(deserialized.tool_name, "lookup_symbol");
+        assert_eq!(deserialized.duration_ms, 77);
+    }
+
+    #[test]
+    fn test_builder_agent_activity_chained_with_other_fields() {
+        let activity = crate::review::AgentActivity {
+            total_iterations: 4,
+            tool_calls: vec![crate::core::agent_loop::AgentToolCallLog {
+                iteration: 0,
+                tool_name: "read_file".to_string(),
+                duration_ms: 5,
+            }],
+        };
+
+        let comments = vec![Comment {
+            id: "c1".to_string(),
+            file_path: PathBuf::from("a.rs"),
+            line_number: 1,
+            content: "test".to_string(),
+            rule_id: None,
+            severity: Severity::Warning,
+            category: Category::Bug,
+            suggestion: None,
+            confidence: 0.9,
+            code_suggestion: None,
+            tags: vec![],
+            fix_effort: FixEffort::Low,
+            feedback: None,
+        }];
+        let summary = crate::core::CommentSynthesizer::generate_summary(&comments);
+
+        let event = ReviewEventBuilder::new("r-ag7", "review.completed", "head", "claude-opus-4-6")
+            .provider(Some("anthropic"))
+            .duration_ms(5000)
+            .comments(&comments, Some(&summary))
+            .tokens(200, 100, 300)
+            .agent_activity(Some(&activity))
+            .build();
+
+        // Verify agent fields
+        assert_eq!(event.agent_iterations, Some(4));
+        assert_eq!(event.agent_tool_calls.as_ref().unwrap().len(), 1);
+        // Verify other fields are unaffected
+        assert_eq!(event.provider.as_deref(), Some("anthropic"));
+        assert_eq!(event.duration_ms, 5000);
+        assert_eq!(event.comments_total, 1);
+        assert_eq!(event.tokens_total, Some(300));
+    }
 }
