@@ -1,0 +1,85 @@
+rules:
+  # ── Unsafe Deserialization ─────────────────────────────────────────
+  - id: sec.deser.unsafe
+    description: >
+      Native deserialization of untrusted data, potentially enabling RCE.
+      Language-specific dangerous functions:
+      - Python: pickle.load/loads, cPickle, dill, shelve, marshal.load,
+        yaml.load (without SafeLoader), yaml.unsafe_load, jsonpickle.decode,
+        torch.load (PyTorch), HuggingFace unsafe download
+      - Java: ObjectInputStream.readObject/readUnshared, XMLDecoder,
+        XStream.fromXML (pre-1.4.7), BinaryFormatter
+      - Ruby: YAML.load (use safe_load), Marshal.load,
+        JSON.parse(create_additions: true)
+      - JavaScript: node-serialize unserialize(), funcster, js-yaml !!js/function,
+        cryo.parse()
+      - PHP: unserialize()
+      - .NET: BinaryFormatter.Deserialize, TypeNameHandling != None,
+        JavaScriptSerializer with TypeResolver
+      - Go: gob.Decode on untrusted input
+      Safe alternatives: JSON, yaml.safe_load, ObjectInputStream with allowlist.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: error
+    category: security
+    tags: [deserialization, rce, owasp-a08, cwe-502]
+    source: diffscope-builtin
+
+  # ── SSRF (Server-Side Request Forgery) ─────────────────────────────
+  - id: sec.ssrf
+    description: >
+      User-controlled input used to construct outbound HTTP request URLs.
+      Sinks: requests.get(url), fetch(url), axios.get(url), http.Get(url),
+      reqwest::get(url), HttpURLConnection(url), Net::HTTP.get(URI(url)),
+      RestTemplate.getForObject(url), WebClient.get().uri(url).
+      Check for: URL parameters, redirect targets, webhook URLs, image URLs,
+      callback URLs built from user input.
+      Bypass awareness: DNS rebinding, redirect following, encoding tricks
+      (hex IP, octal IP, IPv6 mapped), scheme abuse (file://, gopher://).
+      Sanitizers: URL allowlisting, DNS resolution + IP blocklist validation,
+      disabling redirects, blocking internal IP ranges
+      (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.169.254).
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,scala}"
+    severity: error
+    category: security
+    tags: [ssrf, owasp-a10, cwe-918]
+    source: diffscope-builtin
+
+  # ── XXE (XML External Entity) ──────────────────────────────────────
+  - id: sec.xxe
+    description: >
+      XML parsing without disabling external entity resolution.
+      Sinks: DocumentBuilderFactory, SAXParser, XMLReader, etree.parse,
+      lxml.etree.parse, xml.sax.parse without disabling external entities.
+      Fix: set feature "http://apache.org/xml/features/disallow-doctype-decl" true,
+      or use defusedxml (Python), set XMLConstants.FEATURE_SECURE_PROCESSING.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: error
+    category: security
+    tags: [xxe, xml, owasp-a05, cwe-611]
+    source: diffscope-builtin
+
+  # ── Open Redirect ──────────────────────────────────────────────────
+  - id: sec.redirect.open
+    description: >
+      Unvalidated redirect using user-controlled URL.
+      Sinks: redirect(req.params.url), res.redirect(req.query.next),
+      HttpResponseRedirect(request.GET['url']), redirect_to(params[:url]).
+      Sanitizers: allowlist of permitted domains/paths, relative-URL-only validation.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [redirect, open-redirect, owasp-a01, cwe-601]
+    source: diffscope-builtin
+
+  # ── CORS Misconfiguration ──────────────────────────────────────────
+  - id: sec.cors.misconfigured
+    description: >
+      Overly permissive CORS configuration.
+      Flag: Access-Control-Allow-Origin: * with credentials,
+      reflecting the Origin header without validation,
+      regex-based origin matching with bypass potential.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [cors, owasp-a05, cwe-942]
+    source: diffscope-builtin

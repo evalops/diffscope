@@ -1,0 +1,119 @@
+rules:
+  # ── Missing Authentication ─────────────────────────────────────────
+  - id: sec.auth.missing
+    description: >
+      API endpoint or route handler lacking authentication middleware/decorator.
+      Framework patterns to check:
+      - Express: route handler without auth middleware argument
+      - Django: view without @login_required or LoginRequiredMixin
+      - Rails: controller without before_action :authenticate_user!
+      - Spring: endpoint without @PreAuthorize, @Secured, @RolesAllowed
+      - FastAPI: handler without Depends(get_current_user)
+      - Axum/Actix: handler without auth extractor or .layer() middleware
+      Flag state-changing endpoints (POST/PUT/DELETE) without auth as critical.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: error
+    category: security
+    tags: [auth, missing-auth, owasp-a07, cwe-306]
+    source: diffscope-builtin
+
+  # ── IDOR / BOLA ────────────────────────────────────────────────────
+  - id: sec.auth.idor
+    description: >
+      Insecure Direct Object Reference — user-supplied ID used in database
+      query without ownership/authorization check.
+      Pattern: request parameter (params[:id], req.params.id, path variable)
+      flows into Model.find(id) / query("WHERE id = ?", id) without also
+      filtering by authenticated user (current_user, req.user, claims.sub).
+      Safe pattern: Model.where(id: id, owner: current_user).
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: error
+    category: security
+    tags: [auth, idor, bola, owasp-a01, cwe-639]
+    source: diffscope-builtin
+
+  # ── Privilege Escalation ───────────────────────────────────────────
+  - id: sec.auth.privilege-escalation
+    description: >
+      Role or permission checks using client-controlled values (cookies,
+      headers, query params) instead of server-side session data.
+      Also flag: mass assignment accepting role/is_admin fields from user input,
+      skip_before_action :authenticate, .permitAll() on admin paths.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: error
+    category: security
+    tags: [auth, privilege-escalation, owasp-a01, cwe-269]
+    source: diffscope-builtin
+
+  # ── JWT Vulnerabilities ────────────────────────────────────────────
+  - id: sec.auth.jwt
+    description: >
+      JWT implementation flaws:
+      - jwt.decode() without signature verification (verify=False, verify_signature=False)
+      - Accepting 'none' algorithm (alg: none)
+      - Hardcoded JWT signing secrets (string literals in sign/verify calls)
+      - Missing expiry validation (not checking 'exp' claim)
+      - Using jwt.decode() instead of jwt.verify() (Node.js jsonwebtoken)
+      Safe patterns: algorithm allowlist, key from env/vault, exp validation.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs}"
+    severity: error
+    category: security
+    tags: [auth, jwt, owasp-a07, cwe-347]
+    source: diffscope-builtin
+
+  # ── Weak Password Storage ──────────────────────────────────────────
+  - id: sec.auth.weak-password-hash
+    description: >
+      Passwords hashed with weak or unsuitable algorithms.
+      Vulnerable: MD5, SHA1, SHA256 (without KDF), DES, plain ROT13.
+      Acceptable: bcrypt (cost >= 10), argon2id, scrypt, PBKDF2 (>= 600k iterations).
+      Flag hashlib.md5/sha1/sha256 used for password storage,
+      Digest::MD5/SHA1 for passwords, crypto.createHash('md5') for passwords.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: error
+    category: security
+    tags: [auth, password, weak-hash, owasp-a07, cwe-916]
+    source: diffscope-builtin
+
+  # ── OAuth Misconfiguration ─────────────────────────────────────────
+  - id: sec.auth.oauth
+    description: >
+      OAuth implementation flaws:
+      - Missing state parameter in authorization URL (CSRF on login)
+      - Open redirect in redirect_uri (not validating against allowlist)
+      - Storing tokens in localStorage (XSS-accessible)
+      - Not validating token audience/issuer claims
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs}"
+    severity: warning
+    category: security
+    tags: [auth, oauth, owasp-a07, cwe-352]
+    source: diffscope-builtin
+
+  # ── Session Management ─────────────────────────────────────────────
+  - id: sec.auth.session
+    description: >
+      Session security flaws:
+      - Missing HttpOnly flag on session cookies
+      - Missing Secure flag on session cookies
+      - Missing SameSite attribute (or SameSite=None without Secure)
+      - Session not regenerated after login (session fixation)
+      - Hardcoded session secrets
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [auth, session, cookies, owasp-a07, cwe-384]
+    source: diffscope-builtin
+
+  # ── CSRF ───────────────────────────────────────────────────────────
+  - id: sec.auth.csrf
+    description: >
+      Missing or disabled CSRF protection on state-changing endpoints.
+      Flag: @csrf_exempt (Django), .csrf().disable() (Spring), skip_before_action
+      :verify_authenticity_token (Rails), missing csurf middleware (Express).
+      Also flag state-changing operations on GET endpoints.
+      Not applicable to: pure API endpoints using Bearer tokens (not cookies).
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [auth, csrf, owasp-a01, cwe-352]
+    source: diffscope-builtin

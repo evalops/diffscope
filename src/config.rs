@@ -370,7 +370,7 @@ pub struct PatternRepositoryConfig {
     pub max_rules: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginConfig {
     #[serde(default = "default_true")]
     pub eslint: bool,
@@ -380,6 +380,26 @@ pub struct PluginConfig {
 
     #[serde(default = "default_true")]
     pub duplicate_filter: bool,
+
+    /// Regex-based secret detection on diff added lines (gitleaks-style patterns).
+    #[serde(default = "default_true")]
+    pub secret_scanner: bool,
+
+    /// Supply-chain risk analysis for dependency manifest changes.
+    #[serde(default = "default_true")]
+    pub supply_chain: bool,
+}
+
+impl Default for PluginConfig {
+    fn default() -> Self {
+        Self {
+            eslint: true,
+            semgrep: true,
+            duplicate_filter: true,
+            secret_scanner: true,
+            supply_chain: true,
+        }
+    }
 }
 
 impl Default for Config {

@@ -238,9 +238,51 @@ impl CommentSynthesizer {
 
     fn determine_category(content: &str) -> Category {
         let lower = content.to_lowercase();
+
+        // Security — broad keyword coverage across all 5 vulnerability classes
         if lower.contains("security")
             || lower.contains("vulnerability")
             || lower.contains("injection")
+            || lower.contains("sql injection")
+            || lower.contains("command injection")
+            || lower.contains("xss")
+            || lower.contains("cross-site scripting")
+            || lower.contains("csrf")
+            || lower.contains("cross-site request forgery")
+            || lower.contains("ssrf")
+            || lower.contains("server-side request forgery")
+            || lower.contains("deserialization")
+            || lower.contains("path traversal")
+            || lower.contains("directory traversal")
+            || lower.contains("hardcoded secret")
+            || lower.contains("hardcoded credential")
+            || lower.contains("hardcoded password")
+            || lower.contains("api key")
+            || lower.contains("private key")
+            || lower.contains("jwt")
+            || lower.contains("authentication")
+            || lower.contains("authorization")
+            || lower.contains("access control")
+            || lower.contains("privilege escalation")
+            || lower.contains("idor")
+            || lower.contains("insecure direct object")
+            || lower.contains("supply chain")
+            || lower.contains("supply-chain")
+            || lower.contains("dependency confusion")
+            || lower.contains("typosquatting")
+            || lower.contains("cwe-")
+            || lower.contains("owasp")
+            || lower.contains("xxe")
+            || lower.contains("open redirect")
+            || lower.contains("cors")
+            || lower.contains("template injection")
+            || lower.contains("ldap injection")
+            || lower.contains("log injection")
+            || lower.contains("code injection")
+            || lower.contains("unsafe pickle")
+            || lower.contains("unsafe yaml")
+            || lower.contains("weak hash")
+            || lower.contains("weak password")
         {
             Category::Security
         } else if lower.contains("performance")
@@ -274,11 +316,99 @@ impl CommentSynthesizer {
     fn calculate_confidence(content: &str, severity: &Severity, _category: &Category) -> f32 {
         let mut confidence: f32 = 0.7; // Base confidence
 
-        // Boost confidence for specific patterns
         let lower = content.to_lowercase();
-        if lower.contains("sql injection") || lower.contains("xss") || lower.contains("csrf") {
+
+        // ── Injection (high-confidence, well-defined patterns) ──
+        if lower.contains("sql injection") {
             confidence += 0.2;
         }
+        if lower.contains("command injection") || lower.contains("shell injection") {
+            confidence += 0.2;
+        }
+        if lower.contains("xss") || lower.contains("cross-site scripting") {
+            confidence += 0.2;
+        }
+        if lower.contains("path traversal") || lower.contains("directory traversal") {
+            confidence += 0.2;
+        }
+        if lower.contains("code injection") || lower.contains("eval(") {
+            confidence += 0.2;
+        }
+        if lower.contains("template injection") || lower.contains("ssti") {
+            confidence += 0.15;
+        }
+        if lower.contains("ldap injection") {
+            confidence += 0.15;
+        }
+
+        // ── Auth/AuthZ ──
+        if lower.contains("missing authentication") || lower.contains("no auth") {
+            confidence += 0.2;
+        }
+        if lower.contains("idor") || lower.contains("insecure direct object") {
+            confidence += 0.15;
+        }
+        if lower.contains("csrf") || lower.contains("cross-site request forgery") {
+            confidence += 0.2;
+        }
+        if lower.contains("jwt") && (lower.contains("none") || lower.contains("verify")) {
+            confidence += 0.2;
+        }
+        if lower.contains("privilege escalation") {
+            confidence += 0.15;
+        }
+        if lower.contains("weak password") || lower.contains("weak hash") || lower.contains("md5") {
+            confidence += 0.15;
+        }
+
+        // ── Secrets ──
+        if lower.contains("hardcoded")
+            && (lower.contains("secret")
+                || lower.contains("credential")
+                || lower.contains("password")
+                || lower.contains("key"))
+        {
+            confidence += 0.25;
+        }
+        if lower.contains("private key") {
+            confidence += 0.25;
+        }
+        if lower.contains("api key") && lower.contains("hardcoded") {
+            confidence += 0.2;
+        }
+        if lower.contains("connection string") && lower.contains("credential") {
+            confidence += 0.2;
+        }
+
+        // ── Deserialization / SSRF ──
+        if lower.contains("deserialization")
+            || lower.contains("pickle")
+            || lower.contains("unsafe yaml")
+        {
+            confidence += 0.2;
+        }
+        if lower.contains("ssrf") || lower.contains("server-side request forgery") {
+            confidence += 0.15;
+        }
+        if lower.contains("xxe") {
+            confidence += 0.15;
+        }
+
+        // ── Supply chain ──
+        if lower.contains("dependency confusion") {
+            confidence += 0.15;
+        }
+        if lower.contains("install script") || lower.contains("postinstall") {
+            confidence += 0.1;
+        }
+        if lower.contains("lockfile") && lower.contains("tamper") {
+            confidence += 0.2;
+        }
+        if lower.contains("unpinned") && lower.contains("action") {
+            confidence += 0.1;
+        }
+
+        // ── Correctness ──
         if lower.contains("null pointer") || lower.contains("buffer overflow") {
             confidence += 0.2;
         }
@@ -293,7 +423,11 @@ impl CommentSynthesizer {
             _ => {}
         }
 
-        // Ensure confidence stays in bounds
+        // CWE references indicate high-confidence structured findings
+        if lower.contains("cwe-") {
+            confidence += 0.1;
+        }
+
         confidence.clamp(0.1, 1.0)
     }
 
@@ -301,24 +435,142 @@ impl CommentSynthesizer {
         let mut tags = vec![category.as_str().to_string()];
         let lower = content.to_lowercase();
 
-        // Security-specific tags
-        if lower.contains("sql") {
+        // ── Injection tags ──
+        if lower.contains("sql") && lower.contains("injection") {
+            tags.push("sql-injection".to_string());
+        } else if lower.contains("sql") {
             tags.push("sql".to_string());
         }
-        if lower.contains("injection") {
+        if lower.contains("injection") && !tags.iter().any(|t| t.contains("injection")) {
             tags.push("injection".to_string());
         }
-        if lower.contains("xss") {
+        if lower.contains("command injection") || lower.contains("shell injection") {
+            tags.push("command-injection".to_string());
+        }
+        if lower.contains("xss") || lower.contains("cross-site scripting") {
             tags.push("xss".to_string());
         }
-        if lower.contains("csrf") {
-            tags.push("csrf".to_string());
+        if lower.contains("template injection") || lower.contains("ssti") {
+            tags.push("template-injection".to_string());
         }
-        if lower.contains("auth") {
-            tags.push("authentication".to_string());
+        if lower.contains("ldap injection") {
+            tags.push("ldap-injection".to_string());
+        }
+        if lower.contains("path traversal") || lower.contains("directory traversal") {
+            tags.push("path-traversal".to_string());
+        }
+        if lower.contains("log injection") {
+            tags.push("log-injection".to_string());
+        }
+        if lower.contains("code injection") {
+            tags.push("code-injection".to_string());
         }
 
-        // Performance tags
+        // ── Auth/AuthZ tags ──
+        if lower.contains("authentication") || lower.contains("missing auth") {
+            tags.push("authentication".to_string());
+        }
+        if lower.contains("authorization") || lower.contains("access control") {
+            tags.push("authorization".to_string());
+        }
+        if lower.contains("csrf") || lower.contains("cross-site request forgery") {
+            tags.push("csrf".to_string());
+        }
+        if lower.contains("idor") || lower.contains("insecure direct object") {
+            tags.push("idor".to_string());
+        }
+        if lower.contains("jwt") {
+            tags.push("jwt".to_string());
+        }
+        if lower.contains("privilege escalation") {
+            tags.push("privilege-escalation".to_string());
+        }
+        if lower.contains("session") && (lower.contains("fixation") || lower.contains("cookie")) {
+            tags.push("session-management".to_string());
+        }
+        if lower.contains("oauth") {
+            tags.push("oauth".to_string());
+        }
+        if lower.contains("password")
+            && (lower.contains("weak")
+                || lower.contains("hash")
+                || lower.contains("md5")
+                || lower.contains("sha1"))
+        {
+            tags.push("weak-password-hash".to_string());
+        }
+
+        // ── Secrets tags ──
+        if lower.contains("hardcoded")
+            && (lower.contains("secret")
+                || lower.contains("credential")
+                || lower.contains("key")
+                || lower.contains("password")
+                || lower.contains("token"))
+        {
+            tags.push("hardcoded-credential".to_string());
+        }
+        if lower.contains("private key") {
+            tags.push("private-key".to_string());
+        }
+        if lower.contains("api key") {
+            tags.push("api-key".to_string());
+        }
+        if lower.contains("connection string") {
+            tags.push("connection-string".to_string());
+        }
+
+        // ── Deserialization / SSRF / XXE tags ──
+        if lower.contains("deserialization") || lower.contains("pickle") {
+            tags.push("deserialization".to_string());
+        }
+        if lower.contains("ssrf") || lower.contains("server-side request forgery") {
+            tags.push("ssrf".to_string());
+        }
+        if lower.contains("xxe") {
+            tags.push("xxe".to_string());
+        }
+        if lower.contains("open redirect") {
+            tags.push("open-redirect".to_string());
+        }
+        if lower.contains("cors") {
+            tags.push("cors".to_string());
+        }
+
+        // ── Supply-chain tags ──
+        if lower.contains("supply chain") || lower.contains("supply-chain") {
+            tags.push("supply-chain".to_string());
+        }
+        if lower.contains("dependency confusion") {
+            tags.push("dependency-confusion".to_string());
+        }
+        if lower.contains("typosquat") {
+            tags.push("typosquatting".to_string());
+        }
+        if lower.contains("install script") || lower.contains("postinstall") {
+            tags.push("install-scripts".to_string());
+        }
+        if lower.contains("lockfile") {
+            tags.push("lockfile".to_string());
+        }
+        if lower.contains("unpinned") {
+            tags.push("unpinned-version".to_string());
+        }
+
+        // ── CWE / OWASP tags ──
+        // Extract CWE numbers from content
+        if let Some(pos) = lower.find("cwe-") {
+            let cwe_rest = &lower[pos..];
+            let cwe_tag: String = cwe_rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '-')
+                .collect();
+            if cwe_tag.len() > 4 {
+                tags.push(cwe_tag);
+            }
+        }
+
+        // ── Performance tags ──
         if lower.contains("n+1") {
             tags.push("n+1-query".to_string());
         }
@@ -329,7 +581,7 @@ impl CommentSynthesizer {
             tags.push("caching".to_string());
         }
 
-        // Code quality tags
+        // ── Code quality tags ──
         if lower.contains("duplicate") {
             tags.push("duplication".to_string());
         }

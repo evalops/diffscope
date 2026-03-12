@@ -1,0 +1,112 @@
+rules:
+  # ── New Dependency Added ───────────────────────────────────────────
+  - id: sec.supply-chain.new-dependency
+    description: >
+      A new dependency has been added to the project. Verify:
+      - Package exists on the expected registry and is not typosquatted
+      - Package has meaningful download count and maintenance history
+      - Package is not recently published (< 7 days old = higher risk)
+      - License is compatible with the project
+      - No known vulnerabilities (check OSV.dev / GitHub Advisory Database)
+      Applies to: Cargo.toml, package.json, requirements.txt, go.mod, Gemfile,
+      pom.xml, build.gradle, pyproject.toml, Pipfile, composer.json.
+    scope: "{Cargo.toml,package.json,requirements*.txt,go.mod,Gemfile,pom.xml,build.gradle*,pyproject.toml,Pipfile,composer.json,*.csproj}"
+    severity: info
+    category: security
+    tags: [supply-chain, new-dependency, owasp-a08]
+    source: diffscope-builtin
+
+  # ── Git / Path / URL Dependencies ──────────────────────────────────
+  - id: sec.supply-chain.non-registry-source
+    description: >
+      Dependency sourced from outside the standard package registry.
+      Flag: git = "..." in Cargo.toml, "git+https://..." in package.json,
+      path dependencies in non-workspace contexts, --extra-index-url in
+      requirements.txt, replace directives in go.mod, HTTP URLs in dependencies.
+      These bypass registry checksums and are harder to audit.
+    scope: "{Cargo.toml,package.json,package-lock.json,requirements*.txt,go.mod,Gemfile,pyproject.toml,Pipfile,composer.json}"
+    severity: warning
+    category: security
+    tags: [supply-chain, non-registry, dependency-confusion, owasp-a08, cwe-427]
+    source: diffscope-builtin
+
+  # ── Install / Build Scripts ────────────────────────────────────────
+  - id: sec.supply-chain.install-scripts
+    description: >
+      Install or build scripts that execute arbitrary code during package installation.
+      Flag: preinstall/install/postinstall in package.json scripts,
+      build.rs in new Cargo dependencies (network access, file system writes,
+      process spawning), setup.py with exec/eval/__import__/subprocess calls,
+      proc-macro crates (execute at compile time).
+      Install scripts are present in only ~3-5% of legitimate npm packages.
+    scope: "{package.json,Cargo.toml,setup.py,setup.cfg,pyproject.toml}"
+    severity: warning
+    category: security
+    tags: [supply-chain, install-scripts, build-scripts, owasp-a08]
+    source: diffscope-builtin
+
+  # ── Lockfile Integrity ─────────────────────────────────────────────
+  - id: sec.supply-chain.lockfile-tampering
+    description: >
+      Lockfile modifications that may indicate tampering or dependency confusion.
+      Flag: changed integrity/checksum hashes for same version,
+      registry URL changes (npmjs.org -> other), new packages in lockfile
+      without corresponding manifest changes, protocol downgrades
+      (https -> http), source URL changes in Cargo.lock.
+    scope: "{Cargo.lock,package-lock.json,yarn.lock,pnpm-lock.yaml,Gemfile.lock,Pipfile.lock,go.sum,composer.lock,poetry.lock}"
+    severity: warning
+    category: security
+    tags: [supply-chain, lockfile, tampering, owasp-a08]
+    source: diffscope-builtin
+
+  # ── Unpinned / Wildcard Versions ───────────────────────────────────
+  - id: sec.supply-chain.unpinned-version
+    description: >
+      Dependencies using wildcard or overly broad version ranges that allow
+      unexpected major version bumps. Flag: "*", "latest", ">=x" without
+      upper bound, "~" or "^" in package.json (lower severity).
+      Pin to exact versions or narrow ranges for reproducible builds.
+    scope: "{Cargo.toml,package.json,requirements*.txt,go.mod,Gemfile,pyproject.toml,Pipfile,composer.json}"
+    severity: info
+    category: security
+    tags: [supply-chain, unpinned, version-range, owasp-a08]
+    source: diffscope-builtin
+
+  # ── Version Downgrade ──────────────────────────────────────────────
+  - id: sec.supply-chain.version-downgrade
+    description: >
+      Dependency version downgraded, potentially reintroducing known
+      vulnerabilities. Check if the older version has published CVEs.
+    scope: "{Cargo.toml,package.json,requirements*.txt,go.mod,Gemfile,pyproject.toml,Pipfile,composer.json}"
+    severity: warning
+    category: security
+    tags: [supply-chain, downgrade, owasp-a08]
+    source: diffscope-builtin
+
+  # ── Patch / Replace Directives ─────────────────────────────────────
+  - id: sec.supply-chain.override-directive
+    description: >
+      Dependency override mechanisms that silently redirect packages.
+      Flag: [patch] and [replace] sections in Cargo.toml, replace directives
+      in go.mod (intended for development, risky in production),
+      resolutions/overrides in package.json.
+      These can mask dependency confusion or redirect to malicious sources.
+    scope: "{Cargo.toml,go.mod,package.json}"
+    severity: warning
+    category: security
+    tags: [supply-chain, override, patch, replace, owasp-a08]
+    source: diffscope-builtin
+
+  # ── CI/CD Pipeline Security ────────────────────────────────────────
+  - id: sec.supply-chain.ci-injection
+    description: >
+      GitHub Actions workflow vulnerabilities:
+      - Third-party actions not pinned to full commit SHA (using tags is mutable)
+      - Script injection via ${{ github.event.* }} in run: steps
+      - pull_request_target with checkout of PR code (code execution from forks)
+      - Overly permissive GITHUB_TOKEN permissions
+    scope: ".github/workflows/*.{yml,yaml}"
+    severity: warning
+    category: security
+    tags: [supply-chain, ci-cd, github-actions, owasp-a08, cwe-829]
+    source: diffscope-builtin

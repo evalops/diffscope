@@ -1,0 +1,118 @@
+rules:
+  # ── SQL Injection ──────────────────────────────────────────────────
+  - id: sec.injection.sql
+    description: >
+      User-controlled input concatenated or interpolated into a SQL query string
+      instead of using parameterized queries / prepared statements.
+      Sinks: cursor.execute(f"..."), db.Query(fmt.Sprintf(...)), connection.query(str),
+      ActiveRecord.where("... #{...}"), sqlx::query(format!(...)), SqlCommand(str).
+      Sanitizers: parameterized queries (?/$1 placeholders), ORM filters, sqlx::query! macro.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,scala}"
+    severity: error
+    category: security
+    tags: [injection, sql-injection, owasp-a03, cwe-89]
+    source: diffscope-builtin
+
+  - id: sec.injection.sql.nosql
+    description: >
+      NoSQL injection via unsanitized input in MongoDB/DynamoDB/Elasticsearch queries.
+      Check for $where, $regex, $gt/$lt operators built from user input,
+      or JSON query objects constructed from request parameters.
+    scope: "**/*.{py,js,ts,rb,go,java}"
+    severity: error
+    category: security
+    tags: [injection, nosql-injection, owasp-a03, cwe-943]
+    source: diffscope-builtin
+
+  # ── Command Injection ──────────────────────────────────────────────
+  - id: sec.injection.command
+    description: >
+      User-controlled input passed to OS command execution functions.
+      Sinks: os.system(), subprocess.Popen(shell=True), exec.Command("sh","-c",str),
+      child_process.exec(str), Runtime.exec(str), system(str), Process.spawn(str).
+      Sanitizers: argument arrays (not shell strings), shlex.quote(), allowlist validation.
+      Flag shell=True with non-literal command strings.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,bash,sh}"
+    severity: error
+    category: security
+    tags: [injection, command-injection, owasp-a03, cwe-78]
+    source: diffscope-builtin
+
+  # ── XSS (Cross-Site Scripting) ─────────────────────────────────────
+  - id: sec.injection.xss
+    description: >
+      User-controlled content rendered as HTML without output encoding.
+      Sinks: innerHTML, outerHTML, document.write(), dangerouslySetInnerHTML,
+      raw(), .html_safe, mark_safe(), Markup(), bypassSecurityTrust*().
+      Safe alternatives: textContent, createElement, framework auto-escaping.
+      Check template files for unescaped output: {{! }}, |safe, -%>, <%==.
+    scope: "**/*.{js,jsx,ts,tsx,html,erb,ejs,hbs,vue,svelte,py,rb,php,java}"
+    severity: error
+    category: security
+    tags: [injection, xss, owasp-a03, cwe-79]
+    source: diffscope-builtin
+
+  # ── Template Injection (SSTI) ──────────────────────────────────────
+  - id: sec.injection.template
+    description: >
+      Server-side template injection via user input in template strings.
+      Sinks: Jinja2 Template(user_input), Flask render_template_string(user_input),
+      Mako Template(user_input), ERB.new(user_input), Razor @Html.Raw(user_input).
+      Check for user input flowing into template compilation (not just rendering).
+    scope: "**/*.{py,rb,js,ts,java,cs,go}"
+    severity: error
+    category: security
+    tags: [injection, ssti, template-injection, owasp-a03, cwe-1336]
+    source: diffscope-builtin
+
+  # ── LDAP Injection ─────────────────────────────────────────────────
+  - id: sec.injection.ldap
+    description: >
+      User input interpolated into LDAP search filters without escaping.
+      Sinks: DirContext.search(), InitialDirContext.search(), LdapContext methods.
+      Sanitizers: LDAP filter encoding, allowlist validation of search terms.
+    scope: "**/*.{java,kt,cs,py,php}"
+    severity: error
+    category: security
+    tags: [injection, ldap-injection, owasp-a03, cwe-90]
+    source: diffscope-builtin
+
+  # ── Log Injection ──────────────────────────────────────────────────
+  - id: sec.injection.log
+    description: >
+      User-controlled data written to logs without sanitization, enabling
+      log forging or ANSI escape sequence injection.
+      Check for request parameters, headers, or user input in log statements
+      without newline/control character stripping.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs}"
+    severity: warning
+    category: security
+    tags: [injection, log-injection, owasp-a09, cwe-117]
+    source: diffscope-builtin
+
+  # ── Path Traversal ─────────────────────────────────────────────────
+  - id: sec.injection.path-traversal
+    description: >
+      User input used to construct file paths without validation, allowing
+      directory traversal via ../ sequences or absolute paths.
+      Sinks: open(user_path), fs.readFile(user_path), File.new(user_path),
+      std::fs::read(user_path), os.Open(user_path).
+      Sanitizers: path canonicalization + prefix check, basename extraction.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: error
+    category: security
+    tags: [injection, path-traversal, owasp-a01, cwe-22]
+    source: diffscope-builtin
+
+  # ── Code Injection ─────────────────────────────────────────────────
+  - id: sec.injection.code
+    description: >
+      User input passed to code evaluation functions.
+      Sinks: eval(), exec(), Function(str), setTimeout(str), setInterval(str),
+      compile(), __import__(), importlib with user strings.
+      Almost never safe with user input — flag unconditionally.
+    scope: "**/*.{py,js,ts,rb,php}"
+    severity: error
+    category: security
+    tags: [injection, code-injection, owasp-a03, cwe-94]
+    source: diffscope-builtin

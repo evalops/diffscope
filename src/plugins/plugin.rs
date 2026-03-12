@@ -24,6 +24,14 @@ impl PluginManager {
         if config.semgrep {
             self.register_pre_analyzer(Arc::new(crate::plugins::builtin::SemgrepAnalyzer::new()));
         }
+        if config.secret_scanner {
+            self.register_pre_analyzer(Arc::new(crate::plugins::builtin::SecretScanner::new()));
+        }
+        if config.supply_chain {
+            self.register_pre_analyzer(Arc::new(
+                crate::plugins::builtin::SupplyChainAnalyzer::new(),
+            ));
+        }
         if config.duplicate_filter {
             self.register_post_processor(Arc::new(crate::plugins::builtin::DuplicateFilter::new()));
         }
@@ -89,11 +97,30 @@ mod tests {
             eslint: false,
             semgrep: true,
             duplicate_filter: false,
+            secret_scanner: false,
+            supply_chain: false,
         };
 
         manager.load_builtin_plugins(&config).await.unwrap();
 
         assert_eq!(manager.pre_analyzers.len(), 1);
+        assert_eq!(manager.post_processors.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn load_builtin_plugins_registers_security_analyzers() {
+        let mut manager = PluginManager::new();
+        let config = PluginConfig {
+            eslint: false,
+            semgrep: false,
+            duplicate_filter: false,
+            secret_scanner: true,
+            supply_chain: true,
+        };
+
+        manager.load_builtin_plugins(&config).await.unwrap();
+
+        assert_eq!(manager.pre_analyzers.len(), 2);
         assert_eq!(manager.post_processors.len(), 0);
     }
 }
