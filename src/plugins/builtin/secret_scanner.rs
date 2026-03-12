@@ -80,6 +80,30 @@ static RE_GENERIC_CRED: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(?i)(?:password|passwd|pwd|secret|api_?key|auth_?token|access_?token|private_?key|client_?secret)["']?\s*(?:=|:|=>)\s*["'`]([^"'`\s$\{]{8,150})["'`]"#).unwrap()
 });
 
+// ── Additional provider patterns ────────────────────────────────────────────
+static RE_NEWRELIC: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(NRAK-[A-Z0-9]{27})\b").unwrap());
+static RE_NEWRELIC_BROWSER: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b(NRJS-[a-f0-9]{19})\b").unwrap());
+static RE_DATABRICKS: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(dapi[0-9a-f]{32})\b").unwrap());
+static RE_SHOPIFY: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b(shp(?:at|ss|ca|pa)_[a-fA-F0-9]{32,})\b").unwrap());
+static RE_DISCORD_WEBHOOK: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(https?://(?:discord|discordapp)\.com/api/webhooks/\d+/[A-Za-z0-9_\-]+)").unwrap()
+});
+static RE_LINEAR: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b(lin_api_[a-zA-Z0-9]{40,})\b").unwrap());
+static RE_PYPI: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b(pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{50,})\b").unwrap());
+static RE_DIGITALOCEAN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b(dop_v1_[a-f0-9]{64})\b").unwrap());
+static RE_MAILGUN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(key-[0-9a-f]{32})\b").unwrap());
+static RE_DOPPLER: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b(dp\.(?:st|ct|pt)\.[a-zA-Z0-9]{40,})\b").unwrap());
+static RE_SUPABASE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(sbp_[a-f0-9]{40,})\b").unwrap());
+static RE_PAGERDUTY: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?i)(?:pagerduty|pd)[\w_]*(?:key|token)[\w_]*\s*(?:=|:)\s*["']?([a-zA-Z0-9+/]{20,})["']?"#).unwrap()
+});
+
 fn patterns() -> &'static [SecretPattern] {
     static PATTERNS: Lazy<Vec<SecretPattern>> = Lazy::new(|| {
         vec![
@@ -225,6 +249,79 @@ fn patterns() -> &'static [SecretPattern] {
                 rule_id: "sec.secrets.hardcoded",
                 description: "Hardcoded credential in assignment",
                 regex: &RE_GENERIC_CRED,
+                min_entropy: 3.0,
+            },
+            // ── Additional providers ──
+            SecretPattern {
+                rule_id: "sec.secrets.newrelic",
+                description: "New Relic API key",
+                regex: &RE_NEWRELIC,
+                min_entropy: 0.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.newrelic",
+                description: "New Relic browser key",
+                regex: &RE_NEWRELIC_BROWSER,
+                min_entropy: 0.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.databricks",
+                description: "Databricks personal access token",
+                regex: &RE_DATABRICKS,
+                min_entropy: 3.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.shopify",
+                description: "Shopify access token",
+                regex: &RE_SHOPIFY,
+                min_entropy: 0.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.discord",
+                description: "Discord webhook URL",
+                regex: &RE_DISCORD_WEBHOOK,
+                min_entropy: 0.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.linear",
+                description: "Linear API key",
+                regex: &RE_LINEAR,
+                min_entropy: 0.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.pypi",
+                description: "PyPI API token",
+                regex: &RE_PYPI,
+                min_entropy: 0.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.digitalocean",
+                description: "DigitalOcean personal access token",
+                regex: &RE_DIGITALOCEAN,
+                min_entropy: 0.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.mailgun",
+                description: "Mailgun API key",
+                regex: &RE_MAILGUN,
+                min_entropy: 3.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.doppler",
+                description: "Doppler service token",
+                regex: &RE_DOPPLER,
+                min_entropy: 0.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.supabase",
+                description: "Supabase service role key",
+                regex: &RE_SUPABASE,
+                min_entropy: 0.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.hardcoded",
+                description: "PagerDuty API key",
+                regex: &RE_PAGERDUTY,
                 min_entropy: 3.0,
             },
         ]
@@ -607,5 +704,65 @@ mod tests {
             generic_findings.is_empty(),
             "Should not flag low-entropy generic password"
         );
+    }
+
+    /// Build a fake token at runtime to avoid GitHub Push Protection flagging
+    /// the source file. The full pattern never appears as a string literal.
+    fn fake_token(prefix: &str, fill: char, len: usize) -> String {
+        let suffix_len = len.saturating_sub(prefix.len());
+        format!(
+            "{}{}",
+            prefix,
+            std::iter::repeat_n(fill, suffix_len).collect::<String>()
+        )
+    }
+
+    #[test]
+    fn test_detects_newrelic_key() {
+        let line = format!("NEW_RELIC_KEY={}", fake_token("NRAK-", 'A', 32));
+        let findings = SecretScanner::scan_line(&line, 1);
+        assert!(!findings.is_empty(), "Should detect New Relic API key");
+        assert_eq!(findings[0].rule_id, "sec.secrets.newrelic");
+    }
+
+    #[test]
+    fn test_detects_databricks_token() {
+        // Databricks has min_entropy 3.0 — use high-entropy hex suffix
+        let line = format!("token = dapi{}", "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d");
+        let findings = SecretScanner::scan_line(&line, 1);
+        assert!(!findings.is_empty(), "Should detect Databricks PAT");
+        assert_eq!(findings[0].rule_id, "sec.secrets.databricks");
+    }
+
+    #[test]
+    fn test_detects_shopify_token() {
+        let line = format!("SHOPIFY_TOKEN={}", fake_token("shpat_", 'a', 38));
+        let findings = SecretScanner::scan_line(&line, 1);
+        assert!(!findings.is_empty(), "Should detect Shopify access token");
+        assert_eq!(findings[0].rule_id, "sec.secrets.shopify");
+    }
+
+    #[test]
+    fn test_detects_digitalocean_token() {
+        let line = format!("DO_TOKEN={}", fake_token("dop_v1_", 'a', 71));
+        let findings = SecretScanner::scan_line(&line, 1);
+        assert!(!findings.is_empty(), "Should detect DigitalOcean PAT");
+        assert_eq!(findings[0].rule_id, "sec.secrets.digitalocean");
+    }
+
+    #[test]
+    fn test_detects_doppler_token() {
+        let line = format!("DOPPLER_TOKEN={}", fake_token("dp.st.", 'a', 46));
+        let findings = SecretScanner::scan_line(&line, 1);
+        assert!(!findings.is_empty(), "Should detect Doppler service token");
+        assert_eq!(findings[0].rule_id, "sec.secrets.doppler");
+    }
+
+    #[test]
+    fn test_detects_linear_key() {
+        let line = format!("LINEAR_API_KEY={}", fake_token("lin_api_", 'a', 48));
+        let findings = SecretScanner::scan_line(&line, 1);
+        assert!(!findings.is_empty(), "Should detect Linear API key");
+        assert_eq!(findings[0].rule_id, "sec.secrets.linear");
     }
 }

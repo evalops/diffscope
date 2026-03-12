@@ -283,6 +283,57 @@ impl CommentSynthesizer {
             || lower.contains("unsafe yaml")
             || lower.contains("weak hash")
             || lower.contains("weak password")
+            // Cryptography
+            || lower.contains("weak cipher")
+            || lower.contains("insecure tls")
+            || lower.contains("insecure ssl")
+            || lower.contains("insecure random")
+            || lower.contains("math.random")
+            || lower.contains("weak key")
+            || lower.contains("broken hash")
+            || lower.contains("hardcoded iv")
+            || lower.contains("hardcoded nonce")
+            || lower.contains("ecb mode")
+            || lower.contains("timing attack")
+            || lower.contains("certificate validation")
+            || lower.contains("cert validation")
+            // Data exposure
+            || lower.contains("pii")
+            || lower.contains("data exposure")
+            || lower.contains("data leak")
+            || lower.contains("debug mode")
+            || lower.contains("stack trace")
+            || lower.contains("verbose error")
+            || lower.contains("information disclosure")
+            || lower.contains("security header")
+            || lower.contains("missing header")
+            // Unsafe code patterns
+            || lower.contains("unsafe block")
+            || lower.contains("unsafe {")
+            || lower.contains("transmute")
+            || lower.contains("buffer overflow")
+            || lower.contains("prototype pollution")
+            || lower.contains("mass assignment")
+            || lower.contains("race condition")
+            || lower.contains("toctou")
+            || lower.contains("redos")
+            || lower.contains("catastrophic backtracking")
+            // Infrastructure
+            || lower.contains("running as root")
+            || lower.contains("privileged container")
+            || lower.contains("hostnetwork")
+            || lower.contains("overpermissive")
+            || lower.contains("publicly accessible")
+            || lower.contains("iam policy")
+            // API security
+            || lower.contains("rate limit")
+            || lower.contains("brute force")
+            || lower.contains("no pagination")
+            || lower.contains("unbounded query")
+            || lower.contains("graphql depth")
+            || lower.contains("file upload")
+            || lower.contains("insecure upload")
+            || lower.contains("input validation")
         {
             Category::Security
         } else if lower.contains("performance")
@@ -405,6 +456,96 @@ impl CommentSynthesizer {
             confidence += 0.2;
         }
         if lower.contains("unpinned") && lower.contains("action") {
+            confidence += 0.1;
+        }
+
+        // ── Cryptography ──
+        if lower.contains("weak cipher")
+            || lower.contains("des ")
+            || lower.contains("rc4")
+            || lower.contains("ecb mode")
+        {
+            confidence += 0.2;
+        }
+        if lower.contains("insecure tls")
+            || lower.contains("sslv2")
+            || lower.contains("sslv3")
+            || lower.contains("tls 1.0")
+        {
+            confidence += 0.2;
+        }
+        if lower.contains("math.random") || lower.contains("insecure random") {
+            confidence += 0.15;
+        }
+        if lower.contains("hardcoded iv")
+            || lower.contains("hardcoded nonce")
+            || lower.contains("static iv")
+        {
+            confidence += 0.2;
+        }
+        if lower.contains("timing attack") || lower.contains("constant-time") {
+            confidence += 0.15;
+        }
+        if lower.contains("certificate validation") && lower.contains("disabled") {
+            confidence += 0.2;
+        }
+
+        // ── Data exposure ──
+        if lower.contains("pii") && lower.contains("log") {
+            confidence += 0.15;
+        }
+        if lower.contains("stack trace") && lower.contains("response") {
+            confidence += 0.15;
+        }
+        if lower.contains("debug") && lower.contains("production") {
+            confidence += 0.2;
+        }
+        if lower.contains("missing") && lower.contains("security header") {
+            confidence += 0.1;
+        }
+
+        // ── Unsafe code ──
+        if lower.contains("transmute") || lower.contains("from_raw_parts") {
+            confidence += 0.15;
+        }
+        if lower.contains("prototype pollution") {
+            confidence += 0.2;
+        }
+        if lower.contains("mass assignment") {
+            confidence += 0.15;
+        }
+        if lower.contains("redos") || lower.contains("catastrophic backtracking") {
+            confidence += 0.15;
+        }
+        if lower.contains("buffer overflow") {
+            confidence += 0.2;
+        }
+        if lower.contains("race condition") || lower.contains("toctou") {
+            confidence += 0.15;
+        }
+
+        // ── Infrastructure ──
+        if lower.contains("privileged") && lower.contains("container") {
+            confidence += 0.2;
+        }
+        if lower.contains("running as root") {
+            confidence += 0.15;
+        }
+        if lower.contains("publicly accessible") || lower.contains("0.0.0.0/0") {
+            confidence += 0.2;
+        }
+        if lower.contains("iam") && (lower.contains("admin") || lower.contains("*")) {
+            confidence += 0.15;
+        }
+
+        // ── API security ──
+        if lower.contains("missing rate limit") || lower.contains("no rate limit") {
+            confidence += 0.1;
+        }
+        if lower.contains("insecure file upload") || lower.contains("unrestricted upload") {
+            confidence += 0.2;
+        }
+        if lower.contains("graphql") && lower.contains("depth") {
             confidence += 0.1;
         }
 
@@ -555,6 +696,131 @@ impl CommentSynthesizer {
         }
         if lower.contains("unpinned") {
             tags.push("unpinned-version".to_string());
+        }
+
+        // ── Cryptography tags ──
+        if lower.contains("weak cipher")
+            || lower.contains("des ")
+            || lower.contains("rc4")
+            || lower.contains("blowfish")
+        {
+            tags.push("weak-cipher".to_string());
+        }
+        if lower.contains("ecb") && lower.contains("mode") {
+            tags.push("ecb-mode".to_string());
+        }
+        if lower.contains("insecure tls") || lower.contains("ssl") && lower.contains("insecure") {
+            tags.push("insecure-tls".to_string());
+        }
+        if lower.contains("insecure random")
+            || lower.contains("math.random")
+            || lower.contains("math/rand")
+        {
+            tags.push("insecure-random".to_string());
+        }
+        if lower.contains("weak key") {
+            tags.push("weak-key-size".to_string());
+        }
+        if lower.contains("hardcoded iv")
+            || lower.contains("hardcoded nonce")
+            || lower.contains("static iv")
+        {
+            tags.push("hardcoded-iv".to_string());
+        }
+        if lower.contains("timing attack") {
+            tags.push("timing-attack".to_string());
+        }
+        if lower.contains("certificate") && lower.contains("validation") {
+            tags.push("cert-validation".to_string());
+        }
+
+        // ── Data exposure tags ──
+        if lower.contains("pii") {
+            tags.push("pii".to_string());
+        }
+        if lower.contains("stack trace") || lower.contains("verbose error") {
+            tags.push("verbose-error".to_string());
+        }
+        if lower.contains("debug mode") {
+            tags.push("debug-mode".to_string());
+        }
+        if lower.contains("security header") || lower.contains("missing header") {
+            tags.push("security-headers".to_string());
+        }
+        if lower.contains("information disclosure") || lower.contains("data exposure") {
+            tags.push("information-disclosure".to_string());
+        }
+        if lower.contains("directory listing") {
+            tags.push("directory-listing".to_string());
+        }
+
+        // ── Unsafe code tags ──
+        if lower.contains("unsafe") && lower.contains("rust") {
+            tags.push("rust-unsafe".to_string());
+        }
+        if lower.contains("transmute") {
+            tags.push("transmute".to_string());
+        }
+        if lower.contains("buffer overflow") {
+            tags.push("buffer-overflow".to_string());
+        }
+        if lower.contains("prototype pollution") {
+            tags.push("prototype-pollution".to_string());
+        }
+        if lower.contains("mass assignment") {
+            tags.push("mass-assignment".to_string());
+        }
+        if lower.contains("race condition") || lower.contains("toctou") {
+            tags.push("race-condition".to_string());
+        }
+        if lower.contains("redos") || lower.contains("catastrophic backtracking") {
+            tags.push("redos".to_string());
+        }
+        if lower.contains("integer overflow") {
+            tags.push("integer-overflow".to_string());
+        }
+        if lower.contains("resource leak") || lower.contains("handle leak") {
+            tags.push("resource-leak".to_string());
+        }
+
+        // ── Infrastructure tags ──
+        if lower.contains("docker") {
+            tags.push("docker".to_string());
+        }
+        if lower.contains("kubernetes") || lower.contains("k8s") {
+            tags.push("kubernetes".to_string());
+        }
+        if lower.contains("terraform") {
+            tags.push("terraform".to_string());
+        }
+        if lower.contains("helm") {
+            tags.push("helm".to_string());
+        }
+        if lower.contains("privileged") && lower.contains("container") {
+            tags.push("privileged-container".to_string());
+        }
+        if lower.contains("iam") && (lower.contains("policy") || lower.contains("permission")) {
+            tags.push("iam".to_string());
+        }
+        if lower.contains("running as root") {
+            tags.push("root-container".to_string());
+        }
+
+        // ── API security tags ──
+        if lower.contains("rate limit") {
+            tags.push("rate-limiting".to_string());
+        }
+        if lower.contains("pagination") || lower.contains("unbounded query") {
+            tags.push("pagination".to_string());
+        }
+        if lower.contains("graphql") {
+            tags.push("graphql".to_string());
+        }
+        if lower.contains("file upload") {
+            tags.push("file-upload".to_string());
+        }
+        if lower.contains("input validation") {
+            tags.push("input-validation".to_string());
         }
 
         // ── CWE / OWASP tags ──

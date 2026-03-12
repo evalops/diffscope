@@ -1,0 +1,128 @@
+rules:
+  # ── Missing Rate Limiting ────────────────────────────────────────
+  - id: sec.api.missing-rate-limit
+    description: >
+      API endpoint without rate limiting, enabling brute-force attacks and abuse.
+      Especially critical on: login/auth endpoints, password reset, OTP verification,
+      signup/registration, expensive operations (search, export, AI inference).
+      Flag: new API route handlers without rate-limit middleware.
+      Per framework:
+      - Express: missing express-rate-limit or similar middleware
+      - Django: missing django-ratelimit decorator
+      - FastAPI: missing slowapi limiter
+      - Spring: missing @RateLimiter, no Resilience4j/Bucket4j
+      - Go: no rate.Limiter or middleware
+      Safe: token bucket, sliding window, distributed rate limiting (Redis-backed).
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [api, rate-limiting, brute-force, owasp-a04, cwe-770]
+    source: diffscope-builtin
+
+  # ── Excessive Data Exposure ──────────────────────────────────────
+  - id: sec.api.excessive-data
+    description: >
+      API response returning more data than the client needs, leaking sensitive
+      fields. Flag: returning full database objects/models directly as JSON
+      without DTO/serializer field selection, SELECT * in API-backing queries,
+      user objects returned with password_hash/email/phone to unauthorized callers.
+      Safe: explicit field selection in serializers, DTO/ViewModel pattern,
+      GraphQL field-level authorization, response schemas.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [api, data-exposure, owasp-a03, cwe-213]
+    source: diffscope-builtin
+
+  # ── Missing Pagination / Unbounded Query ─────────────────────────
+  - id: sec.api.no-pagination
+    description: >
+      API endpoint returning unbounded result sets without pagination limits.
+      Can cause OOM, slow responses, and be used for data exfiltration.
+      Flag: database queries without LIMIT, ORM .all() without pagination,
+      list endpoints without page/limit/offset parameters, missing max page size.
+      Safe: cursor-based or offset-based pagination with enforced max page size
+      (e.g., max 100 per page), streaming for large exports.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [api, pagination, dos, owasp-a04, cwe-770]
+    source: diffscope-builtin
+
+  # ── GraphQL: Missing Depth/Complexity Limits ─────────────────────
+  - id: sec.api.graphql-depth
+    description: >
+      GraphQL API without query depth or complexity limits, enabling
+      denial-of-service via deeply nested or expensive queries.
+      Flag: GraphQL server setup without depth limiting middleware,
+      missing complexity analysis, no query cost calculation,
+      introspection enabled in production, no persisted queries.
+      Safe: graphql-depth-limit, graphql-validation-complexity, Apollo costAnalysis
+      directive, persisted queries only, disable introspection in production.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs}"
+    severity: warning
+    category: security
+    tags: [api, graphql, dos, owasp-a04, cwe-770]
+    source: diffscope-builtin
+
+  # ── API Key in Query String ──────────────────────────────────────
+  - id: sec.api.key-in-url
+    description: >
+      API key or authentication token passed in URL query parameters.
+      URLs are logged by proxies, CDNs, web servers, and stored in browser history.
+      Flag: ?api_key=, ?token=, ?access_token=, ?key= in API client code,
+      route handlers reading auth from req.query instead of Authorization header.
+      Safe: Authorization: Bearer header, API key in X-API-Key header.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [api, authentication, api-key, owasp-a07, cwe-598]
+    source: diffscope-builtin
+
+  # ── Missing Input Validation ─────────────────────────────────────
+  - id: sec.api.no-input-validation
+    description: >
+      API endpoint accepting user input without schema validation.
+      Flag: POST/PUT/PATCH handlers without request body validation,
+      missing Pydantic/marshmallow models (Python), no Joi/Zod schema (Node.js),
+      no @Valid/@Validated annotation (Spring), request parameters used directly
+      without type checking or constraint validation.
+      Safe: schema validation (JSON Schema, OpenAPI, Pydantic, Joi, Zod),
+      type-safe deserialization, input length limits, enum validation.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [api, input-validation, owasp-a03, cwe-20]
+    source: diffscope-builtin
+
+  # ── Broken Function-Level Authorization ──────────────────────────
+  - id: sec.api.broken-function-auth
+    description: >
+      Admin or privileged API endpoints accessible by regular users.
+      Flag: admin routes without role/permission middleware, API endpoints
+      that check authentication but not authorization (is_authenticated but
+      no is_admin/has_permission), mixed user/admin routes in same controller
+      without per-route authorization.
+      Safe: role-based middleware per route, policy-based authorization,
+      separate admin API with distinct auth, RBAC decorators.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: error
+    category: security
+    tags: [api, authorization, rbac, owasp-a01, cwe-285]
+    source: diffscope-builtin
+
+  # ── Insecure File Upload ─────────────────────────────────────────
+  - id: sec.api.insecure-upload
+    description: >
+      File upload endpoint without proper validation, enabling malicious file upload.
+      Flag: accepting uploads without file type validation, relying only on
+      Content-Type header (attacker-controlled), storing uploads in web-accessible
+      directories, no file size limits, allowing executable extensions (.php, .jsp,
+      .py, .sh, .exe, .bat), no filename sanitization.
+      Safe: validate file magic bytes, allowlist extensions, store outside webroot,
+      generate random filenames, enforce size limits, virus scan.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: error
+    category: security
+    tags: [api, file-upload, owasp-a04, cwe-434]
+    source: diffscope-builtin

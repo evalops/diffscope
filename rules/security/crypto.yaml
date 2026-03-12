@@ -1,0 +1,165 @@
+rules:
+  # ── Weak Cipher Algorithm ────────────────────────────────────────
+  - id: sec.crypto.weak-cipher
+    description: >
+      Use of a known-broken or weak cipher algorithm.
+      Vulnerable: DES, 3DES (TDEA), RC4, RC2, Blowfish, IDEA, ECB mode for any cipher.
+      Per language:
+      - Python: Crypto.Cipher.DES, Crypto.Cipher.ARC4, algorithms.TripleDES, mode=ECB
+      - Java: Cipher.getInstance("DES"), Cipher.getInstance("RC4"), "AES/ECB/*"
+      - Go: des.NewCipher, rc4.NewCipher, cipher.NewECBEncrypter
+      - Rust: des crate, rc4 crate, ecb mode
+      - JavaScript: crypto.createCipheriv('des-*'), createCipheriv('rc4')
+      - C#: DESCryptoServiceProvider, RC2CryptoServiceProvider
+      Safe alternatives: AES-256-GCM, ChaCha20-Poly1305, XChaCha20-Poly1305.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,c,cpp}"
+    severity: error
+    category: security
+    tags: [crypto, weak-cipher, owasp-a02, cwe-327]
+    source: diffscope-builtin
+
+  # ── Insecure TLS Configuration ───────────────────────────────────
+  - id: sec.crypto.weak-tls
+    description: >
+      TLS configuration allowing insecure protocol versions or cipher suites.
+      Vulnerable: SSLv2, SSLv3, TLS 1.0, TLS 1.1, ssl.PROTOCOL_TLSv1, PROTOCOL_SSLv23
+      without disabling old versions, MinVersion < tls.VersionTLS12 (Go),
+      SecurityProtocolType.Ssl3/Tls (C#), ssl_protocols TLSv1 (nginx/Apache).
+      Also flag: verify_mode = ssl.CERT_NONE, InsecureSkipVerify: true (Go),
+      NODE_TLS_REJECT_UNAUTHORIZED=0, CURLOPT_SSL_VERIFYPEER => false.
+      Safe: TLS 1.2+ with AEAD cipher suites, certificate pinning.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,conf,yaml,yml,toml}"
+    severity: error
+    category: security
+    tags: [crypto, tls, ssl, owasp-a02, cwe-326]
+    source: diffscope-builtin
+
+  # ── Insecure Randomness ──────────────────────────────────────────
+  - id: sec.crypto.insecure-random
+    description: >
+      Use of non-cryptographic PRNG for security-sensitive operations.
+      Vulnerable (when used for tokens, keys, nonces, passwords, session IDs):
+      - Python: random.random(), random.randint(), random.choice() — use secrets module
+      - JavaScript: Math.random() — use crypto.getRandomValues() or crypto.randomUUID()
+      - Java: java.util.Random — use java.security.SecureRandom
+      - Go: math/rand — use crypto/rand
+      - Ruby: rand, Random.new — use SecureRandom
+      - Rust: rand::thread_rng() is OK, but rand::rngs::SmallRng is not for crypto
+      - C/C++: rand(), srand() — use platform CSPRNG
+      - PHP: rand(), mt_rand() — use random_bytes(), random_int()
+      Safe: os.urandom, secrets.token_*, SecureRandom, crypto/rand, CSPRNG.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,c,cpp}"
+    severity: error
+    category: security
+    tags: [crypto, random, prng, owasp-a02, cwe-330]
+    source: diffscope-builtin
+
+  # ── Weak Key Size ────────────────────────────────────────────────
+  - id: sec.crypto.weak-key-size
+    description: >
+      Cryptographic key size below recommended minimum.
+      Minimum key sizes: RSA >= 2048 (prefer 4096), EC >= 256 bits (P-256+),
+      AES >= 128 (prefer 256), HMAC key >= hash output length.
+      Flag: RSA 1024, DSA 1024, DH 1024, EC P-192, AES-64.
+      Per language: generate_private_key(1024), KeyPairGenerator with < 2048,
+      rsa.GenerateKey(rand, 1024), openssl genrsa 1024.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,c,cpp}"
+    severity: error
+    category: security
+    tags: [crypto, key-size, owasp-a02, cwe-326]
+    source: diffscope-builtin
+
+  # ── Broken Hash for Integrity ────────────────────────────────────
+  - id: sec.crypto.broken-hash
+    description: >
+      Use of broken hash algorithms for integrity verification or digital signatures.
+      Vulnerable: MD5, SHA1 for checksums, file integrity, digital signatures, HMAC.
+      (Note: MD5/SHA1 for password hashing is covered by sec.auth.weak-password-hash.)
+      Flag: hashlib.md5() for file verification, MessageDigest.getInstance("MD5"),
+      crypto.createHash('sha1') for HMAC, Digest::MD5 for signatures.
+      Safe: SHA-256, SHA-384, SHA-512, SHA-3, BLAKE2, BLAKE3.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,c,cpp}"
+    severity: warning
+    category: security
+    tags: [crypto, broken-hash, md5, sha1, owasp-a02, cwe-328]
+    source: diffscope-builtin
+
+  # ── Hardcoded IV / Nonce ─────────────────────────────────────────
+  - id: sec.crypto.hardcoded-iv
+    description: >
+      Initialization vector (IV) or nonce is hardcoded, static, or reused.
+      IV/nonce must be unique per encryption operation. Reuse with CTR/GCM modes
+      leads to catastrophic key recovery. Flag: string/byte literals assigned to
+      iv/nonce variables, IV = b'\x00' * 16, static final byte[] IV.
+      Safe: generate random IV per operation, store IV alongside ciphertext.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,c,cpp}"
+    severity: error
+    category: security
+    tags: [crypto, iv-reuse, nonce, owasp-a02, cwe-329]
+    source: diffscope-builtin
+
+  # ── Unauthenticated Encryption ───────────────────────────────────
+  - id: sec.crypto.missing-mac
+    description: >
+      Encryption without authentication (no MAC/AEAD), enabling bit-flipping
+      and padding oracle attacks. Vulnerable: AES-CBC without HMAC,
+      AES-CTR without MAC, any stream cipher without authentication.
+      Flag: CBC/CTR mode usage without a paired HMAC-then-encrypt or encrypt-then-MAC.
+      Safe: AES-GCM, AES-CCM, ChaCha20-Poly1305, XChaCha20-Poly1305, NaCl secretbox.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,c,cpp}"
+    severity: warning
+    category: security
+    tags: [crypto, authenticated-encryption, mac, owasp-a02, cwe-353]
+    source: diffscope-builtin
+
+  # ── Disabled Certificate Validation ──────────────────────────────
+  - id: sec.crypto.cert-validation
+    description: >
+      TLS certificate validation disabled, enabling MITM attacks.
+      Flag per language:
+      - Python: verify=False (requests), ssl.CERT_NONE, check_hostname=False
+      - Go: InsecureSkipVerify: true, tls.Config with no verification
+      - Java: TrustAllCerts, X509TrustManager accepting all, HostnameVerifier accepting all
+      - Node.js: rejectUnauthorized: false, NODE_TLS_REJECT_UNAUTHORIZED=0
+      - Ruby: verify_mode = OpenSSL::SSL::VERIFY_NONE
+      - Rust: danger_accept_invalid_certs(true) (reqwest)
+      - C#: ServerCertificateValidationCallback returning true
+      - PHP: CURLOPT_SSL_VERIFYPEER => false, verify_peer => false
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: error
+    category: security
+    tags: [crypto, certificate, tls, mitm, owasp-a02, cwe-295]
+    source: diffscope-builtin
+
+  # ── Timing Attack on Secret Comparison ───────────────────────────
+  - id: sec.crypto.timing-attack
+    description: >
+      Non-constant-time comparison of secrets, tokens, or MACs.
+      Flag: == or != operator comparing HMAC digests, API keys, tokens, passwords.
+      Safe alternatives per language:
+      - Python: hmac.compare_digest(), secrets.compare_digest()
+      - Go: subtle.ConstantTimeCompare()
+      - Java: MessageDigest.isEqual()
+      - Node.js: crypto.timingSafeEqual()
+      - Ruby: Rack::Utils.secure_compare(), ActiveSupport::SecurityUtils.secure_compare()
+      - Rust: constant_time_eq crate, subtle crate ConstantTimeEq
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [crypto, timing-attack, side-channel, owasp-a02, cwe-208]
+    source: diffscope-builtin
+
+  # ── Weak Key Derivation ──────────────────────────────────────────
+  - id: sec.crypto.weak-kdf
+    description: >
+      Key derivation function with insufficient work factor or using a
+      non-standard approach. Flag: PBKDF2 with < 600,000 iterations (OWASP 2023),
+      single-pass SHA/MD5 as KDF, custom "key stretching" implementations,
+      scrypt with N < 2^15 or r < 8, argon2 with < 3 iterations.
+      Safe: argon2id (>=3 iterations, >=64MB), bcrypt (cost >= 12),
+      scrypt (N >= 2^17, r >= 8), PBKDF2-SHA256 (>= 600k iterations).
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [crypto, kdf, key-derivation, owasp-a02, cwe-916]
+    source: diffscope-builtin

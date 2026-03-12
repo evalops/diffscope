@@ -116,3 +116,81 @@ rules:
     category: security
     tags: [injection, code-injection, owasp-a03, cwe-94]
     source: diffscope-builtin
+
+  # ── GraphQL Injection ────────────────────────────────────────────
+  - id: sec.injection.graphql
+    description: >
+      User input interpolated into GraphQL query strings instead of using variables.
+      Sinks: string concatenation/interpolation into GraphQL query strings,
+      template literals building GraphQL queries with user values,
+      gql() with embedded user input, graphql(schema, user_query).
+      Enables query manipulation, unauthorized field access, and introspection abuse.
+      Safe: always use GraphQL variables ($var), parameterized queries,
+      persisted queries (allowlisted query hashes), disable introspection.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs}"
+    severity: error
+    category: security
+    tags: [injection, graphql, owasp-a03, cwe-943]
+    source: diffscope-builtin
+
+  # ── HTTP Header Injection / CRLF ─────────────────────────────────
+  - id: sec.injection.header
+    description: >
+      User input in HTTP response headers without CRLF (\r\n) sanitization.
+      Enables HTTP response splitting, header injection, and cache poisoning.
+      Sinks: response.setHeader(name, user_value), Set-Cookie with user input,
+      Location: user_url (redirect), Content-Disposition with user filename.
+      Flag: user input in any response header value without newline stripping.
+      Safe: strip \r and \n from all user-controlled header values, use
+      framework-provided redirect/cookie methods that auto-sanitize.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: error
+    category: security
+    tags: [injection, header-injection, crlf, http-splitting, owasp-a03, cwe-113]
+    source: diffscope-builtin
+
+  # ── Email Header Injection ───────────────────────────────────────
+  - id: sec.injection.email
+    description: >
+      User input in email headers (To, CC, BCC, Subject, From) without
+      sanitization, enabling spam relay and phishing.
+      Sinks: send_mail(to=user_input), smtplib with user-controlled headers,
+      nodemailer with user in to/cc/bcc/subject fields, Mail::Message.new(user_input).
+      Attack: injecting \r\n to add BCC headers for mass spam relay.
+      Safe: validate email format, strip newlines from all header values,
+      limit recipients, use allowlisted sender addresses.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [injection, email-injection, spam, owasp-a03, cwe-93]
+    source: diffscope-builtin
+
+  # ── XML Injection ────────────────────────────────────────────────
+  - id: sec.injection.xml
+    description: >
+      User input embedded in XML documents without proper escaping.
+      (XXE is covered separately in sec.xxe — this covers XML content injection.)
+      Sinks: string concatenation building XML, f-string/template XML construction,
+      innerHTML-style XML manipulation, XSLT with user-controlled stylesheets.
+      Safe: XML builder libraries (lxml.builder, javax.xml.stream), proper escaping
+      via xml.sax.saxutils.escape(), DOM APIs for element construction.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [injection, xml-injection, owasp-a03, cwe-91]
+    source: diffscope-builtin
+
+  # ── ReDoS via User-Controlled Regex ──────────────────────────────
+  - id: sec.injection.regex
+    description: >
+      User-controlled input compiled as a regular expression pattern.
+      Enables ReDoS (denial of service via catastrophic backtracking).
+      Sinks: re.compile(user_input), new RegExp(user_input), Regex::new(user_input),
+      Pattern.compile(user_input), Regexp.new(user_input).
+      Safe: re2/rust-regex (linear time, no backtracking), escape user input
+      (re.escape, RegExp.escape), timeout on regex execution, input length limits.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [injection, redos, regex, dos, owasp-a03, cwe-1333]
+    source: diffscope-builtin

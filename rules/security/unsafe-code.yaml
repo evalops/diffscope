@@ -1,0 +1,141 @@
+rules:
+  # ── Rust Unsafe Blocks ───────────────────────────────────────────
+  - id: sec.unsafe.rust-unsafe
+    description: >
+      Unsafe Rust code that bypasses the borrow checker and type system.
+      Flag and review carefully:
+      - unsafe { } blocks — check for UB (undefined behavior)
+      - std::mem::transmute — type coercion bypassing safety checks
+      - *const T / *mut T raw pointer dereferences
+      - std::slice::from_raw_parts — must verify length and alignment
+      - std::mem::uninitialized / std::mem::zeroed for non-zero types
+      - extern "C" FFI boundaries without proper validation
+      - .as_ptr() / .as_mut_ptr() escaping safe abstractions
+      Not all unsafe is wrong, but every unsafe block needs justification
+      and a safety comment explaining why invariants are upheld.
+    scope: "**/*.rs"
+    severity: warning
+    category: security
+    tags: [unsafe, rust, memory-safety, cwe-119]
+    source: diffscope-builtin
+
+  # ── C/C++ Memory Safety ──────────────────────────────────────────
+  - id: sec.unsafe.memory-cpp
+    description: >
+      C/C++ memory safety issues that can lead to exploitation.
+      Flag:
+      - Buffer overflows: strcpy, strcat, sprintf, gets (use strncpy, snprintf, fgets)
+      - Format string: printf(user_input) without format string
+      - Use-after-free: free(ptr) then dereference
+      - Double-free: calling free() twice on same pointer
+      - Uninitialized memory: reading before writing
+      - Integer overflow in malloc size calculations
+      - Stack-based buffer overflow via alloca with user-controlled size
+      Safe: bounds-checked alternatives, smart pointers (C++), AddressSanitizer.
+    scope: "**/*.{c,cpp,cc,cxx,h,hpp}"
+    severity: error
+    category: security
+    tags: [unsafe, memory-safety, buffer-overflow, owasp-a06, cwe-119]
+    source: diffscope-builtin
+
+  # ── ReDoS (Regular Expression DoS) ──────────────────────────────
+  - id: sec.unsafe.redos
+    description: >
+      Regular expression patterns vulnerable to catastrophic backtracking (ReDoS).
+      Flag patterns with: nested quantifiers (a+)+, overlapping alternatives (a|a)*,
+      unbounded repetition with ambiguous groups (.+.+)+, star-height > 1.
+      Common vulnerable patterns:
+      - ^(a+)+$ — exponential on "aaa...!" input
+      - (a|aa)* — ambiguous alternatives
+      - (.*a){x} — overlapping with greedy quantifier
+      Safe: use RE2/rust-regex (no backtracking), set timeouts, pre-validate input length.
+    scope: "**/*.{py,js,ts,rb,go,java,kt,cs,php,rs}"
+    severity: warning
+    category: security
+    tags: [unsafe, redos, regex, dos, cwe-1333]
+    source: diffscope-builtin
+
+  # ── Prototype Pollution ──────────────────────────────────────────
+  - id: sec.unsafe.prototype-pollution
+    description: >
+      JavaScript prototype pollution via uncontrolled property assignment.
+      Flag: deep merge/extend/assign with user-controlled keys, lodash.merge
+      with untrusted input, JSON.parse -> recursive assign, Object.assign
+      with user input, setting __proto__ or constructor.prototype.
+      Exploitation: can lead to XSS, authentication bypass, RCE.
+      Safe: Object.create(null) for maps, Map/Set for dynamic keys,
+      allowlisting properties, using libraries that block __proto__.
+    scope: "**/*.{js,ts,jsx,tsx}"
+    severity: error
+    category: security
+    tags: [unsafe, prototype-pollution, javascript, owasp-a03, cwe-1321]
+    source: diffscope-builtin
+
+  # ── Mass Assignment ──────────────────────────────────────────────
+  - id: sec.unsafe.mass-assignment
+    description: >
+      User-controlled input directly populating model/entity fields without
+      explicit allowlisting. Attackers can set admin flags, change ownership, etc.
+      Flag per framework:
+      - Rails: Model.new(params) or update(params) without strong_params permit()
+      - Django: ModelForm without explicit fields = [...] (or using exclude)
+      - Express: Object.assign(model, req.body), spread {...req.body}
+      - Spring: @ModelAttribute without @JsonIgnore on sensitive fields
+      - Go: json.Unmarshal into struct with exported sensitive fields
+      Safe: explicit allowlist (strong params, DTO pattern, pick/omit).
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: error
+    category: security
+    tags: [unsafe, mass-assignment, owasp-a08, cwe-915]
+    source: diffscope-builtin
+
+  # ── Race Condition / TOCTOU ──────────────────────────────────────
+  - id: sec.unsafe.race-condition
+    description: >
+      Time-of-check to time-of-use (TOCTOU) race condition in security-critical
+      operations. Flag patterns:
+      - Check file existence then open (os.path.exists -> open)
+      - Check permission then act (if authorized -> perform action) without lock
+      - Read balance then deduct without transaction/lock
+      - Check-then-create without atomic operation (e.g., user registration)
+      Safe: atomic operations, file locking (flock), database transactions with
+      serializable isolation, optimistic concurrency control, mutex/lock guards.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,c,cpp}"
+    severity: warning
+    category: security
+    tags: [unsafe, race-condition, toctou, concurrency, cwe-367]
+    source: diffscope-builtin
+
+  # ── Integer Overflow in Security Context ─────────────────────────
+  - id: sec.unsafe.integer-overflow
+    description: >
+      Integer overflow or underflow in security-sensitive calculations.
+      Flag: buffer size calculations with unchecked arithmetic, length checks
+      that can wrap around, signed/unsigned confusion in bounds checks,
+      multiplication overflow in memory allocation sizes.
+      Per language:
+      - C/C++: size_t arithmetic without overflow check
+      - Java: int overflow in array index calculations
+      - Go: int overflow before make() or slice indexing
+      - Rust: wrapping arithmetic in unsafe blocks, unchecked_add/mul
+      Safe: checked arithmetic, saturating operations, BigInt for large values.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,c,cpp}"
+    severity: warning
+    category: security
+    tags: [unsafe, integer-overflow, owasp-a03, cwe-190]
+    source: diffscope-builtin
+
+  # ── Dangling Resource / Handle Leak ──────────────────────────────
+  - id: sec.unsafe.resource-leak
+    description: >
+      File handles, database connections, or network sockets not properly closed,
+      leading to resource exhaustion (denial of service).
+      Flag: open() without context manager (Python), fs.open without close,
+      new FileInputStream without try-with-resources (Java),
+      File::open without drop/scope guard (Rust), missing defer conn.Close() (Go).
+      Safe: with/using statements, try-with-resources, defer, RAII/Drop trait.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,c,cpp,php}"
+    severity: warning
+    category: security
+    tags: [unsafe, resource-leak, dos, cwe-404]
+    source: diffscope-builtin

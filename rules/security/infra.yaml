@@ -1,0 +1,144 @@
+rules:
+  # ── Docker: Running as Root ──────────────────────────────────────
+  - id: sec.infra.docker-root
+    description: >
+      Docker container running as root user. If the container is compromised,
+      the attacker has root privileges inside the container.
+      Flag: Dockerfile without USER directive, USER root without switching back,
+      docker run without --user flag, docker-compose without user: setting.
+      Safe: USER nonroot, USER 1000:1000, FROM distroless images (run as nonroot),
+      rootless container runtimes.
+    scope: "{Dockerfile,Dockerfile.*,docker-compose.{yml,yaml},**/Dockerfile,**/Dockerfile.*}"
+    severity: warning
+    category: security
+    tags: [infra, docker, container, root, owasp-a05, cwe-250]
+    source: diffscope-builtin
+
+  # ── Docker: ADD with Remote URL ──────────────────────────────────
+  - id: sec.infra.docker-add
+    description: >
+      Docker ADD instruction with remote URL fetches content without checksum
+      verification. Also, ADD auto-extracts archives which may have unexpected content.
+      Flag: ADD http:// or ADD https:// in Dockerfile.
+      Safe: use COPY for local files, use RUN curl/wget with checksum verification
+      for remote files.
+    scope: "{Dockerfile,Dockerfile.*,**/Dockerfile,**/Dockerfile.*}"
+    severity: warning
+    category: security
+    tags: [infra, docker, container, owasp-a08, cwe-829]
+    source: diffscope-builtin
+
+  # ── Docker: Secrets in Build ─────────────────────────────────────
+  - id: sec.infra.docker-secrets
+    description: >
+      Secrets passed as build arguments or environment variables in Dockerfile.
+      Build args are visible in image history (docker history).
+      Flag: ARG PASSWORD, ARG API_KEY, ARG SECRET, ENV with secret values,
+      COPY .env, COPY credentials, COPY *.pem.
+      Safe: Docker BuildKit secrets (--mount=type=secret), multi-stage builds
+      that don't copy secrets to final stage, runtime env injection.
+    scope: "{Dockerfile,Dockerfile.*,**/Dockerfile,**/Dockerfile.*,docker-compose.{yml,yaml}}"
+    severity: error
+    category: security
+    tags: [infra, docker, secrets, owasp-a07, cwe-798]
+    source: diffscope-builtin
+
+  # ── Kubernetes: Privileged Container ─────────────────────────────
+  - id: sec.infra.k8s-privileged
+    description: >
+      Kubernetes pod security issues enabling container escape.
+      Flag:
+      - privileged: true — full host access
+      - hostNetwork: true — shares host network namespace
+      - hostPID: true / hostIPC: true — shares host process/IPC namespace
+      - capabilities add: [SYS_ADMIN, NET_ADMIN, ALL]
+      - allowPrivilegeEscalation: true (default!)
+      - readOnlyRootFilesystem: false (or missing)
+      - runAsNonRoot: false or missing
+      Safe: SecurityContext with drop ALL capabilities, runAsNonRoot: true,
+      readOnlyRootFilesystem: true, seccomp profiles.
+    scope: "**/*.{yaml,yml,json}"
+    severity: error
+    category: security
+    tags: [infra, kubernetes, container, privilege-escalation, owasp-a05, cwe-250]
+    source: diffscope-builtin
+
+  # ── Kubernetes: Secrets in Manifests ─────────────────────────────
+  - id: sec.infra.k8s-secrets
+    description: >
+      Kubernetes Secret values embedded directly in manifests (base64 is NOT encryption).
+      Flag: kind: Secret with data: containing base64 values committed to git,
+      environment variables with valueFrom: missing (hardcoded values),
+      ConfigMap with password/secret/token keys.
+      Safe: External Secrets Operator, Sealed Secrets, Vault injector,
+      SOPS-encrypted secrets, CSI secret store driver.
+    scope: "**/*.{yaml,yml,json}"
+    severity: error
+    category: security
+    tags: [infra, kubernetes, secrets, owasp-a07, cwe-798]
+    source: diffscope-builtin
+
+  # ── Terraform: Publicly Exposed Resources ────────────────────────
+  - id: sec.infra.terraform-public
+    description: >
+      Terraform resources exposed to the public internet unintentionally.
+      Flag:
+      - cidr_blocks = ["0.0.0.0/0"] on ingress rules (except 80/443)
+      - publicly_accessible = true on RDS/ElastiCache/Redshift
+      - acl = "public-read" on S3 buckets
+      - block_public_access = false on S3
+      - ip_configuration with authorized_networks "0.0.0.0/0" (GCP SQL)
+      - network_policy with open ingress
+      Safe: VPC-only access, private subnets, security groups with specific CIDRs.
+    scope: "**/*.{tf,tf.json}"
+    severity: error
+    category: security
+    tags: [infra, terraform, iac, public-access, owasp-a05, cwe-284]
+    source: diffscope-builtin
+
+  # ── Terraform/IaC: Overpermissive IAM ────────────────────────────
+  - id: sec.infra.iam-overpermissive
+    description: >
+      IAM policies or roles with overly broad permissions.
+      Flag:
+      - "Action": "*" or "Action": ["*"] (admin access)
+      - "Resource": "*" with sensitive actions (s3:*, iam:*, kms:*)
+      - AssumeRole trust policy with Principal: "*"
+      - policies: ["arn:aws:iam::aws:policy/AdministratorAccess"] on service accounts
+      - GCP roles/owner or roles/editor on service accounts
+      - Azure Contributor/Owner role on broad scope
+      Safe: least-privilege policies, specific resource ARNs, condition keys.
+    scope: "**/*.{tf,tf.json,yaml,yml,json}"
+    severity: error
+    category: security
+    tags: [infra, iam, least-privilege, owasp-a01, cwe-250]
+    source: diffscope-builtin
+
+  # ── Helm: Secrets in Values ──────────────────────────────────────
+  - id: sec.infra.helm-secrets
+    description: >
+      Secrets or credentials in Helm values files committed to version control.
+      Flag: keys named password, secret, token, apiKey, credentials in values.yaml
+      with non-template string values. Also flag: hardcoded TLS cert/key in values.
+      Safe: external-secrets, sealed-secrets, vault-injector, helm-secrets plugin,
+      reference to Kubernetes secrets via existingSecret pattern.
+    scope: "{**/values.yaml,**/values.yml,**/values-*.yaml,**/values-*.yml,**/Chart.yaml}"
+    severity: error
+    category: security
+    tags: [infra, helm, secrets, kubernetes, owasp-a07, cwe-798]
+    source: diffscope-builtin
+
+  # ── Exposed Internal Ports ───────────────────────────────────────
+  - id: sec.infra.exposed-port
+    description: >
+      Internal service ports exposed externally without need.
+      Flag: database ports (5432, 3306, 27017, 6379) in LoadBalancer/NodePort services,
+      management ports (9090 Prometheus, 8080 actuator, 15672 RabbitMQ) in ingress,
+      debug ports (5005, 9229, 4000) in production config.
+      Safe: ClusterIP services for internal, NetworkPolicy restricting access,
+      VPN/bastion for management access.
+    scope: "**/*.{yaml,yml,json,tf,tf.json,toml}"
+    severity: warning
+    category: security
+    tags: [infra, networking, ports, owasp-a05, cwe-284]
+    source: diffscope-builtin

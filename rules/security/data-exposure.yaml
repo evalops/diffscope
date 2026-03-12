@@ -1,0 +1,121 @@
+rules:
+  # ── PII in Logs ──────────────────────────────────────────────────
+  - id: sec.data.pii-logged
+    description: >
+      Personally Identifiable Information written to logs or telemetry.
+      Flag logging of: email addresses, phone numbers, SSN/national ID patterns,
+      credit card numbers (4-digit groups), IP addresses with user context,
+      full names in structured logs, date of birth, passport numbers.
+      Check for: log.info() with user objects, tracing::info!() with PII fields,
+      console.log() with request bodies containing PII.
+      Safe: log only user IDs/hashes, mask PII fields, use structured logging
+      with PII redaction middleware.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [data-exposure, pii, logging, owasp-a09, cwe-532]
+    source: diffscope-builtin
+
+  # ── Verbose Error Messages ───────────────────────────────────────
+  - id: sec.data.verbose-error
+    description: >
+      Stack traces, internal paths, or database errors exposed to end users.
+      Flag: traceback.format_exc() in HTTP response, err.stack in API response,
+      e.getMessage() in REST response, SHOW_SQL_ERRORS=true,
+      detailed_errors: true in production config, res.send(error.stack).
+      Safe: generic error messages to users, detailed errors only in logs,
+      error codes instead of messages, custom error pages.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,yaml,yml,json,toml}"
+    severity: warning
+    category: security
+    tags: [data-exposure, error-handling, information-disclosure, owasp-a09, cwe-209]
+    source: diffscope-builtin
+
+  # ── Debug Mode in Production ─────────────────────────────────────
+  - id: sec.data.debug-mode
+    description: >
+      Debug mode enabled in production configuration or not gated by environment.
+      Flag: DEBUG = True (Django), app.debug = True (Flask), debug: true (Express),
+      RAILS_ENV != 'production' checks missing, spring.jpa.show-sql=true,
+      RUST_LOG=trace in production configs, EnableDetailedErrors(true).
+      Debug mode often exposes: stack traces, SQL queries, template variables,
+      environment variables, internal routes, and profiling data.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,yaml,yml,json,toml,env,properties,conf}"
+    severity: warning
+    category: security
+    tags: [data-exposure, debug-mode, configuration, owasp-a05, cwe-215]
+    source: diffscope-builtin
+
+  # ── Sensitive Data in URLs ───────────────────────────────────────
+  - id: sec.data.sensitive-url
+    description: >
+      Sensitive data passed in URL query parameters or path segments.
+      URLs are logged by proxies, CDNs, browsers, and web servers.
+      Flag: API keys in query strings (?api_key=, ?token=, ?key=),
+      session tokens in URLs, passwords in GET parameters, PII in URLs.
+      Safe: use Authorization header, POST body, or encrypted cookies.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [data-exposure, sensitive-url, owasp-a09, cwe-598]
+    source: diffscope-builtin
+
+  # ── Missing Security Headers ─────────────────────────────────────
+  - id: sec.data.missing-headers
+    description: >
+      Missing or misconfigured HTTP security response headers.
+      Check for absence of:
+      - Strict-Transport-Security (HSTS) — forces HTTPS
+      - X-Content-Type-Options: nosniff — prevents MIME sniffing
+      - X-Frame-Options / Content-Security-Policy frame-ancestors — clickjacking
+      - Content-Security-Policy — XSS mitigation
+      - Referrer-Policy — prevents leaking URLs in Referer header
+      - Permissions-Policy — restricts browser features
+      Flag: explicitly removing or disabling these headers.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,conf,yaml,yml}"
+    severity: warning
+    category: security
+    tags: [data-exposure, security-headers, owasp-a05, cwe-693]
+    source: diffscope-builtin
+
+  # ── Server/Version Information Disclosure ────────────────────────
+  - id: sec.data.server-info
+    description: >
+      Server software name or version disclosed in HTTP headers or error pages.
+      Flag: X-Powered-By header not removed, Server header with version,
+      framework version in HTML comments, default error pages showing stack info.
+      Per framework: Express X-Powered-By (app.disable('x-powered-by')),
+      Django DEBUG page, Rails stack traces, Spring Boot actuator endpoints.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php,conf,yaml,yml}"
+    severity: info
+    category: security
+    tags: [data-exposure, version-disclosure, owasp-a09, cwe-200]
+    source: diffscope-builtin
+
+  # ── Directory Listing Enabled ────────────────────────────────────
+  - id: sec.data.directory-listing
+    description: >
+      Directory listing or file browsing enabled on web server.
+      Flag: autoindex on (nginx), Options +Indexes (Apache),
+      express.static with dotfiles: 'allow', serveIndex() middleware,
+      directory_listing: true in configuration.
+      Enables attackers to enumerate files, find backups, and discover hidden endpoints.
+    scope: "**/*.{conf,yaml,yml,json,toml,py,js,ts,rb,go,java,php}"
+    severity: warning
+    category: security
+    tags: [data-exposure, directory-listing, owasp-a01, cwe-548]
+    source: diffscope-builtin
+
+  # ── Sensitive Data in Comments/Logs ──────────────────────────────
+  - id: sec.data.sensitive-comment
+    description: >
+      Passwords, tokens, or credentials left in code comments, TODO items,
+      or commit messages. Flag: TODO/FIXME/HACK comments containing words like
+      password, secret, key, token with adjacent string literals.
+      Also flag: commented-out code containing hardcoded credentials,
+      debug print statements with secrets.
+    scope: "**/*.{py,js,ts,rb,go,rs,java,kt,cs,php}"
+    severity: warning
+    category: security
+    tags: [data-exposure, sensitive-comment, owasp-a09, cwe-615]
+    source: diffscope-builtin
