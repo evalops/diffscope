@@ -10,19 +10,14 @@
 
 ## Immediate Queue
 
-- [ ] `src/review/feedback.rs`
-  - Split feedback stats/data models from file-pattern derivation.
-  - Split JSON persistence and atomic-write helpers from store mutation helpers.
-  - Split prompt-facing learned-feedback context generation from semantic example recording.
-  - Split semantic embedding alignment/loading/saving from example ingestion.
-
-## Review Backlog
-
 - [ ] `src/review/triage.rs`
   - Split file-kind heuristics (`lock`, `generated`) from change-shape heuristics.
   - Split whitespace-only detection from comment-only detection.
   - Isolate `TriageResult` reporting helpers from diff classification.
   - Pull shared diff-line collection helpers out of `triage_diff()`.
+
+## Review Backlog
+
 - [ ] `src/review/compression.rs`
   - Split token estimation and skipped-summary helpers from compression stages.
   - Split deletion-only compression and clipping primitives from stage selection.

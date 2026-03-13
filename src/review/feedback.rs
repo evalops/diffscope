@@ -1,278 +1,29 @@
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+#[path = "feedback/context.rs"]
+mod context;
+#[path = "feedback/patterns.rs"]
+mod patterns;
+#[path = "feedback/persistence.rs"]
+mod persistence;
+#[path = "feedback/semantic.rs"]
+mod semantic;
+#[path = "feedback/store.rs"]
+mod store;
 
-use crate::adapters;
-use crate::config;
-use crate::core;
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct FeedbackTypeStats {
-    #[serde(default)]
-    pub accepted: usize,
-    #[serde(default)]
-    pub rejected: usize,
-}
-
-/// Tracks acceptance/rejection counts for a specific pattern (category, file extension, etc.)
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct FeedbackPatternStats {
-    #[serde(default)]
-    pub accepted: usize,
-    #[serde(default)]
-    pub rejected: usize,
-}
-
-impl FeedbackPatternStats {
-    pub fn acceptance_rate(&self) -> f32 {
-        let total = self.total();
-        if total == 0 {
-            return 0.5; // neutral when no data
-        }
-        self.accepted as f32 / total as f32
-    }
-
-    pub fn total(&self) -> usize {
-        self.accepted + self.rejected
-    }
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct FeedbackStore {
-    #[serde(default)]
-    pub suppress: HashSet<String>,
-    #[serde(default)]
-    pub accept: HashSet<String>,
-    #[serde(default)]
-    pub by_comment_type: HashMap<String, FeedbackTypeStats>,
-    /// Feedback stats keyed by category (e.g., "Bug", "Security", "Performance").
-    #[serde(default)]
-    pub by_category: HashMap<String, FeedbackPatternStats>,
-    /// Feedback stats keyed by file extension glob (e.g., "*.rs", "*.test.ts").
-    #[serde(default)]
-    pub by_file_pattern: HashMap<String, FeedbackPatternStats>,
-    /// Feedback stats keyed by composite "category|*.ext" (e.g., "Bug|*.rs").
-    #[serde(default)]
-    pub by_category_file_pattern: HashMap<String, FeedbackPatternStats>,
-}
-
-pub fn derive_file_patterns(path: &Path) -> Vec<String> {
-    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-        return Vec::new();
-    };
-
-    let parts: Vec<&str> = file_name.split('.').collect();
-    if parts.len() < 2 {
-        return Vec::new();
-    }
-
-    let mut patterns = Vec::new();
-    for start in 1..parts.len() {
-        let pattern = format!("*.{}", parts[start..].join("."));
-        if !patterns.contains(&pattern) {
-            patterns.push(pattern);
-        }
-    }
-
-    patterns
-}
-
-fn update_pattern_stats(stats: &mut FeedbackPatternStats, accepted: bool) {
-    if accepted {
-        stats.accepted += 1;
-    } else {
-        stats.rejected += 1;
-    }
-}
-
-impl FeedbackStore {
-    /// Record a feedback event for enhanced pattern tracking.
-    #[cfg(test)]
-    pub fn record_feedback(&mut self, category: &str, file_pattern: Option<&str>, accepted: bool) {
-        let patterns = file_pattern
-            .into_iter()
-            .map(str::to_string)
-            .collect::<Vec<_>>();
-        self.record_feedback_patterns(category, &patterns, accepted);
-    }
-
-    /// Record a feedback event across one or more file-pattern buckets.
-    pub fn record_feedback_patterns<S>(
-        &mut self,
-        category: &str,
-        file_patterns: &[S],
-        accepted: bool,
-    ) where
-        S: AsRef<str>,
-    {
-        // Update by_category
-        let cat_stats = self.by_category.entry(category.to_string()).or_default();
-        update_pattern_stats(cat_stats, accepted);
-
-        // Update by_file_pattern
-        let mut unique_patterns = HashSet::new();
-        for pattern in file_patterns {
-            let pattern = pattern.as_ref().trim();
-            if pattern.is_empty() {
-                continue;
-            }
-            unique_patterns.insert(pattern.to_string());
-        }
-
-        for pattern in unique_patterns {
-            let fp_stats = self.by_file_pattern.entry(pattern.clone()).or_default();
-            update_pattern_stats(fp_stats, accepted);
-
-            // Update composite key
-            let composite = format!("{}|{}", category, pattern);
-            let comp_stats = self.by_category_file_pattern.entry(composite).or_default();
-            update_pattern_stats(comp_stats, accepted);
-        }
-    }
-}
-
-pub fn load_feedback_store_from_path(path: &Path) -> FeedbackStore {
-    match std::fs::read_to_string(path) {
-        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
-        Err(_) => FeedbackStore::default(),
-    }
-}
-
-pub fn load_feedback_store(config: &config::Config) -> FeedbackStore {
-    load_feedback_store_from_path(&config.feedback_path)
-}
-
-/// Generate feedback context to inject into the review prompt.
-///
-/// Scans the feedback store for statistically significant patterns
-/// and generates guidance text for the LLM reviewer.
-pub fn generate_feedback_context(store: &FeedbackStore) -> String {
-    let min_observations = 5;
-    let mut patterns: Vec<String> = Vec::new();
-
-    // Scan by_category for significant patterns
-    for (category, stats) in &store.by_category {
-        if stats.total() < min_observations {
-            continue;
-        }
-        let rate = stats.acceptance_rate();
-        if rate >= 0.7 {
-            patterns.push(format!(
-                "- {} findings are usually accepted ({:.0}% acceptance rate) — be thorough on {} issues",
-                category, rate * 100.0, category.to_lowercase()
-            ));
-        } else if rate < 0.3 {
-            patterns.push(format!(
-                "- {} findings are frequently rejected ({:.0}% acceptance rate) — only flag clear {} issues",
-                category, rate * 100.0, category.to_lowercase()
-            ));
-        }
-    }
-
-    // Scan by_file_pattern for low-acceptance patterns
-    for (pattern, stats) in &store.by_file_pattern {
-        if stats.total() < min_observations {
-            continue;
-        }
-        let rate = stats.acceptance_rate();
-        if rate < 0.3 {
-            patterns.push(format!(
-                "- Comments on {} files are usually rejected ({:.0}% acceptance rate) — be more conservative",
-                pattern, rate * 100.0
-            ));
-        }
-    }
-
-    // Cap at top 10 patterns to avoid prompt bloat
-    patterns.truncate(10);
-
-    if patterns.is_empty() {
-        return String::new();
-    }
-
-    let mut context = String::from(
-        "## Learned Feedback Patterns\nBased on historical feedback from this project:\n",
-    );
-    for pattern in &patterns {
-        context.push_str(pattern);
-        context.push('\n');
-    }
-    context
-}
-
-pub fn save_feedback_store(path: &Path, store: &FeedbackStore) -> Result<()> {
-    atomic_write_string(path, &serde_json::to_string_pretty(store)?)
-}
-
-#[allow(dead_code)]
-pub async fn record_semantic_feedback_example(
-    config: &config::Config,
-    comment: &core::Comment,
-    accepted: bool,
-) -> Result<()> {
-    record_semantic_feedback_examples(config, std::slice::from_ref(comment), accepted).await?;
-    Ok(())
-}
-
-pub async fn record_semantic_feedback_examples(
-    config: &config::Config,
-    comments: &[core::Comment],
-    accepted: bool,
-) -> Result<usize> {
-    if comments.is_empty() {
-        return Ok(0);
-    }
-
-    let semantic_path = core::default_semantic_feedback_path(&config.feedback_path);
-    let mut store = core::load_semantic_feedback_store(&semantic_path);
-    let model_config = config.to_model_config_for_role(config::ModelRole::Embedding);
-    let adapter = adapters::llm::create_adapter(&model_config).ok();
-    core::align_semantic_feedback_store(&mut store, adapter.as_deref());
-
-    let embedding_texts = comments
-        .iter()
-        .map(|comment| {
-            core::build_feedback_embedding_text(&comment.content, comment.category.as_str())
-        })
-        .collect::<Vec<_>>();
-    let embeddings = core::embed_texts_with_fallback(adapter.as_deref(), &embedding_texts).await;
-    let before = store.examples.len();
-    let timestamp = chrono::Utc::now().to_rfc3339();
-
-    for (comment, embedding) in comments.iter().zip(embeddings.into_iter()) {
-        store.add_example(core::SemanticFeedbackExample {
-            content: comment.content.clone(),
-            category: comment.category.as_str().to_string(),
-            file_patterns: derive_file_patterns(&comment.file_path),
-            accepted,
-            created_at: timestamp.clone(),
-            embedding,
-        });
-    }
-
-    core::save_semantic_feedback_store(&semantic_path, &store)?;
-    Ok(store.examples.len().saturating_sub(before))
-}
-
-fn atomic_write_string(path: &Path, content: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("feedback.json");
-    let tmp_path = path.with_file_name(format!("{}.{}.tmp", file_name, std::process::id()));
-    std::fs::write(&tmp_path, content)?;
-    std::fs::rename(&tmp_path, path)?;
-    Ok(())
-}
+#[allow(unused_imports)]
+pub use context::generate_feedback_context;
+#[allow(unused_imports)]
+pub use patterns::derive_file_patterns;
+#[allow(unused_imports)]
+pub use persistence::{load_feedback_store, load_feedback_store_from_path, save_feedback_store};
+#[allow(unused_imports)]
+pub use semantic::{record_semantic_feedback_example, record_semantic_feedback_examples};
+#[allow(unused_imports)]
+pub use store::{FeedbackPatternStats, FeedbackStore, FeedbackTypeStats};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn feedback_store_default_is_empty() {
