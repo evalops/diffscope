@@ -101,7 +101,7 @@
 - [x] `src/review/pipeline/context/symbols.rs`: split symbol search, snippet selection, and fallback behavior.
 - [x] `src/review/pipeline/context/related.rs`: separate related-file discovery from ranking/selection.
 - [x] `src/review/pipeline/guidance.rs`: carve guidance assembly, repo-support guidance, and prompt-facing formatting.
-- [ ] `src/review/pipeline/session.rs`: split session construction from runtime state transitions.
+- [x] `src/review/pipeline/session.rs`: split session construction from runtime state transitions.
 - [ ] `src/review/pipeline/services.rs`: separate service wiring from optional feature initialization.
 - [ ] `src/review/pipeline/file_context/sources.rs`: split repo sources, symbol sources, and supplemental context sources.
 - [ ] `src/review/pipeline/comments.rs`: separate comment assembly, filtering, and metadata stamping.
