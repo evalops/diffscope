@@ -1,81 +1,39 @@
-use std::collections::{HashMap, HashSet};
+#[path = "aggregate/buckets.rs"]
+mod buckets;
+#[path = "aggregate/overview.rs"]
+mod overview;
 
-use crate::review;
-
-use super::super::super::{FeedbackEvalComment, FeedbackEvalReport, LoadedFeedbackEvalInput};
+use super::super::super::{FeedbackEvalReport, LoadedFeedbackEvalInput};
 use super::super::examples::{build_showcase_candidates, build_vague_rejections};
-use super::stats::{
-    add_bucket_count, buckets_from_counts, build_bucket, build_threshold_metrics, ratio,
-};
+use super::stats::{buckets_from_counts, build_threshold_metrics, ratio};
+use buckets::collect_feedback_bucket_counts;
+use overview::build_feedback_overview;
+
+#[cfg(test)]
+use super::super::super::FeedbackEvalComment;
 
 pub(in super::super::super) fn build_feedback_eval_report(
     loaded: &LoadedFeedbackEvalInput,
     confidence_threshold: f32,
 ) -> FeedbackEvalReport {
-    let accepted = loaded
-        .comments
-        .iter()
-        .filter(|comment| comment.accepted)
-        .count();
-    let rejected = loaded.comments.len().saturating_sub(accepted);
-    let labeled_reviews = loaded
-        .comments
-        .iter()
-        .filter_map(|comment| comment.review_id.as_ref())
-        .collect::<HashSet<_>>()
-        .len();
-
-    let vague_comments: Vec<&FeedbackEvalComment> = loaded
-        .comments
-        .iter()
-        .filter(|comment| review::is_vague_comment_text(&comment.content))
-        .collect();
-    let vague_accepted = vague_comments
-        .iter()
-        .filter(|comment| comment.accepted)
-        .count();
-    let vague_bucket = build_bucket("vague".to_string(), vague_comments.len(), vague_accepted);
-
-    let mut category_counts = HashMap::new();
-    let mut severity_counts = HashMap::new();
-    let mut repo_counts = HashMap::new();
-    let mut file_pattern_counts = HashMap::new();
-
-    for comment in &loaded.comments {
-        add_bucket_count(&mut category_counts, &comment.category, comment.accepted);
-
-        let severity = comment.severity.as_deref().unwrap_or("unknown");
-        add_bucket_count(&mut severity_counts, severity, comment.accepted);
-
-        if let Some(repo) = comment.repo.as_deref() {
-            add_bucket_count(&mut repo_counts, repo, comment.accepted);
-        }
-
-        let unique_patterns = comment
-            .file_patterns
-            .iter()
-            .map(String::as_str)
-            .collect::<HashSet<_>>();
-        for pattern in unique_patterns {
-            add_bucket_count(&mut file_pattern_counts, pattern, comment.accepted);
-        }
-    }
+    let overview = build_feedback_overview(loaded);
+    let bucket_counts = collect_feedback_bucket_counts(&loaded.comments);
 
     FeedbackEvalReport {
         total_comments_seen: loaded.total_comments_seen,
         total_reviews_seen: loaded.total_reviews_seen,
         labeled_comments: loaded.comments.len(),
-        labeled_reviews,
-        accepted,
-        rejected,
-        acceptance_rate: ratio(accepted, loaded.comments.len()),
+        labeled_reviews: overview.labeled_reviews,
+        accepted: overview.accepted,
+        rejected: overview.rejected,
+        acceptance_rate: ratio(overview.accepted, loaded.comments.len()),
         confidence_threshold,
-        vague_comments: vague_bucket,
+        vague_comments: overview.vague_bucket,
         confidence_metrics: build_threshold_metrics(&loaded.comments, confidence_threshold),
-        by_category: buckets_from_counts(category_counts),
-        by_severity: buckets_from_counts(severity_counts),
-        by_repo: buckets_from_counts(repo_counts),
-        by_file_pattern: buckets_from_counts(file_pattern_counts),
+        by_category: buckets_from_counts(bucket_counts.category_counts),
+        by_severity: buckets_from_counts(bucket_counts.severity_counts),
+        by_repo: buckets_from_counts(bucket_counts.repo_counts),
+        by_file_pattern: buckets_from_counts(bucket_counts.file_pattern_counts),
         showcase_candidates: build_showcase_candidates(&loaded.comments, confidence_threshold),
         vague_rejections: build_vague_rejections(&loaded.comments),
     }
