@@ -91,7 +91,7 @@
 - [ ] `src/commands/misc/discussion/selection.rs`: split file loading/ID repair from selection rules.
 - [ ] `src/commands/misc/changelog.rs`: evaluate splitting changelog collection from output formatting.
 - [ ] `src/commands/eval/command.rs`: separate CLI option prep, fixture execution, and report lifecycle.
-- [ ] `src/commands/feedback_eval/command.rs`: separate input loading from report/output orchestration.
+- [x] `src/commands/feedback_eval/command.rs`: separate input loading from report/output orchestration.
 
 ### Review pipeline backlog
 
