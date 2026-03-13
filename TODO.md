@@ -8,24 +8,35 @@
 - Prefer extracting pure helpers and formatter/parsing boundaries before moving async orchestration.
 - Keep module roots thin; if a root becomes mostly re-exports, let children carry the logic.
 
+## Immediate Queue
+
+- [ ] `src/core/semantic.rs`
+  - Split semantic index/store model types and defaults from persistence I/O helpers.
+  - Split embedding metadata compatibility and adapter/fallback embedding generation.
+  - Split source-file discovery and excerpt/query builders from index refresh bookkeeping.
+  - Split semantic diff retrieval and feedback-example matching from feedback-store maintenance.
+- [ ] `src/core/symbol_index.rs`
+  - Split LSP command detection and extension scanning from index-building entry points.
+  - Split regex-based symbol extraction and dependency-hint parsing from graph/file-summary registration.
+  - Split `LspClient` protocol transport from symbol-result decoding and path/URI utilities.
+  - Keep `build()` and `build_with_lsp()` as thin orchestration entry points.
+
 ## Core Backlog
 
-- [ ] `src/core/comment.rs`
-  - Split category/severity/tag heuristics from confidence/fix-effort heuristics.
 - [ ] `src/core/semantic.rs`
-  - Split semantic index/store model types and embedding metadata compatibility.
-  - Split JSON/file persistence helpers from path derivation helpers.
-  - Split embedding adapter/fallback logic from source discovery/chunk extraction.
-  - Split semantic matching/ranking from semantic feedback example workflows.
-  - Split index refresh/update orchestration from low-level chunk/state transforms.
+  - Split JSON/file persistence helpers from default path derivation and atomic write helpers.
+  - Split semantic chunk hashing/key generation from summary/excerpt assembly.
+  - Split changed-range filtering and per-query match scoring from context chunk rendering.
+  - Split feedback embedding-text/fingerprint helpers from feedback-store reconciliation.
 - [ ] `src/config.rs`
   - Split defaults/model-role conversion from load/deserialize paths.
   - Split env/path resolution from validation/migration logic.
   - Split serialization-focused test helpers from production config code.
 - [ ] `src/core/symbol_index.rs`
-  - Split language-specific extraction/parsing from index construction.
-  - Split retrieval/query helpers from persistence/cache helpers.
-  - Split ranking/path-selection helpers from graph-aware expansion helpers.
+  - Split language-pattern tables and path candidate expansion from dependency resolution.
+  - Split file collection and byte-size filtering from index population.
+  - Split symbol graph and reverse-dependency registration from symbol storage.
+  - Split LSP symbol collection/range extraction from request/notification plumbing.
 - [ ] `src/core/symbol_graph.rs`
   - Split graph construction from traversal/query helpers.
   - Split serialization/persistence helpers from graph algorithms.

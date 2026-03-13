@@ -1,3 +1,4 @@
+use super::signals::contains_action_word;
 use super::{CodeSuggestion, RawComment};
 
 pub(super) fn generate_code_suggestion(raw: &RawComment) -> Option<CodeSuggestion> {
@@ -6,7 +7,7 @@ pub(super) fn generate_code_suggestion(raw: &RawComment) -> Option<CodeSuggestio
     }
 
     if let Some(suggestion) = &raw.suggestion {
-        if super::contains_action_word(suggestion) {
+        if contains_action_word(suggestion) {
             return Some(CodeSuggestion {
                 original_code: "// Original code would be extracted from context".to_string(),
                 suggested_code: suggestion.clone(),
