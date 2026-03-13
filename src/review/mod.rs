@@ -11,7 +11,9 @@ pub use context_helpers::{
     inject_custom_context, inject_pattern_repository_context, rank_and_trim_context_chunks,
     resolve_pattern_repositories,
 };
-pub use feedback::{load_feedback_store, load_feedback_store_from_path, save_feedback_store};
+pub use feedback::{
+    derive_file_patterns, load_feedback_store, load_feedback_store_from_path, save_feedback_store,
+};
 pub use filters::apply_review_filters;
 pub use pipeline::{
     build_review_guidance, build_symbol_index, extract_symbols_from_diff, filter_comments_for_diff,

@@ -118,6 +118,215 @@ impl Category {
     }
 }
 
+fn is_ascii_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return false;
+    }
+
+    haystack.match_indices(needle).any(|(start, _)| {
+        let end = start + needle.len();
+        let before_ok = start == 0 || !is_ascii_word_byte(haystack.as_bytes()[start - 1]);
+        let after_ok = end == haystack.len() || !is_ascii_word_byte(haystack.as_bytes()[end]);
+        before_ok && after_ok
+    })
+}
+
+fn contains_any_word(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| contains_word(haystack, needle))
+}
+
+fn contains_any_phrase(haystack: &str, phrases: &[&str]) -> bool {
+    phrases.iter().any(|phrase| haystack.contains(phrase))
+}
+
+fn push_unique_tag(tags: &mut Vec<String>, tag: &str) {
+    if !tags.iter().any(|existing| existing == tag) {
+        tags.push(tag.to_string());
+    }
+}
+
+fn append_cwe_tags(tags: &mut Vec<String>, lower: &str) {
+    let mut search_from = 0;
+    while let Some(offset) = lower[search_from..].find("cwe-") {
+        let pos = search_from + offset;
+        let cwe_rest = &lower[pos..];
+        let cwe_tag: String = cwe_rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '-')
+            .collect();
+        if cwe_tag.len() > 4 {
+            push_unique_tag(tags, &cwe_tag);
+        }
+        search_from = pos + 4;
+    }
+}
+
+fn contains_action_word(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    contains_any_word(
+        &lower,
+        &[
+            "add", "avoid", "check", "guard", "move", "remove", "rename", "replace", "use",
+        ],
+    )
+}
+
+fn mentions_weak_cipher(lower: &str) -> bool {
+    lower.contains("weak cipher")
+        || contains_word(lower, "des")
+        || lower.contains("3des")
+        || lower.contains("rc4")
+        || lower.contains("blowfish")
+        || lower.contains("ecb mode")
+}
+
+fn has_security_signal(lower: &str) -> bool {
+    lower.contains("security")
+        || lower.contains("vulnerab")
+        || lower.contains("inject")
+        || lower.contains("authentication")
+        || lower.contains("authorization")
+        || lower.contains("transmute")
+        || lower.contains("overpermissive")
+        || contains_any_word(
+            lower,
+            &[
+                "xss",
+                "csrf",
+                "ssrf",
+                "jwt",
+                "idor",
+                "owasp",
+                "xxe",
+                "cors",
+                "pii",
+                "hostnetwork",
+                "toctou",
+                "redos",
+            ],
+        )
+        || contains_any_phrase(
+            lower,
+            &[
+                "sql injection",
+                "command injection",
+                "cross-site scripting",
+                "cross-site request forgery",
+                "server-side request forgery",
+                "deserialization",
+                "path traversal",
+                "directory traversal",
+                "hardcoded secret",
+                "hardcoded credential",
+                "hardcoded password",
+                "api key",
+                "private key",
+                "access control",
+                "privilege escalation",
+                "insecure direct object",
+                "supply chain",
+                "supply-chain",
+                "dependency confusion",
+                "typosquatting",
+                "open redirect",
+                "template injection",
+                "ldap injection",
+                "log injection",
+                "code injection",
+                "unsafe pickle",
+                "unsafe yaml",
+                "weak hash",
+                "weak password",
+                "insecure tls",
+                "insecure ssl",
+                "insecure random",
+                "math.random",
+                "weak key",
+                "broken hash",
+                "hardcoded iv",
+                "hardcoded nonce",
+                "timing attack",
+                "certificate validation",
+                "cert validation",
+                "data exposure",
+                "data leak",
+                "debug mode",
+                "stack trace",
+                "verbose error",
+                "information disclosure",
+                "security header",
+                "missing security header",
+                "unsafe block",
+                "unsafe {",
+                "buffer overflow",
+                "prototype pollution",
+                "mass assignment",
+                "race condition",
+                "catastrophic backtracking",
+                "running as root",
+                "privileged container",
+                "publicly accessible",
+                "iam policy",
+                "rate limit",
+                "no pagination",
+                "unbounded query",
+                "graphql depth",
+                "insecure upload",
+                "unrestricted upload",
+            ],
+        )
+        || (lower.contains("file upload")
+            && contains_any_phrase(
+                lower,
+                &["insecure", "unrestricted", "vulnerability", "security"],
+            ))
+        || (lower.contains("input validation")
+            && contains_any_phrase(
+                lower,
+                &["missing", "vulnerability", "security", "injection"],
+            ))
+        || mentions_weak_cipher(lower)
+}
+
+fn has_performance_signal(lower: &str) -> bool {
+    lower.contains("performance") || lower.contains("optimiz") || lower.contains("slow")
+}
+
+fn has_bug_signal(lower: &str) -> bool {
+    contains_word(lower, "bug")
+        || contains_word(lower, "error")
+        || contains_word(lower, "fix")
+        || lower.contains("fixed")
+        || lower.contains("fixes")
+        || lower.contains("fixing")
+}
+
+fn has_style_signal(lower: &str) -> bool {
+    lower.contains("style") || lower.contains("format") || lower.contains("naming")
+}
+
+fn has_documentation_signal(lower: &str) -> bool {
+    lower.contains("documentation")
+        || lower.contains("docstring")
+        || contains_word(lower, "comment")
+}
+
+fn has_testing_signal(lower: &str) -> bool {
+    lower.contains("test") || lower.contains("coverage")
+}
+
+fn has_maintainability_signal(lower: &str) -> bool {
+    lower.contains("maintain") || lower.contains("complex") || lower.contains("readable")
+}
+
+fn has_architecture_signal(lower: &str) -> bool {
+    lower.contains("design") || lower.contains("architecture") || contains_word(lower, "pattern")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FixEffort {
     Low,    // < 5 minutes
@@ -237,129 +446,21 @@ impl CommentSynthesizer {
 
     /// `lower` must already be lowercased.
     fn determine_category(lower: &str) -> Category {
-        // Security — broad keyword coverage across all 5 vulnerability classes
-        if lower.contains("security")
-            || lower.contains("vulnerability")
-            || lower.contains("injection")
-            || lower.contains("sql injection")
-            || lower.contains("command injection")
-            || lower.contains("xss")
-            || lower.contains("cross-site scripting")
-            || lower.contains("csrf")
-            || lower.contains("cross-site request forgery")
-            || lower.contains("ssrf")
-            || lower.contains("server-side request forgery")
-            || lower.contains("deserialization")
-            || lower.contains("path traversal")
-            || lower.contains("directory traversal")
-            || lower.contains("hardcoded secret")
-            || lower.contains("hardcoded credential")
-            || lower.contains("hardcoded password")
-            || lower.contains("api key")
-            || lower.contains("private key")
-            || lower.contains("jwt")
-            || lower.contains("authentication")
-            || lower.contains("authorization")
-            || lower.contains("access control")
-            || lower.contains("privilege escalation")
-            || lower.contains("idor")
-            || lower.contains("insecure direct object")
-            || lower.contains("supply chain")
-            || lower.contains("supply-chain")
-            || lower.contains("dependency confusion")
-            || lower.contains("typosquatting")
-            || lower.contains("cwe-")
-            || lower.contains("owasp")
-            || lower.contains("xxe")
-            || lower.contains("open redirect")
-            || lower.contains("cors")
-            || lower.contains("template injection")
-            || lower.contains("ldap injection")
-            || lower.contains("log injection")
-            || lower.contains("code injection")
-            || lower.contains("unsafe pickle")
-            || lower.contains("unsafe yaml")
-            || lower.contains("weak hash")
-            || lower.contains("weak password")
-            // Cryptography
-            || lower.contains("weak cipher")
-            || lower.contains("insecure tls")
-            || lower.contains("insecure ssl")
-            || lower.contains("insecure random")
-            || lower.contains("math.random")
-            || lower.contains("weak key")
-            || lower.contains("broken hash")
-            || lower.contains("hardcoded iv")
-            || lower.contains("hardcoded nonce")
-            || lower.contains("ecb mode")
-            || lower.contains("timing attack")
-            || lower.contains("certificate validation")
-            || lower.contains("cert validation")
-            // Data exposure
-            || lower.contains("pii")
-            || lower.contains("data exposure")
-            || lower.contains("data leak")
-            || lower.contains("debug mode")
-            || lower.contains("stack trace")
-            || lower.contains("verbose error")
-            || lower.contains("information disclosure")
-            || lower.contains("security header")
-            || lower.contains("missing security header")
-            // Unsafe code patterns
-            || lower.contains("unsafe block")
-            || lower.contains("unsafe {")
-            || lower.contains("transmute")
-            || lower.contains("buffer overflow")
-            || lower.contains("prototype pollution")
-            || lower.contains("mass assignment")
-            || lower.contains("race condition")
-            || lower.contains("toctou")
-            || lower.contains("redos")
-            || lower.contains("catastrophic backtracking")
-            // Infrastructure
-            || lower.contains("running as root")
-            || lower.contains("privileged container")
-            || lower.contains("hostnetwork")
-            || lower.contains("overpermissive")
-            || lower.contains("publicly accessible")
-            || lower.contains("iam policy")
-            // API security
-            || lower.contains("rate limit")
-            || lower.contains("brute force")
-            || lower.contains("no pagination")
-            || lower.contains("unbounded query")
-            || lower.contains("graphql depth")
-            || lower.contains("insecure upload")
-            || lower.contains("unrestricted upload")
-            || (lower.contains("file upload") && (lower.contains("insecure") || lower.contains("unrestricted") || lower.contains("vulnerability") || lower.contains("security")))
-            || (lower.contains("input validation") && (lower.contains("missing") || lower.contains("vulnerability") || lower.contains("security") || lower.contains("injection")))
-        {
+        if has_security_signal(lower) || lower.contains("cwe-") {
             Category::Security
-        } else if lower.contains("performance")
-            || lower.contains("optimization")
-            || lower.contains("slow")
-        {
+        } else if has_performance_signal(lower) {
             Category::Performance
-        } else if lower.contains("bug") || lower.contains("fix") || lower.contains("error") {
+        } else if has_bug_signal(lower) {
             Category::Bug
-        } else if lower.contains("style") || lower.contains("format") || lower.contains("naming") {
+        } else if has_style_signal(lower) {
             Category::Style
-        } else if lower.contains("documentation")
-            || lower.contains("docstring")
-            || lower.contains("comment")
-        {
+        } else if has_documentation_signal(lower) {
             Category::Documentation
-        } else if lower.contains("test") || lower.contains("coverage") {
+        } else if has_testing_signal(lower) {
             Category::Testing
-        } else if lower.contains("maintain")
-            || lower.contains("complex")
-            || lower.contains("readable")
-        {
+        } else if has_maintainability_signal(lower) {
             Category::Maintainability
-        } else if lower.contains("design")
-            || lower.contains("architecture")
-            || lower.contains("pattern")
-        {
+        } else if has_architecture_signal(lower) {
             Category::Architecture
         } else {
             Category::BestPractice
@@ -377,7 +478,7 @@ impl CommentSynthesizer {
         if lower.contains("command injection") || lower.contains("shell injection") {
             confidence += 0.2;
         }
-        if lower.contains("xss") || lower.contains("cross-site scripting") {
+        if contains_word(lower, "xss") || lower.contains("cross-site scripting") {
             confidence += 0.2;
         }
         if lower.contains("path traversal") || lower.contains("directory traversal") {
@@ -397,19 +498,22 @@ impl CommentSynthesizer {
         if lower.contains("missing authentication") || lower.contains("no auth") {
             confidence += 0.2;
         }
-        if lower.contains("idor") || lower.contains("insecure direct object") {
+        if contains_word(lower, "idor") || lower.contains("insecure direct object") {
             confidence += 0.15;
         }
-        if lower.contains("csrf") || lower.contains("cross-site request forgery") {
+        if contains_word(lower, "csrf") || lower.contains("cross-site request forgery") {
             confidence += 0.2;
         }
-        if lower.contains("jwt") && (lower.contains("none") || lower.contains("verify")) {
+        if contains_word(lower, "jwt") && (lower.contains("none") || lower.contains("verify")) {
             confidence += 0.2;
         }
         if lower.contains("privilege escalation") {
             confidence += 0.15;
         }
-        if lower.contains("weak password") || lower.contains("weak hash") || lower.contains("md5") {
+        if lower.contains("weak password")
+            || lower.contains("weak hash")
+            || contains_any_word(lower, &["md5", "sha1"])
+        {
             confidence += 0.15;
         }
 
@@ -439,10 +543,10 @@ impl CommentSynthesizer {
         {
             confidence += 0.2;
         }
-        if lower.contains("ssrf") || lower.contains("server-side request forgery") {
+        if contains_word(lower, "ssrf") || lower.contains("server-side request forgery") {
             confidence += 0.15;
         }
-        if lower.contains("xxe") {
+        if contains_word(lower, "xxe") {
             confidence += 0.15;
         }
 
@@ -461,13 +565,7 @@ impl CommentSynthesizer {
         }
 
         // ── Cryptography ──
-        if lower.contains("weak cipher")
-            || lower.contains(" des ")
-            || lower.starts_with("des ")
-            || lower.contains("3des")
-            || lower.contains("rc4")
-            || lower.contains("ecb mode")
-        {
+        if mentions_weak_cipher(lower) {
             confidence += 0.2;
         }
         if lower.contains("insecure tls")
@@ -494,7 +592,7 @@ impl CommentSynthesizer {
         }
 
         // ── Data exposure ──
-        if lower.contains("pii") && lower.contains("log") {
+        if contains_word(lower, "pii") && contains_word(lower, "log") {
             confidence += 0.15;
         }
         if lower.contains("stack trace") && lower.contains("response") {
@@ -517,7 +615,7 @@ impl CommentSynthesizer {
         if lower.contains("mass assignment") {
             confidence += 0.15;
         }
-        if lower.contains("redos") || lower.contains("catastrophic backtracking") {
+        if contains_word(lower, "redos") || lower.contains("catastrophic backtracking") {
             confidence += 0.15;
         }
         if lower.contains("buffer overflow") {
@@ -591,7 +689,7 @@ impl CommentSynthesizer {
         if lower.contains("command injection") || lower.contains("shell injection") {
             tags.push("command-injection".to_string());
         }
-        if lower.contains("xss") || lower.contains("cross-site scripting") {
+        if contains_word(lower, "xss") || lower.contains("cross-site scripting") {
             tags.push("xss".to_string());
         }
         if lower.contains("template injection") || lower.contains("ssti") {
@@ -617,13 +715,13 @@ impl CommentSynthesizer {
         if lower.contains("authorization") || lower.contains("access control") {
             tags.push("authorization".to_string());
         }
-        if lower.contains("csrf") || lower.contains("cross-site request forgery") {
+        if contains_word(lower, "csrf") || lower.contains("cross-site request forgery") {
             tags.push("csrf".to_string());
         }
-        if lower.contains("idor") || lower.contains("insecure direct object") {
+        if contains_word(lower, "idor") || lower.contains("insecure direct object") {
             tags.push("idor".to_string());
         }
-        if lower.contains("jwt") {
+        if contains_word(lower, "jwt") {
             tags.push("jwt".to_string());
         }
         if lower.contains("privilege escalation") {
@@ -668,16 +766,16 @@ impl CommentSynthesizer {
         if lower.contains("deserialization") || lower.contains("pickle") {
             tags.push("deserialization".to_string());
         }
-        if lower.contains("ssrf") || lower.contains("server-side request forgery") {
+        if contains_word(lower, "ssrf") || lower.contains("server-side request forgery") {
             tags.push("ssrf".to_string());
         }
-        if lower.contains("xxe") {
+        if contains_word(lower, "xxe") {
             tags.push("xxe".to_string());
         }
         if lower.contains("open redirect") {
             tags.push("open-redirect".to_string());
         }
-        if lower.contains("cors") {
+        if contains_word(lower, "cors") {
             tags.push("cors".to_string());
         }
 
@@ -702,13 +800,7 @@ impl CommentSynthesizer {
         }
 
         // ── Cryptography tags ──
-        if lower.contains("weak cipher")
-            || lower.contains(" des ")
-            || lower.starts_with("des ")
-            || lower.contains("3des")
-            || lower.contains("rc4")
-            || lower.contains("blowfish")
-        {
+        if mentions_weak_cipher(lower) {
             tags.push("weak-cipher".to_string());
         }
         if lower.contains("ecb") && lower.contains("mode") {
@@ -740,7 +832,7 @@ impl CommentSynthesizer {
         }
 
         // ── Data exposure tags ──
-        if lower.contains("pii") {
+        if contains_word(lower, "pii") {
             tags.push("pii".to_string());
         }
         if lower.contains("stack trace") || lower.contains("verbose error") {
@@ -778,7 +870,7 @@ impl CommentSynthesizer {
         if lower.contains("race condition") || lower.contains("toctou") {
             tags.push("race-condition".to_string());
         }
-        if lower.contains("redos") || lower.contains("catastrophic backtracking") {
+        if contains_word(lower, "redos") || lower.contains("catastrophic backtracking") {
             tags.push("redos".to_string());
         }
         if lower.contains("integer overflow") {
@@ -829,22 +921,7 @@ impl CommentSynthesizer {
         }
 
         // ── CWE / OWASP tags ──
-        // Extract all CWE numbers from content
-        {
-            let mut search_from = 0;
-            while let Some(offset) = lower[search_from..].find("cwe-") {
-                let pos = search_from + offset;
-                let cwe_rest = &lower[pos..];
-                let cwe_tag: String = cwe_rest
-                    .chars()
-                    .take_while(|c| c.is_alphanumeric() || *c == '-')
-                    .collect();
-                if cwe_tag.len() > 4 && !tags.contains(&cwe_tag) {
-                    tags.push(cwe_tag);
-                }
-                search_from = pos + 4; // skip past "cwe-" to find next
-            }
-        }
+        append_cwe_tags(&mut tags, lower);
 
         // ── Performance tags ──
         if lower.contains("n+1") {
@@ -909,10 +986,7 @@ impl CommentSynthesizer {
 
         // Fallback: generate a basic suggestion from the textual suggestion field
         if let Some(suggestion) = &raw.suggestion {
-            let has_action_word = suggestion
-                .split_whitespace()
-                .any(|w| w.eq_ignore_ascii_case("use") || w.eq_ignore_ascii_case("replace"));
-            if has_action_word {
+            if contains_action_word(suggestion) {
                 return Some(CodeSuggestion {
                     original_code: "// Original code would be extracted from context".to_string(),
                     suggested_code: suggestion.clone(),
@@ -1089,6 +1163,26 @@ pub struct RawComment {
 mod tests {
     use super::*;
 
+    fn make_raw_comment(content: &str) -> RawComment {
+        RawComment {
+            file_path: PathBuf::from("src/lib.rs"),
+            line_number: 10,
+            content: content.to_string(),
+            rule_id: None,
+            suggestion: None,
+            severity: None,
+            category: None,
+            confidence: None,
+            fix_effort: None,
+            tags: Vec::new(),
+            code_suggestion: None,
+        }
+    }
+
+    fn synthesize_single(content: &str) -> Comment {
+        CommentSynthesizer::process_raw_comment(make_raw_comment(content)).unwrap()
+    }
+
     #[test]
     fn test_deduplicate_preserves_highest_severity() {
         // Regression: dedup_by keeps the first element of a consecutive pair,
@@ -1166,5 +1260,72 @@ mod tests {
         assert_eq!(Category::Bug.as_str(), "bug");
         assert_eq!(Category::Security.as_str(), "security");
         assert_eq!(Category::BestPractice.as_str(), "bestpractice");
+    }
+
+    #[test]
+    fn test_security_regression_cases_are_classified_and_tagged() {
+        let cases = [
+            (
+                "Running as root in Docker container (CWE-250)",
+                Category::Security,
+                vec!["docker", "root-container", "cwe-250"],
+            ),
+            (
+                "Unsafe deserialization via pickle.load can trigger RCE (CWE-502)",
+                Category::Security,
+                vec!["deserialization", "cwe-502"],
+            ),
+            (
+                "JWT verification is missing and enables auth bypass (CWE-347)",
+                Category::Security,
+                vec!["jwt", "cwe-347"],
+            ),
+        ];
+
+        for (content, expected_category, expected_tags) in cases {
+            let comment = synthesize_single(content);
+            assert_eq!(comment.category, expected_category, "content: {content}");
+            for tag in expected_tags {
+                assert!(
+                    comment.tags.iter().any(|existing| existing == tag),
+                    "missing tag `{tag}` for content `{content}`: {:?}",
+                    comment.tags
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_extract_tags_collects_multiple_cwes() {
+        let comment = synthesize_single(
+            "SQL injection (CWE-89) can combine with XSS (CWE-79) in the same flow",
+        );
+        assert!(comment.tags.iter().any(|tag| tag == "cwe-89"));
+        assert!(comment.tags.iter().any(|tag| tag == "cwe-79"));
+    }
+
+    #[test]
+    fn test_deserialization_does_not_trigger_weak_cipher_tag() {
+        let comment = synthesize_single("Unsafe deserialization via yaml.load on untrusted input");
+        assert!(comment.tags.iter().any(|tag| tag == "deserialization"));
+        assert!(!comment.tags.iter().any(|tag| tag == "weak-cipher"));
+    }
+
+    #[test]
+    fn test_generate_code_suggestion_accepts_more_action_words() {
+        let mut raw = make_raw_comment("Missing null check before dereference");
+        raw.suggestion = Some("Add a guard clause before dereferencing the value".to_string());
+
+        let comment = CommentSynthesizer::process_raw_comment(raw).unwrap();
+        assert!(comment.code_suggestion.is_some());
+    }
+
+    #[test]
+    fn test_generate_code_suggestion_ignores_non_action_words() {
+        let mut raw = make_raw_comment("Suggestion parsing regression");
+        raw.suggestion = Some("Reusable helper already exists for this code path".to_string());
+
+        let comment = CommentSynthesizer::process_raw_comment(raw).unwrap();
+        assert!(comment.code_suggestion.is_none());
     }
 }

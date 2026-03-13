@@ -684,12 +684,8 @@ pub async fn submit_feedback(
     // Capture comment data for convention store before mutating
     let comment_content = comment.content.clone();
     let comment_category = comment.category.to_string();
-    let comment_ext = comment
-        .file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_string();
+    let file_patterns = crate::review::derive_file_patterns(&comment.file_path);
+    let primary_file_pattern = file_patterns.first().map(String::as_str);
     let is_accepted = request.action == "accept";
 
     comment.feedback = Some(request.action);
@@ -711,12 +707,7 @@ pub async fn submit_feedback(
     {
         let config = state.config.read().await;
         let mut feedback_store = crate::review::load_feedback_store(&config);
-        let file_pattern = if comment_ext.is_empty() {
-            None
-        } else {
-            Some(format!("*.{}", comment_ext))
-        };
-        feedback_store.record_feedback(&comment_category, file_pattern.as_deref(), is_accepted);
+        feedback_store.record_feedback_patterns(&comment_category, &file_patterns, is_accepted);
         let _ = crate::review::save_feedback_store(&config.feedback_path, &feedback_store);
     }
 
@@ -736,16 +727,11 @@ pub async fn submit_feedback(
             .and_then(|j| ConventionStore::from_json(j).ok())
             .unwrap_or_default();
         let now = chrono::Utc::now().to_rfc3339();
-        let file_pattern = if comment_ext.is_empty() {
-            None
-        } else {
-            Some(format!("*.{}", comment_ext))
-        };
         cstore.record_feedback(
             &comment_content,
             &comment_category,
             is_accepted,
-            file_pattern.as_deref(),
+            primary_file_pattern,
             &now,
         );
         if let Ok(out_json) = cstore.to_json() {

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use tracing::info;
 
-use super::feedback::FeedbackStore;
+use super::feedback::{derive_file_patterns, FeedbackStore};
 use crate::config;
 use crate::core;
 
@@ -180,7 +180,8 @@ pub fn apply_confidence_threshold(
 
 /// Adjust comment confidence scores based on historical feedback acceptance rates.
 ///
-/// For each comment, looks up the composite key "category|*.ext" first,
+/// For each comment, looks up the most specific composite key
+/// (e.g. `Bug|*.test.ts`) first, then the matching file-pattern bucket,
 /// then falls back to category-only. If enough observations exist,
 /// adjusts confidence: `confidence *= (0.5 + acceptance_rate * 0.5)`.
 /// This maps 0% acceptance → 0.5x, 100% acceptance → 1.0x.
@@ -193,18 +194,20 @@ pub fn apply_feedback_confidence_adjustment(
         .into_iter()
         .map(|mut comment| {
             let category = comment.category.to_string();
-            let ext = comment
-                .file_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| format!("*.{}", e));
+            let file_patterns = derive_file_patterns(&comment.file_path);
 
-            // Try composite key first, then category-only
-            let stats = ext
-                .as_ref()
-                .and_then(|pattern| {
+            // Try the most specific composite key first, then file-pattern-only,
+            // then category-only.
+            let stats = file_patterns
+                .iter()
+                .find_map(|pattern| {
                     let key = format!("{}|{}", category, pattern);
                     feedback.by_category_file_pattern.get(&key)
+                })
+                .or_else(|| {
+                    file_patterns
+                        .iter()
+                        .find_map(|pattern| feedback.by_file_pattern.get(pattern))
                 })
                 .or_else(|| feedback.by_category.get(&category));
 
@@ -644,5 +647,29 @@ mod tests {
         )];
         let result = apply_feedback_confidence_adjustment(comments, &feedback, 5);
         assert!(result[0].confidence <= 1.0);
+    }
+
+    #[test]
+    fn feedback_confidence_uses_file_pattern_fallback() {
+        let mut feedback = FeedbackStore::default();
+        let patterns = vec!["*.test.ts".to_string(), "*.ts".to_string()];
+        for _ in 0..10 {
+            feedback.record_feedback_patterns("Bug", &patterns, false);
+        }
+
+        let mut comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.8,
+        );
+        comment.file_path = PathBuf::from("web/src/Settings.test.ts");
+
+        let result = apply_feedback_confidence_adjustment(vec![comment], &feedback, 5);
+        assert!(
+            (result[0].confidence - 0.4).abs() < 0.01,
+            "Expected file-pattern fallback to halve confidence, got {}",
+            result[0].confidence
+        );
     }
 }

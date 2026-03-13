@@ -220,16 +220,12 @@ pub async fn feedback_command(
         let now = chrono::Utc::now().to_rfc3339();
         let is_accepted = action == "accept";
         for comment in &comments {
-            let ext = comment
-                .file_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| format!("*.{}", e));
+            let file_patterns = review::derive_file_patterns(&comment.file_path);
             cstore.record_feedback(
                 &comment.content,
                 &comment.category.to_string(),
                 is_accepted,
-                ext.as_deref(),
+                file_patterns.first().map(String::as_str),
                 &now,
             );
         }
@@ -253,6 +249,8 @@ fn apply_feedback_accept(store: &mut review::FeedbackStore, comments: &[core::Co
             let key = review::classify_comment_type(comment).as_str().to_string();
             let stats = store.by_comment_type.entry(key).or_default();
             stats.accepted = stats.accepted.saturating_add(1);
+            let file_patterns = review::derive_file_patterns(&comment.file_path);
+            store.record_feedback_patterns(&comment.category.to_string(), &file_patterns, true);
         }
         store.suppress.remove(&comment.id);
     }
@@ -268,6 +266,8 @@ fn apply_feedback_reject(store: &mut review::FeedbackStore, comments: &[core::Co
             let key = review::classify_comment_type(comment).as_str().to_string();
             let stats = store.by_comment_type.entry(key).or_default();
             stats.rejected = stats.rejected.saturating_add(1);
+            let file_patterns = review::derive_file_patterns(&comment.file_path);
+            store.record_feedback_patterns(&comment.category.to_string(), &file_patterns, false);
         }
         store.accept.remove(&comment.id);
     }
@@ -565,5 +565,8 @@ mod tests {
             stats.accepted, 1,
             "Stats should only count 1 acceptance, not 2 (double-counting bug)"
         );
+        assert_eq!(store.by_category["Bug"].accepted, 1);
+        assert_eq!(store.by_file_pattern["*.rs"].accepted, 1);
+        assert_eq!(store.by_category_file_pattern["Bug|*.rs"].accepted, 1);
     }
 }

@@ -55,34 +55,77 @@ pub struct FeedbackStore {
     pub by_category_file_pattern: HashMap<String, FeedbackPatternStats>,
 }
 
+pub fn derive_file_patterns(path: &Path) -> Vec<String> {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Vec::new();
+    };
+
+    let parts: Vec<&str> = file_name.split('.').collect();
+    if parts.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut patterns = Vec::new();
+    for start in 1..parts.len() {
+        let pattern = format!("*.{}", parts[start..].join("."));
+        if !patterns.contains(&pattern) {
+            patterns.push(pattern);
+        }
+    }
+
+    patterns
+}
+
+fn update_pattern_stats(stats: &mut FeedbackPatternStats, accepted: bool) {
+    if accepted {
+        stats.accepted += 1;
+    } else {
+        stats.rejected += 1;
+    }
+}
+
 impl FeedbackStore {
     /// Record a feedback event for enhanced pattern tracking.
+    #[cfg(test)]
     pub fn record_feedback(&mut self, category: &str, file_pattern: Option<&str>, accepted: bool) {
+        let patterns = file_pattern
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        self.record_feedback_patterns(category, &patterns, accepted);
+    }
+
+    /// Record a feedback event across one or more file-pattern buckets.
+    pub fn record_feedback_patterns<S>(
+        &mut self,
+        category: &str,
+        file_patterns: &[S],
+        accepted: bool,
+    ) where
+        S: AsRef<str>,
+    {
         // Update by_category
         let cat_stats = self.by_category.entry(category.to_string()).or_default();
-        if accepted {
-            cat_stats.accepted += 1;
-        } else {
-            cat_stats.rejected += 1;
-        }
+        update_pattern_stats(cat_stats, accepted);
 
         // Update by_file_pattern
-        if let Some(pattern) = file_pattern {
-            let fp_stats = self.by_file_pattern.entry(pattern.to_string()).or_default();
-            if accepted {
-                fp_stats.accepted += 1;
-            } else {
-                fp_stats.rejected += 1;
+        let mut unique_patterns = HashSet::new();
+        for pattern in file_patterns {
+            let pattern = pattern.as_ref().trim();
+            if pattern.is_empty() {
+                continue;
             }
+            unique_patterns.insert(pattern.to_string());
+        }
+
+        for pattern in unique_patterns {
+            let fp_stats = self.by_file_pattern.entry(pattern.clone()).or_default();
+            update_pattern_stats(fp_stats, accepted);
 
             // Update composite key
             let composite = format!("{}|{}", category, pattern);
             let comp_stats = self.by_category_file_pattern.entry(composite).or_default();
-            if accepted {
-                comp_stats.accepted += 1;
-            } else {
-                comp_stats.rejected += 1;
-            }
+            update_pattern_stats(comp_stats, accepted);
         }
     }
 }
@@ -178,6 +221,12 @@ mod tests {
     }
 
     #[test]
+    fn derive_file_patterns_prefers_specific_suffixes() {
+        let patterns = derive_file_patterns(Path::new("web/src/Settings.test.ts"));
+        assert_eq!(patterns, vec!["*.test.ts", "*.ts"]);
+    }
+
+    #[test]
     fn feedback_store_roundtrip_json() {
         let mut store = FeedbackStore::default();
         store.suppress.insert("c1".to_string());
@@ -269,6 +318,21 @@ mod tests {
         assert_eq!(store.by_file_pattern["*.rs"].rejected, 1);
         assert_eq!(store.by_category_file_pattern["Security|*.rs"].accepted, 1);
         assert_eq!(store.by_category_file_pattern["Security|*.rs"].rejected, 1);
+    }
+
+    #[test]
+    fn record_feedback_with_multiple_file_patterns() {
+        let mut store = FeedbackStore::default();
+        let patterns = vec!["*.test.ts".to_string(), "*.ts".to_string()];
+
+        store.record_feedback_patterns("Bug", &patterns, false);
+
+        assert_eq!(store.by_category["Bug"].accepted, 0);
+        assert_eq!(store.by_category["Bug"].rejected, 1);
+        assert_eq!(store.by_file_pattern["*.test.ts"].rejected, 1);
+        assert_eq!(store.by_file_pattern["*.ts"].rejected, 1);
+        assert_eq!(store.by_category_file_pattern["Bug|*.test.ts"].rejected, 1);
+        assert_eq!(store.by_category_file_pattern["Bug|*.ts"].rejected, 1);
     }
 
     #[test]

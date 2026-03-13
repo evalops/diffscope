@@ -67,6 +67,18 @@ static RE_TERRAFORM: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\b([a-z0-9]{14}\.atlasv1\.[a-z0-9\-_=]{60,70})\b").unwrap());
 static RE_AZURE_AD: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"([a-zA-Z0-9_~.]{3}\dQ~[a-zA-Z0-9_~.\-]{31,34})").unwrap());
+static RE_DATADOG_API: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"(?i)(?:dd_?api_?key|datadog[\w\-]{0,20}api[\w\-]{0,20}key)["']?\s*(?:=|:|=>)\s*["']?([a-f0-9]{32})["']?"#,
+    )
+    .unwrap()
+});
+static RE_DATADOG_APP: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"(?i)(?:dd_?app_?key|datadog[\w\-]{0,20}app(?:lication)?[\w\-]{0,20}key)["']?\s*(?:=|:|=>)\s*["']?([a-f0-9]{40})["']?"#,
+    )
+    .unwrap()
+});
 static RE_SENDGRID: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\b(SG\.[a-z0-9=_\-\.]{66})\b").unwrap());
 static RE_TWILIO: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(SK[0-9a-fA-F]{32})\b").unwrap());
@@ -215,9 +227,21 @@ fn patterns() -> &'static [SecretPattern] {
                 min_entropy: 0.0,
             },
             SecretPattern {
-                rule_id: "sec.secrets.hardcoded",
+                rule_id: "sec.secrets.azure",
                 description: "Azure AD client secret",
                 regex: &RE_AZURE_AD,
+                min_entropy: 3.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.datadog",
+                description: "Datadog API key",
+                regex: &RE_DATADOG_API,
+                min_entropy: 3.0,
+            },
+            SecretPattern {
+                rule_id: "sec.secrets.datadog",
+                description: "Datadog application key",
+                regex: &RE_DATADOG_APP,
                 min_entropy: 3.0,
             },
             SecretPattern {
@@ -407,6 +431,43 @@ fn redact(value: &str) -> String {
     format!("{}...{}", &value[..prefix_end], &value[suffix_start..])
 }
 
+#[derive(Clone, Copy)]
+struct SecretMatch {
+    rule_id: &'static str,
+    description: &'static str,
+    start: usize,
+    end: usize,
+}
+
+fn redact_ranges(line: &str, matches: &[SecretMatch]) -> String {
+    if matches.is_empty() {
+        return line.to_string();
+    }
+
+    let mut ranges: Vec<(usize, usize)> = matches.iter().map(|m| (m.start, m.end)).collect();
+    ranges.sort_by_key(|(start, _)| *start);
+
+    let mut merged_ranges: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in ranges {
+        match merged_ranges.last_mut() {
+            Some((_, last_end)) if start <= *last_end => {
+                *last_end = (*last_end).max(end);
+            }
+            _ => merged_ranges.push((start, end)),
+        }
+    }
+
+    let mut redacted = String::with_capacity(line.len());
+    let mut cursor = 0;
+    for (start, end) in merged_ranges {
+        redacted.push_str(&line[cursor..start]);
+        redacted.push_str(&redact(&line[start..end]));
+        cursor = end;
+    }
+    redacted.push_str(&line[cursor..]);
+    redacted
+}
+
 pub struct SecretScanner;
 
 impl SecretScanner {
@@ -416,7 +477,7 @@ impl SecretScanner {
 
     /// Scan a single line for secrets. Returns findings.
     pub fn scan_line(line: &str, line_number: usize) -> Vec<SecretFinding> {
-        let mut findings = Vec::new();
+        let mut matches = Vec::new();
 
         for pattern in patterns() {
             let re: &Regex = pattern.regex;
@@ -435,16 +496,29 @@ impl SecretScanner {
                     continue;
                 }
 
-                // Redact the secret in the reported line
-                let redacted_line = line.replace(value, &redact(value));
-
-                findings.push(SecretFinding {
+                matches.push(SecretMatch {
                     rule_id: pattern.rule_id,
                     description: pattern.description,
-                    line_number,
-                    line_content_redacted: redacted_line.trim().to_string(),
+                    start: matched.start(),
+                    end: matched.end(),
                 });
             }
+        }
+
+        if matches.is_empty() {
+            return Vec::new();
+        }
+
+        let redacted_line = redact_ranges(line, &matches).trim().to_string();
+
+        let mut findings = Vec::with_capacity(matches.len());
+        for secret_match in matches {
+            findings.push(SecretFinding {
+                rule_id: secret_match.rule_id,
+                description: secret_match.description,
+                line_number,
+                line_content_redacted: redacted_line.clone(),
+            });
         }
 
         findings
@@ -620,6 +694,23 @@ mod tests {
     }
 
     #[test]
+    fn test_detects_azure_client_secret_with_specific_rule_id() {
+        let findings = SecretScanner::scan_line(
+            "AZURE_CLIENT_SECRET=abc1Q~AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+            1,
+        );
+        assert!(!findings.is_empty(), "Should detect Azure client secret");
+        assert_eq!(findings[0].rule_id, "sec.secrets.azure");
+    }
+
+    #[test]
+    fn test_detects_datadog_api_key() {
+        let findings = SecretScanner::scan_line("DD_API_KEY=0123456789abcdef0123456789abcdef", 1);
+        assert!(!findings.is_empty(), "Should detect Datadog API key");
+        assert_eq!(findings[0].rule_id, "sec.secrets.datadog");
+    }
+
+    #[test]
     fn test_shannon_entropy() {
         // Low entropy (repeated chars)
         assert!(shannon_entropy("aaaaaaaaaa") < 1.0);
@@ -646,6 +737,31 @@ mod tests {
         // Must not panic on multi-byte UTF-8 characters
         let redacted = redact("pässwörd_töken_sëcret_välue_here");
         assert!(redacted.contains("..."));
+    }
+
+    #[test]
+    fn test_redacts_all_detected_secrets_on_same_line() {
+        let github_token = fake_token("ghp_", 'A', 40);
+        let slack_webhook = "https://hooks.slack.com/services/TAAAAAAAAA/BAAAAAAAAA/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let line = format!(
+            "GITHUB_TOKEN={} SLACK_WEBHOOK={}",
+            github_token, slack_webhook
+        );
+
+        let findings = SecretScanner::scan_line(&line, 1);
+        assert!(findings.len() >= 2, "Should detect both secrets");
+        for finding in findings {
+            assert!(
+                !finding.line_content_redacted.contains(&github_token),
+                "GitHub token should be redacted: {}",
+                finding.line_content_redacted
+            );
+            assert!(
+                !finding.line_content_redacted.contains(slack_webhook),
+                "Slack webhook should be redacted: {}",
+                finding.line_content_redacted
+            );
+        }
     }
 
     #[tokio::test]

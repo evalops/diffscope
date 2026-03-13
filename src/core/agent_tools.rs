@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -612,19 +613,34 @@ impl ReviewTool for GitBlameTool {
 
         // git2::Repository is not Send, so we must open it inside spawn_blocking
         let result = tokio::task::spawn_blocking(move || -> Result<String> {
+            // Read file first so we can validate and clamp the requested range.
+            let content = std::fs::read_to_string(repo_path.join(&file_path_owned))?;
+            let line_count = content.lines().count();
+
+            if line_count == 0 {
+                return Ok("No blame data available for the specified range.".to_string());
+            }
+
+            let start = start_line.unwrap_or(1).max(1);
+            let end = end_line.unwrap_or(line_count).min(line_count);
+            if start > end {
+                return Ok("No blame data available for the specified range.".to_string());
+            }
+
             let repo = git2::Repository::open(&repo_path)?;
-            let blame = match repo.blame_file(std::path::Path::new(&file_path_owned), None) {
+            let mut blame_options = git2::BlameOptions::new();
+            blame_options.min_line(start);
+            blame_options.max_line(end);
+
+            let blame = match repo.blame_file(
+                std::path::Path::new(&file_path_owned),
+                Some(&mut blame_options),
+            ) {
                 Ok(b) => b,
                 Err(e) => return Ok(format!("Error: could not blame file: {}", e)),
             };
 
-            // Read file to count lines
-            let content = std::fs::read_to_string(repo_path.join(&file_path_owned))?;
-            let line_count = content.lines().count();
-
-            let start = start_line.unwrap_or(1).max(1);
-            let end = end_line.unwrap_or(line_count).min(line_count);
-
+            let mut commit_message_cache: HashMap<git2::Oid, String> = HashMap::new();
             let mut output = String::new();
             for line_num in start..=end {
                 if let Some(hunk) = blame.get_line(line_num) {
@@ -639,14 +655,18 @@ impl ReviewTool for GitBlameTool {
                         .unwrap_or_else(|| "unknown".to_string());
 
                     // Get commit message (first line only)
-                    let message = repo
-                        .find_commit(oid)
-                        .ok()
-                        .and_then(|c| {
-                            c.message()
-                                .map(|m| m.lines().next().unwrap_or("").to_string())
+                    let message = commit_message_cache
+                        .entry(oid)
+                        .or_insert_with(|| {
+                            repo.find_commit(oid)
+                                .ok()
+                                .and_then(|c| {
+                                    c.message()
+                                        .map(|m| m.lines().next().unwrap_or("").to_string())
+                                })
+                                .unwrap_or_default()
                         })
-                        .unwrap_or_default();
+                        .clone();
 
                     output.push_str(&format!(
                         "L{}: {} ({}) [{}] {}\n",
