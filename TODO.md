@@ -108,7 +108,7 @@
 - [x] `src/review/pipeline/postprocess/dedup.rs`: split duplicate detection, scoring, and merge/rewrite behavior.
 - [x] `src/review/pipeline/postprocess/feedback.rs`: separate store lookups from suppression/annotation decisions.
 - [x] `src/review/pipeline/execution/dispatcher.rs`: carve request scheduling, concurrency control, and result collection.
-- [ ] `src/review/pipeline.rs`: keep trimming top-level orchestration as helpers mature.
+- [x] `src/review/pipeline.rs`: keep trimming top-level orchestration as helpers mature.
 
 ### Review helper backlog
 
