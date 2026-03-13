@@ -103,7 +103,7 @@
 - [x] `src/review/pipeline/guidance.rs`: carve guidance assembly, repo-support guidance, and prompt-facing formatting.
 - [x] `src/review/pipeline/session.rs`: split session construction from runtime state transitions.
 - [x] `src/review/pipeline/services.rs`: separate service wiring from optional feature initialization.
-- [ ] `src/review/pipeline/file_context/sources.rs`: split repo sources, symbol sources, and supplemental context sources.
+- [x] `src/review/pipeline/file_context/sources.rs`: split repo sources, symbol sources, and supplemental context sources.
 - [ ] `src/review/pipeline/comments.rs`: separate comment assembly, filtering, and metadata stamping.
 - [ ] `src/review/pipeline/postprocess/dedup.rs`: split duplicate detection, scoring, and merge/rewrite behavior.
 - [ ] `src/review/pipeline/postprocess/feedback.rs`: separate store lookups from suppression/annotation decisions.
