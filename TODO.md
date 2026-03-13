@@ -10,19 +10,14 @@
 
 ## Immediate Queue
 
-- [ ] `src/review/triage.rs`
-  - Split file-kind heuristics (`lock`, `generated`) from change-shape heuristics.
-  - Split whitespace-only detection from comment-only detection.
-  - Isolate `TriageResult` reporting helpers from diff classification.
-  - Pull shared diff-line collection helpers out of `triage_diff()`.
-
-## Review Backlog
-
 - [ ] `src/review/compression.rs`
   - Split token estimation and skipped-summary helpers from compression stages.
   - Split deletion-only compression and clipping primitives from stage selection.
   - Split stage 2 compressed selection from stage 4 multi-call batching.
   - Isolate per-stage budget accounting and file-placement helpers.
+
+## Review Backlog
+
 - [ ] `src/review/verification/parser.rs`
   - Split response schema construction from response parsing.
   - Split fenced-JSON extraction / JSON decoding from regex fallback parsing.
