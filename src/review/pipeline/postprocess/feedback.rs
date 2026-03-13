@@ -1,9 +1,15 @@
+#[path = "feedback/annotate.rs"]
+mod annotate;
+#[path = "feedback/lookup.rs"]
+mod lookup;
+
 use crate::adapters;
 use crate::config;
 use crate::core;
 
-use super::super::super::feedback::derive_file_patterns;
 use super::super::comments::is_analyzer_comment;
+use annotate::adjust_comment_from_feedback;
+use lookup::lookup_semantic_feedback_observations;
 
 pub(super) async fn apply_semantic_feedback_adjustment(
     comments: Vec<core::Comment>,
@@ -34,51 +40,9 @@ pub(super) async fn apply_semantic_feedback_adjustment(
                 return comment;
             }
 
-            let file_patterns = derive_file_patterns(&comment.file_path);
-            let matches = core::find_similar_feedback_examples(
-                store,
-                &embedding,
-                comment.category.as_str(),
-                &file_patterns,
-                config.semantic_feedback_similarity,
-                config.semantic_feedback_max_neighbors,
-            );
-            let accepted = matches
-                .iter()
-                .filter(|(example, _)| example.accepted)
-                .count();
-            let rejected = matches
-                .iter()
-                .filter(|(example, _)| !example.accepted)
-                .count();
-            let observations = accepted + rejected;
-
-            if observations < config.semantic_feedback_min_examples {
-                return comment;
-            }
-
-            if rejected > accepted {
-                let delta = ((rejected - accepted) as f32 * 0.15).min(0.45);
-                comment.confidence = (comment.confidence - delta).clamp(0.0, 1.0);
-                if !comment
-                    .tags
-                    .iter()
-                    .any(|tag| tag == "semantic-feedback:rejected")
-                {
-                    comment.tags.push("semantic-feedback:rejected".to_string());
-                }
-            } else if accepted > rejected {
-                let delta = ((accepted - rejected) as f32 * 0.10).min(0.25);
-                comment.confidence = (comment.confidence + delta).clamp(0.0, 1.0);
-                if !comment
-                    .tags
-                    .iter()
-                    .any(|tag| tag == "semantic-feedback:accepted")
-                {
-                    comment.tags.push("semantic-feedback:accepted".to_string());
-                }
-            }
-
+            let observations =
+                lookup_semantic_feedback_observations(store, &embedding, &comment, config);
+            adjust_comment_from_feedback(&mut comment, observations, config);
             comment
         })
         .collect()
