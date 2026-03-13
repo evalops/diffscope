@@ -560,7 +560,9 @@ impl SecretScanner {
             let re: &Regex = pattern.regex;
             for caps in re.captures_iter(line) {
                 // Use the first capture group if it exists, otherwise the full match
-                let matched = caps.get(1).unwrap_or_else(|| caps.get(0).unwrap());
+                let Some(matched) = caps.get(1).or_else(|| caps.get(0)) else {
+                    continue;
+                };
                 let value = matched.as_str();
 
                 // False positive checks
