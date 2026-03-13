@@ -1,13 +1,20 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
+#[path = "command/interactive.rs"]
+mod interactive;
+#[path = "command/single.rs"]
+mod single;
+#[path = "command/turn.rs"]
+mod turn;
+
 use crate::adapters;
 use crate::config;
 
-use super::prompt::answer_discussion_question;
 use super::selection::{load_discussion_comments, select_discussion_comment};
-use super::thread::{load_discussion_thread, read_follow_up_question, save_discussion_thread};
-use super::types::DiscussionTurn;
+use super::thread::load_discussion_thread;
+use interactive::run_interactive_discussion;
+use single::run_single_discussion;
 
 pub async fn discuss_command(
     config: config::Config,
@@ -25,45 +32,28 @@ pub async fn discuss_command(
     let model_config = config.to_model_config();
     let adapter = adapters::llm::create_adapter(&model_config)?;
 
-    let mut next_question = question;
-    if next_question.is_none() && !interactive {
+    if question.is_none() && !interactive {
         anyhow::bail!("Provide --question or use --interactive");
     }
 
-    loop {
-        let current_question = if let Some(question) = next_question.take() {
-            question
-        } else if interactive {
-            match read_follow_up_question()? {
-                Some(question) => question,
-                None => break,
-            }
-        } else {
-            break;
-        };
-
-        let answer =
-            answer_discussion_question(adapter.as_ref(), &selected, &thread, &current_question)
-                .await?;
-
-        println!("{}", answer.trim());
-
-        thread.turns.push(DiscussionTurn {
-            role: "user".to_string(),
-            message: current_question,
-        });
-        thread.turns.push(DiscussionTurn {
-            role: "assistant".to_string(),
-            message: answer,
-        });
-
-        if let Some(path) = &thread_path {
-            save_discussion_thread(path, &thread)?;
-        }
-
-        if !interactive {
-            break;
-        }
+    if interactive {
+        run_interactive_discussion(
+            adapter.as_ref(),
+            &selected,
+            &mut thread,
+            question,
+            thread_path.as_deref(),
+        )
+        .await?;
+    } else if let Some(question) = question {
+        run_single_discussion(
+            adapter.as_ref(),
+            &selected,
+            &mut thread,
+            question,
+            thread_path.as_deref(),
+        )
+        .await?;
     }
 
     Ok(())
