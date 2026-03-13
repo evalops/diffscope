@@ -1,51 +1,14 @@
-use once_cell::sync::Lazy;
-use regex::Regex;
-use std::collections::HashSet;
+#[path = "symbols/collect.rs"]
+mod collect;
+#[path = "symbols/patterns.rs"]
+mod patterns;
 
-use crate::core;
-
-pub fn extract_symbols_from_diff(diff: &core::UnifiedDiff) -> Vec<String> {
-    let mut symbols = Vec::new();
-    let mut seen = HashSet::new();
-    static SYMBOL_REGEX: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"\b([A-Z][a-zA-Z0-9_]*|[a-z][a-zA-Z0-9_]*)\s*\(").unwrap());
-    static CLASS_REGEX: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"\b(class|struct|interface|enum)\s+([A-Z][a-zA-Z0-9_]*)").unwrap()
-    });
-
-    for hunk in &diff.hunks {
-        for line in &hunk.changes {
-            if matches!(
-                line.change_type,
-                core::diff_parser::ChangeType::Added | core::diff_parser::ChangeType::Removed
-            ) {
-                for capture in SYMBOL_REGEX.captures_iter(&line.content) {
-                    if let Some(symbol) = capture.get(1) {
-                        let symbol_str = symbol.as_str().to_string();
-                        if symbol_str.len() > 2 && seen.insert(symbol_str.clone()) {
-                            symbols.push(symbol_str);
-                        }
-                    }
-                }
-
-                for capture in CLASS_REGEX.captures_iter(&line.content) {
-                    if let Some(class_name) = capture.get(2) {
-                        let class_str = class_name.as_str().to_string();
-                        if seen.insert(class_str.clone()) {
-                            symbols.push(class_str);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    symbols
-}
+pub use collect::extract_symbols_from_diff;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core;
     use std::path::PathBuf;
 
     #[test]

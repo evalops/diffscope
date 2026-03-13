@@ -98,7 +98,7 @@
 - [x] `src/review/pipeline/execution/responses/processing.rs`: split raw response normalization, comment extraction, and merge logic.
 - [x] `src/review/pipeline/execution/responses/validation.rs`: separate schema validation from per-comment sanitization.
 - [x] `src/review/pipeline/prepare/runner.rs`: split per-diff orchestration, pre-analysis/triage decisions, and progress updates.
-- [ ] `src/review/pipeline/context/symbols.rs`: split symbol search, snippet selection, and fallback behavior.
+- [x] `src/review/pipeline/context/symbols.rs`: split symbol search, snippet selection, and fallback behavior.
 - [ ] `src/review/pipeline/context/related.rs`: separate related-file discovery from ranking/selection.
 - [ ] `src/review/pipeline/guidance.rs`: carve guidance assembly, repo-support guidance, and prompt-facing formatting.
 - [ ] `src/review/pipeline/session.rs`: split session construction from runtime state transitions.
