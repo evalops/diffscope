@@ -7,6 +7,12 @@ use crate::core::eval_benchmarks::{
 
 use super::super::{EvalFixtureResult, EvalSuiteResult};
 
+pub(in super::super) struct EvalBenchmarkBreakdowns {
+    pub(in super::super) by_category: HashMap<String, BenchmarkAggregateMetrics>,
+    pub(in super::super) by_language: HashMap<String, BenchmarkAggregateMetrics>,
+    pub(in super::super) by_difficulty: HashMap<String, BenchmarkAggregateMetrics>,
+}
+
 pub(in super::super) fn build_suite_results(results: &[EvalFixtureResult]) -> Vec<EvalSuiteResult> {
     let mut grouped: HashMap<String, Vec<&EvalFixtureResult>> = HashMap::new();
     for result in results {
@@ -85,9 +91,88 @@ pub(in super::super) fn collect_suite_threshold_failures(
     failures
 }
 
+pub(in super::super) fn build_benchmark_breakdowns(
+    results: &[EvalFixtureResult],
+) -> EvalBenchmarkBreakdowns {
+    EvalBenchmarkBreakdowns {
+        by_category: aggregate_breakdown(results, |result| {
+            result
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.category.clone())
+        }),
+        by_language: aggregate_breakdown(results, |result| {
+            result
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.language.clone())
+        }),
+        by_difficulty: aggregate_breakdown(results, |result| {
+            result
+                .difficulty
+                .as_ref()
+                .map(|difficulty| difficulty_label(difficulty).to_string())
+        }),
+    }
+}
+
+fn aggregate_breakdown<F>(
+    results: &[EvalFixtureResult],
+    key_fn: F,
+) -> HashMap<String, BenchmarkAggregateMetrics>
+where
+    F: Fn(&EvalFixtureResult) -> Option<String>,
+{
+    let mut grouped: HashMap<String, Vec<(&crate::core::eval_benchmarks::FixtureResult, f32)>> =
+        HashMap::new();
+
+    for result in results {
+        let Some(metrics) = result.benchmark_metrics.as_ref() else {
+            continue;
+        };
+        let Some(key) = key_fn(result) else {
+            continue;
+        };
+        let weight = result
+            .difficulty
+            .as_ref()
+            .map(Difficulty::weight)
+            .unwrap_or(1.0);
+        grouped.entry(key).or_default().push((metrics, weight));
+    }
+
+    let mut aggregates = HashMap::new();
+    for (key, grouped_results) in grouped {
+        let fixture_results = grouped_results
+            .iter()
+            .map(|(result, _)| *result)
+            .collect::<Vec<_>>();
+        let weights = grouped_results
+            .iter()
+            .map(|(_, weight)| *weight)
+            .collect::<Vec<_>>();
+        aggregates.insert(
+            key,
+            BenchmarkAggregateMetrics::compute(&fixture_results, Some(&weights)),
+        );
+    }
+
+    aggregates
+}
+
+fn difficulty_label(difficulty: &Difficulty) -> &'static str {
+    match difficulty {
+        Difficulty::Easy => "easy",
+        Difficulty::Medium => "medium",
+        Difficulty::Hard => "hard",
+        Difficulty::Expert => "expert",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::eval::EvalFixtureMetadata;
     use crate::core::eval_benchmarks::{BenchmarkThresholds, Difficulty, FixtureResult};
 
     #[test]
@@ -119,6 +204,7 @@ mod tests {
                 min_weighted_score: 0.95,
             }),
             difficulty: Some(Difficulty::Hard),
+            metadata: None,
             rule_metrics: vec![],
             rule_summary: None,
             failures: vec!["missing finding".to_string()],
@@ -130,5 +216,75 @@ mod tests {
         assert_eq!(suites[0].suite, "community");
         assert!(!suites[0].threshold_pass);
         assert!(!suites[0].threshold_failures.is_empty());
+    }
+
+    #[test]
+    fn test_build_benchmark_breakdowns_groups_by_metadata() {
+        let results = vec![
+            EvalFixtureResult {
+                fixture: "suite/a".to_string(),
+                suite: Some("suite".to_string()),
+                passed: true,
+                total_comments: 1,
+                required_matches: 1,
+                required_total: 1,
+                benchmark_metrics: Some(FixtureResult::compute("suite/a", 1, 0, 1, 0, 0)),
+                suite_thresholds: None,
+                difficulty: Some(Difficulty::Hard),
+                metadata: Some(EvalFixtureMetadata {
+                    category: Some("security".to_string()),
+                    language: Some("rust".to_string()),
+                    source: None,
+                    description: None,
+                }),
+                rule_metrics: vec![],
+                rule_summary: None,
+                failures: vec![],
+            },
+            EvalFixtureResult {
+                fixture: "suite/b".to_string(),
+                suite: Some("suite".to_string()),
+                passed: true,
+                total_comments: 1,
+                required_matches: 1,
+                required_total: 1,
+                benchmark_metrics: Some(FixtureResult::compute("suite/b", 1, 0, 1, 0, 0)),
+                suite_thresholds: None,
+                difficulty: Some(Difficulty::Medium),
+                metadata: Some(EvalFixtureMetadata {
+                    category: Some("performance".to_string()),
+                    language: Some("python".to_string()),
+                    source: None,
+                    description: None,
+                }),
+                rule_metrics: vec![],
+                rule_summary: None,
+                failures: vec![],
+            },
+        ];
+
+        let breakdowns = build_benchmark_breakdowns(&results);
+
+        assert_eq!(
+            breakdowns
+                .by_category
+                .get("security")
+                .map(|metrics| metrics.fixture_count),
+            Some(1)
+        );
+        assert_eq!(
+            breakdowns
+                .by_language
+                .get("python")
+                .map(|metrics| metrics.fixture_count),
+            Some(1)
+        );
+        assert_eq!(
+            breakdowns
+                .by_difficulty
+                .get("hard")
+                .map(|metrics| metrics.fixture_count),
+            Some(1)
+        );
     }
 }

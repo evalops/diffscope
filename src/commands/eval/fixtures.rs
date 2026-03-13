@@ -47,6 +47,7 @@ mod tests {
                 language: "python".to_string(),
                 difficulty: Difficulty::Easy,
                 diff_content: "diff --git a/app.py b/app.py".to_string(),
+                repo_path: Some("fixtures_repo".to_string()),
                 expected_findings: vec![ExpectedFinding {
                     description: "detect sql injection".to_string(),
                     severity: Some("error".to_string()),
@@ -54,13 +55,21 @@ mod tests {
                     file_pattern: Some("app.py".to_string()),
                     line_hint: Some(12),
                     contains: Some("sql injection".to_string()),
+                    contains_any: vec!["unsafe sql".to_string()],
+                    tags_any: vec!["sql-injection".to_string()],
+                    confidence_at_least: Some(0.7),
+                    confidence_at_most: None,
+                    fix_effort: Some("medium".to_string()),
                     rule_id: Some("sec.sql.injection".to_string()),
                 }],
                 negative_findings: vec![NegativeFinding {
                     description: "no false positive on sanitizer".to_string(),
                     file_pattern: Some("app.py".to_string()),
                     contains: Some("sanitized".to_string()),
+                    contains_any: vec!["escaped".to_string()],
                 }],
+                min_total: Some(1),
+                max_total: Some(5),
                 description: None,
                 source: None,
             }],
@@ -80,10 +89,25 @@ mod tests {
             fixture.fixture.diff.as_deref(),
             Some("diff --git a/app.py b/app.py")
         );
+        assert_eq!(
+            fixture.fixture.repo_path,
+            Some(std::path::PathBuf::from("fixtures_repo"))
+        );
         assert_eq!(fixture.fixture.expect.must_find.len(), 1);
         assert_eq!(fixture.fixture.expect.must_not_find.len(), 1);
         assert!(fixture.fixture.expect.must_find[0].require_rule_id);
+        assert_eq!(fixture.fixture.expect.must_find[0].contains_any.len(), 1);
+        assert_eq!(fixture.fixture.expect.must_find[0].tags_any.len(), 1);
+        assert_eq!(fixture.fixture.expect.min_total, Some(1));
+        assert_eq!(fixture.fixture.expect.max_total, Some(5));
         assert_eq!(fixture.difficulty.as_ref(), Some(&Difficulty::Easy));
+        assert_eq!(
+            fixture
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.category.as_deref()),
+            Some("security")
+        );
         assert_eq!(
             fixture.fixture.expect.must_find[0].rule_id.as_deref(),
             Some("sec.sql.injection")
@@ -153,8 +177,11 @@ expect:
                 language: "rust".to_string(),
                 difficulty: Difficulty::Medium,
                 diff_content: "diff --git a/lib.rs b/lib.rs".to_string(),
+                repo_path: None,
                 expected_findings: vec![],
                 negative_findings: vec![],
+                min_total: None,
+                max_total: None,
                 description: None,
                 source: None,
             }],

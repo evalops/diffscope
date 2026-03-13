@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::core::eval_benchmarks::{BenchmarkThresholds, Difficulty};
 
-use super::super::super::{EvalFixture, LoadedEvalFixture};
+use super::super::super::{EvalFixture, EvalFixtureMetadata, LoadedEvalFixture};
 use diff::load_diff_content;
 use repo::resolve_repo_path;
 
@@ -18,6 +18,7 @@ pub(super) struct PreparedFixtureExecution {
     pub(super) suite_name: Option<String>,
     pub(super) suite_thresholds: Option<BenchmarkThresholds>,
     pub(super) difficulty: Option<Difficulty>,
+    pub(super) metadata: Option<EvalFixtureMetadata>,
     pub(super) diff_content: String,
     pub(super) repo_path: PathBuf,
 }
@@ -31,6 +32,7 @@ pub(super) fn prepare_fixture_execution(
         suite_name,
         suite_thresholds,
         difficulty,
+        metadata,
     } = loaded_fixture;
     let fixture_name = fixture.name.clone().unwrap_or_else(|| {
         fixture_path
@@ -52,6 +54,7 @@ pub(super) fn prepare_fixture_execution(
         suite_name,
         suite_thresholds,
         difficulty,
+        metadata,
         diff_content,
         repo_path,
     })

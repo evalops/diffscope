@@ -69,6 +69,7 @@ pub(super) fn build_fixture_result(
         benchmark_metrics,
         suite_thresholds: prepared.suite_thresholds,
         difficulty: prepared.difficulty,
+        metadata: prepared.metadata,
         rule_metrics: match_summary.rule_metrics,
         rule_summary: match_summary.rule_summary,
         failures,

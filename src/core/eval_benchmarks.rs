@@ -51,8 +51,14 @@ pub struct BenchmarkFixture {
     pub language: String,
     pub difficulty: Difficulty,
     pub diff_content: String,
+    #[serde(default)]
+    pub repo_path: Option<String>,
     pub expected_findings: Vec<ExpectedFinding>,
     pub negative_findings: Vec<NegativeFinding>,
+    #[serde(default)]
+    pub min_total: Option<usize>,
+    #[serde(default)]
+    pub max_total: Option<usize>,
     pub description: Option<String>,
     pub source: Option<String>,
 }
@@ -85,6 +91,16 @@ pub struct ExpectedFinding {
     pub file_pattern: Option<String>,
     pub line_hint: Option<usize>,
     pub contains: Option<String>,
+    #[serde(default)]
+    pub contains_any: Vec<String>,
+    #[serde(default)]
+    pub tags_any: Vec<String>,
+    #[serde(default)]
+    pub confidence_at_least: Option<f32>,
+    #[serde(default)]
+    pub confidence_at_most: Option<f32>,
+    #[serde(default)]
+    pub fix_effort: Option<String>,
     pub rule_id: Option<String>,
 }
 
@@ -94,6 +110,8 @@ pub struct NegativeFinding {
     pub description: String,
     pub file_pattern: Option<String>,
     pub contains: Option<String>,
+    #[serde(default)]
+    pub contains_any: Vec<String>,
 }
 
 /// Quality thresholds for benchmark evaluation.
@@ -517,6 +535,7 @@ mod tests {
             language: "python".to_string(),
             difficulty: Difficulty::Easy,
             diff_content: "def query(user_input):\n    db.execute(f\"SELECT * FROM users WHERE id={user_input}\")".to_string(),
+            repo_path: None,
             expected_findings: vec![ExpectedFinding {
                 description: "SQL injection via string interpolation".to_string(),
                 severity: Some("Error".to_string()),
@@ -524,9 +543,16 @@ mod tests {
                 file_pattern: None,
                 line_hint: Some(2),
                 contains: Some("injection".to_string()),
+                contains_any: Vec::new(),
+                tags_any: Vec::new(),
+                confidence_at_least: None,
+                confidence_at_most: None,
+                fix_effort: None,
                 rule_id: Some("sec.sql.injection".to_string()),
             }],
             negative_findings: vec![],
+            min_total: None,
+            max_total: None,
             description: Some("Basic SQL injection detection".to_string()),
             source: Some("community".to_string()),
         }

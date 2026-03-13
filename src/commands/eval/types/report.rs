@@ -1,9 +1,51 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::core::eval_benchmarks::{
     AggregateMetrics as BenchmarkAggregateMetrics, BenchmarkThresholds, Difficulty,
     FixtureResult as BenchmarkFixtureResult,
 };
+
+use super::fixtures::EvalFixtureMetadata;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(in super::super) struct EvalRunFilters {
+    #[serde(default)]
+    pub(in super::super) suite_filters: Vec<String>,
+    #[serde(default)]
+    pub(in super::super) category_filters: Vec<String>,
+    #[serde(default)]
+    pub(in super::super) language_filters: Vec<String>,
+    #[serde(default)]
+    pub(in super::super) fixture_name_filters: Vec<String>,
+    #[serde(default)]
+    pub(in super::super) max_fixtures: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(in super::super) struct EvalRunMetadata {
+    #[serde(default)]
+    pub(in super::super) started_at: String,
+    #[serde(default)]
+    pub(in super::super) fixtures_root: String,
+    #[serde(default)]
+    pub(in super::super) fixtures_discovered: usize,
+    #[serde(default)]
+    pub(in super::super) fixtures_selected: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) label: Option<String>,
+    #[serde(default)]
+    pub(in super::super) model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) adapter: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) base_url: Option<String>,
+    #[serde(default)]
+    pub(in super::super) filters: EvalRunFilters,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(in super::super) struct EvalRuleMetrics {
@@ -63,6 +105,8 @@ pub(in super::super) struct EvalFixtureResult {
     pub(in super::super) suite_thresholds: Option<BenchmarkThresholds>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in super::super) difficulty: Option<Difficulty>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) metadata: Option<EvalFixtureMetadata>,
     #[serde(default)]
     pub(in super::super) rule_metrics: Vec<EvalRuleMetrics>,
     #[serde(default)]
@@ -90,6 +134,8 @@ pub(in super::super) struct EvalSuiteResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(in super::super) struct EvalReport {
     #[serde(default)]
+    pub(in super::super) run: EvalRunMetadata,
+    #[serde(default)]
     pub(in super::super) fixtures_total: usize,
     #[serde(default)]
     pub(in super::super) fixtures_passed: usize,
@@ -101,6 +147,12 @@ pub(in super::super) struct EvalReport {
     pub(in super::super) rule_summary: Option<EvalRuleScoreSummary>,
     #[serde(default)]
     pub(in super::super) suite_results: Vec<EvalSuiteResult>,
+    #[serde(default)]
+    pub(in super::super) benchmark_by_category: HashMap<String, BenchmarkAggregateMetrics>,
+    #[serde(default)]
+    pub(in super::super) benchmark_by_language: HashMap<String, BenchmarkAggregateMetrics>,
+    #[serde(default)]
+    pub(in super::super) benchmark_by_difficulty: HashMap<String, BenchmarkAggregateMetrics>,
     #[serde(default)]
     pub(in super::super) threshold_failures: Vec<String>,
     #[serde(default)]

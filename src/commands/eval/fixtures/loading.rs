@@ -38,6 +38,7 @@ pub(super) fn load_eval_fixtures_from_path(path: &Path) -> Result<Vec<LoadedEval
         suite_name: None,
         suite_thresholds: None,
         difficulty: None,
+        metadata: None,
     }])
 }
 

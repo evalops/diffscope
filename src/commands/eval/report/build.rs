@@ -1,14 +1,15 @@
 use super::super::metrics::{
-    aggregate_rule_metrics, build_suite_results, collect_suite_threshold_failures,
-    summarize_rule_metrics,
+    aggregate_rule_metrics, build_benchmark_breakdowns, build_suite_results,
+    collect_suite_threshold_failures, summarize_rule_metrics,
 };
 use super::super::thresholds::{evaluate_eval_thresholds, EvalThresholdOptions};
-use super::super::{EvalFixtureResult, EvalReport};
+use super::super::{EvalFixtureResult, EvalReport, EvalRunMetadata};
 
 pub(in super::super) fn build_eval_report(
     results: Vec<EvalFixtureResult>,
     baseline: Option<&EvalReport>,
     threshold_options: &EvalThresholdOptions,
+    run: EvalRunMetadata,
 ) -> EvalReport {
     let fixtures_total = results.len();
     let fixtures_passed = results.iter().filter(|result| result.passed).count();
@@ -16,14 +17,19 @@ pub(in super::super) fn build_eval_report(
     let rule_metrics = aggregate_rule_metrics(&results);
     let rule_summary = summarize_rule_metrics(&rule_metrics);
     let suite_results = build_suite_results(&results);
+    let breakdowns = build_benchmark_breakdowns(&results);
 
     let mut report = EvalReport {
+        run,
         fixtures_total,
         fixtures_passed,
         fixtures_failed,
         rule_metrics,
         rule_summary,
         suite_results,
+        benchmark_by_category: breakdowns.by_category,
+        benchmark_by_language: breakdowns.by_language,
+        benchmark_by_difficulty: breakdowns.by_difficulty,
         threshold_failures: Vec::new(),
         results,
     };

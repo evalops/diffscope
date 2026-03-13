@@ -4,6 +4,25 @@ use std::path::Path;
 use super::super::EvalReport;
 
 pub(in super::super) fn print_eval_report(report: &EvalReport) {
+    if !report.run.model.is_empty() {
+        println!(
+            "Eval run: model={} provider={} selected={}/{} fixtures",
+            report.run.model,
+            report.run.provider.as_deref().unwrap_or("unknown"),
+            report.run.fixtures_selected,
+            report.run.fixtures_discovered
+        );
+        if let Some(label) = report.run.label.as_deref() {
+            println!("Run label: {}", label);
+        }
+        if !report.run.started_at.is_empty() {
+            println!("Started at: {}", report.run.started_at);
+        }
+        if !report.run.fixtures_root.is_empty() {
+            println!("Fixtures root: {}", report.run.fixtures_root);
+        }
+    }
+
     println!(
         "Eval summary: {}/{} fixture(s) passed",
         report.fixtures_passed, report.fixtures_total
@@ -36,6 +55,21 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
                 rule_summary.micro_recall * 100.0,
                 rule_summary.micro_f1 * 100.0
             );
+        }
+        if let Some(metadata) = result.metadata.as_ref() {
+            let mut labels = Vec::new();
+            if let Some(category) = metadata.category.as_deref() {
+                labels.push(format!("category={}", category));
+            }
+            if let Some(language) = metadata.language.as_deref() {
+                labels.push(format!("language={}", language));
+            }
+            if let Some(source) = metadata.source.as_deref() {
+                labels.push(format!("source={}", source));
+            }
+            if !labels.is_empty() {
+                println!("  metadata: {}", labels.join(", "));
+            }
         }
     }
 
@@ -82,6 +116,51 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
                     println!("  suite-threshold-failure: {}", failure);
                 }
             }
+        }
+    }
+
+    if !report.benchmark_by_category.is_empty() {
+        println!("Benchmark categories:");
+        let mut categories = report.benchmark_by_category.iter().collect::<Vec<_>>();
+        categories.sort_by(|left, right| left.0.cmp(right.0));
+        for (category, metrics) in categories {
+            println!(
+                "  - {}: fixtures={} micro F1={:.0}% weighted={:.0}%",
+                category,
+                metrics.fixture_count,
+                metrics.micro_f1 * 100.0,
+                metrics.weighted_score * 100.0
+            );
+        }
+    }
+
+    if !report.benchmark_by_language.is_empty() {
+        println!("Benchmark languages:");
+        let mut languages = report.benchmark_by_language.iter().collect::<Vec<_>>();
+        languages.sort_by(|left, right| left.0.cmp(right.0));
+        for (language, metrics) in languages {
+            println!(
+                "  - {}: fixtures={} micro F1={:.0}% weighted={:.0}%",
+                language,
+                metrics.fixture_count,
+                metrics.micro_f1 * 100.0,
+                metrics.weighted_score * 100.0
+            );
+        }
+    }
+
+    if !report.benchmark_by_difficulty.is_empty() {
+        println!("Benchmark difficulties:");
+        let mut difficulties = report.benchmark_by_difficulty.iter().collect::<Vec<_>>();
+        difficulties.sort_by(|left, right| left.0.cmp(right.0));
+        for (difficulty, metrics) in difficulties {
+            println!(
+                "  - {}: fixtures={} micro F1={:.0}% weighted={:.0}%",
+                difficulty,
+                metrics.fixture_count,
+                metrics.micro_f1 * 100.0,
+                metrics.weighted_score * 100.0
+            );
         }
     }
 

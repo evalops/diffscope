@@ -696,6 +696,7 @@ fn exercise_eval_benchmarks(quality_trend_json: Option<&str>) -> QualityTrend {
         language: "rust".to_string(),
         difficulty: Difficulty::Medium,
         diff_content: "test diff".to_string(),
+        repo_path: Some("fixture-repo".to_string()),
         expected_findings: vec![ExpectedFinding {
             description: "test finding".to_string(),
             severity: Some("Warning".to_string()),
@@ -703,13 +704,21 @@ fn exercise_eval_benchmarks(quality_trend_json: Option<&str>) -> QualityTrend {
             file_pattern: Some("*.rs".to_string()),
             line_hint: Some(1),
             contains: Some("test".to_string()),
+            contains_any: vec!["finding".to_string()],
+            tags_any: vec!["security".to_string()],
+            confidence_at_least: Some(0.6),
+            confidence_at_most: Some(0.95),
+            fix_effort: Some("medium".to_string()),
             rule_id: Some("test.rule".to_string()),
         }],
         negative_findings: vec![NegativeFinding {
             description: "should not find".to_string(),
             file_pattern: Some("*.rs".to_string()),
             contains: Some("false-positive".to_string()),
+            contains_any: vec!["style".to_string()],
         }],
+        min_total: Some(1),
+        max_total: Some(4),
         description: Some("A test fixture".to_string()),
         source: Some("internal".to_string()),
     };
@@ -722,6 +731,11 @@ fn exercise_eval_benchmarks(quality_trend_json: Option<&str>) -> QualityTrend {
     let _fp = &ef.file_pattern;
     let _lh = ef.line_hint;
     let _co = &ef.contains;
+    let _ca = &ef.contains_any;
+    let _ta = &ef.tags_any;
+    let _cal = ef.confidence_at_least;
+    let _cam = ef.confidence_at_most;
+    let _fe = &ef.fix_effort;
     let _ri = &ef.rule_id;
 
     // Access all NegativeFinding fields
@@ -729,12 +743,16 @@ fn exercise_eval_benchmarks(quality_trend_json: Option<&str>) -> QualityTrend {
     let _d = &nf.description;
     let _fp = &nf.file_pattern;
     let _co = &nf.contains;
+    let _ca = &nf.contains_any;
 
     // Access all BenchmarkFixture fields
     let _n = &fixture.name;
     let _c = &fixture.category;
     let _l = &fixture.language;
     let _dc = &fixture.diff_content;
+    let _rp = &fixture.repo_path;
+    let _min_total = fixture.min_total;
+    let _max_total = fixture.max_total;
     let _desc = &fixture.description;
     let _src = &fixture.source;
 

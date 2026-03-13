@@ -315,6 +315,40 @@ enum Commands {
             help = "Per-rule maximum allowed F1 drop vs baseline as rule_id=value (repeatable)"
         )]
         max_rule_f1_drop: Vec<String>,
+
+        #[arg(
+            long,
+            value_delimiter = ',',
+            help = "Only run benchmark-pack fixtures from the named suite(s)"
+        )]
+        suite: Vec<String>,
+
+        #[arg(
+            long,
+            value_delimiter = ',',
+            help = "Only run benchmark fixtures in the given category/categories"
+        )]
+        category: Vec<String>,
+
+        #[arg(
+            long,
+            value_delimiter = ',',
+            help = "Only run benchmark fixtures in the given language/languages"
+        )]
+        language: Vec<String>,
+
+        #[arg(
+            long,
+            value_delimiter = ',',
+            help = "Only run fixtures whose name contains one of these values"
+        )]
+        fixture_name: Vec<String>,
+
+        #[arg(long, help = "Limit the number of fixtures executed after filtering")]
+        max_fixtures: Option<usize>,
+
+        #[arg(long, help = "Optional label attached to the eval report")]
+        label: Option<String>,
     },
     #[command(about = "Evaluate accepted/rejected human feedback from stored review data")]
     FeedbackEval {
@@ -518,6 +552,12 @@ async fn main() -> Result<()> {
             min_macro_f1,
             min_rule_f1,
             max_rule_f1_drop,
+            suite,
+            category,
+            language,
+            fixture_name,
+            max_fixtures,
+            label,
         } => {
             let eval_options = EvalRunOptions {
                 baseline_report: baseline,
@@ -526,6 +566,12 @@ async fn main() -> Result<()> {
                 min_macro_f1,
                 min_rule_f1,
                 max_rule_f1_drop,
+                suite_filters: suite,
+                category_filters: category,
+                language_filters: language,
+                fixture_name_filters: fixture_name,
+                max_fixtures,
+                label,
             };
             commands::eval_command(config, fixtures, output, eval_options).await?;
         }

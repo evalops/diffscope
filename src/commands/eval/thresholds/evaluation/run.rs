@@ -43,6 +43,7 @@ mod tests {
     #[test]
     fn test_evaluate_eval_thresholds_requires_baseline_for_drop_checks() {
         let report = EvalReport {
+            run: Default::default(),
             fixtures_total: 1,
             fixtures_passed: 1,
             fixtures_failed: 0,
@@ -56,6 +57,9 @@ mod tests {
                 macro_f1: 1.0,
             }),
             suite_results: vec![],
+            benchmark_by_category: Default::default(),
+            benchmark_by_language: Default::default(),
+            benchmark_by_difficulty: Default::default(),
             threshold_failures: vec![],
             results: vec![],
         };
@@ -78,6 +82,7 @@ mod tests {
     #[test]
     fn test_evaluate_eval_thresholds_checks_rule_specific_drop() {
         let current = EvalReport {
+            run: Default::default(),
             fixtures_total: 1,
             fixtures_passed: 1,
             fixtures_failed: 0,
@@ -94,10 +99,14 @@ mod tests {
             }],
             rule_summary: Some(EvalRuleScoreSummary::default()),
             suite_results: vec![],
+            benchmark_by_category: Default::default(),
+            benchmark_by_language: Default::default(),
+            benchmark_by_difficulty: Default::default(),
             threshold_failures: vec![],
             results: vec![],
         };
         let baseline = EvalReport {
+            run: Default::default(),
             fixtures_total: 1,
             fixtures_passed: 1,
             fixtures_failed: 0,
@@ -114,6 +123,9 @@ mod tests {
             }],
             rule_summary: Some(EvalRuleScoreSummary::default()),
             suite_results: vec![],
+            benchmark_by_category: Default::default(),
+            benchmark_by_language: Default::default(),
+            benchmark_by_difficulty: Default::default(),
             threshold_failures: vec![],
             results: vec![],
         };

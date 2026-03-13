@@ -4,4 +4,6 @@ mod rules;
 mod suites;
 
 pub(super) use rules::{aggregate_rule_metrics, compute_rule_metrics, summarize_rule_metrics};
-pub(super) use suites::{build_suite_results, collect_suite_threshold_failures};
+pub(super) use suites::{
+    build_benchmark_breakdowns, build_suite_results, collect_suite_threshold_failures,
+};

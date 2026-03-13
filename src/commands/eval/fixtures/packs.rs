@@ -1,9 +1,11 @@
 use anyhow::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::core::eval_benchmarks::CommunityFixturePack;
 
-use super::super::{EvalExpectations, EvalFixture, EvalPattern, LoadedEvalFixture};
+use super::super::{
+    EvalExpectations, EvalFixture, EvalFixtureMetadata, EvalPattern, LoadedEvalFixture,
+};
 use super::validation::validate_eval_fixture;
 
 pub(super) fn expand_community_fixture_pack(
@@ -20,7 +22,7 @@ pub(super) fn expand_community_fixture_pack(
                 name: Some(format!("{}/{}", pack_name, fixture.name)),
                 diff: Some(fixture.diff_content),
                 diff_file: None,
-                repo_path: None,
+                repo_path: fixture.repo_path.map(PathBuf::from),
                 expect: EvalExpectations {
                     must_find: fixture
                         .expected_findings
@@ -29,8 +31,13 @@ pub(super) fn expand_community_fixture_pack(
                             file: finding.file_pattern,
                             line: finding.line_hint,
                             contains: finding.contains,
+                            contains_any: finding.contains_any,
                             severity: finding.severity,
                             category: finding.category,
+                            tags_any: finding.tags_any,
+                            confidence_at_least: finding.confidence_at_least,
+                            confidence_at_most: finding.confidence_at_most,
+                            fix_effort: finding.fix_effort,
                             rule_id: finding.rule_id.clone(),
                             require_rule_id: finding.rule_id.is_some(),
                             ..Default::default()
@@ -42,11 +49,12 @@ pub(super) fn expand_community_fixture_pack(
                         .map(|finding| EvalPattern {
                             file: finding.file_pattern,
                             contains: finding.contains,
+                            contains_any: finding.contains_any,
                             ..Default::default()
                         })
                         .collect(),
-                    min_total: None,
-                    max_total: None,
+                    min_total: fixture.min_total,
+                    max_total: fixture.max_total,
                 },
             };
             validate_eval_fixture(&eval_fixture)?;
@@ -57,6 +65,12 @@ pub(super) fn expand_community_fixture_pack(
                 suite_name: Some(pack_name.clone()),
                 suite_thresholds: thresholds.clone(),
                 difficulty: Some(difficulty),
+                metadata: Some(EvalFixtureMetadata {
+                    category: Some(fixture.category),
+                    language: Some(fixture.language),
+                    source: fixture.source,
+                    description: fixture.description,
+                }),
             })
         })
         .collect::<Result<Vec<_>>>()

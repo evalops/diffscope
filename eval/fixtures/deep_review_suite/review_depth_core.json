@@ -1,0 +1,295 @@
+{
+  "name": "review-depth-core",
+  "author": "diffscope",
+  "version": "1.0.0",
+  "description": "Broader live-review benchmark pack spanning security, correctness, performance, and maintainability signals.",
+  "languages": [
+    "rust",
+    "python",
+    "typescript",
+    "go"
+  ],
+  "categories": [
+    "security",
+    "bug",
+    "performance",
+    "maintainability"
+  ],
+  "thresholds": {
+    "min_precision": 0.45,
+    "min_recall": 0.35,
+    "min_f1": 0.4,
+    "max_false_positive_rate": 0.45,
+    "min_weighted_score": 0.45
+  },
+  "metadata": {
+    "purpose": "live-regression-eval",
+    "pack": "review-depth-core"
+  },
+  "fixtures": [
+    {
+      "name": "rust-shell-command-injection",
+      "category": "security",
+      "language": "rust",
+      "difficulty": "Hard",
+      "repo_path": "../../..",
+      "diff_content": "diff --git a/src/main.rs b/src/main.rs\nindex 2f4f9cb..8f128ab 100644\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1226,6 +1226,14 @@ async fn suggest_pr_title(config: config::Config) -> Result<()> {\n \n     Ok(())\n }\n+\n+fn run_debug_command(user_command: &str) {\n+    let _ = std::process::Command::new(\"sh\")\n+        .arg(\"-c\")\n+        .arg(user_command)\n+        .status();\n+}\n",
+      "expected_findings": [
+        {
+          "description": "Shell command execution uses unsanitized user input.",
+          "severity": "Error",
+          "category": "Security",
+          "file_pattern": "src/main.rs",
+          "line_hint": 1230,
+          "contains_any": [
+            "shell injection",
+            "command injection",
+            "user-controlled command"
+          ],
+          "tags_any": [
+            "command-injection",
+            "injection"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 10,
+      "description": "Obvious shell execution bug in a Rust helper.",
+      "source": "repo-regression"
+    },
+    {
+      "name": "python-cross-file-sql-helper",
+      "category": "security",
+      "language": "python",
+      "difficulty": "Expert",
+      "repo_path": "../repo_regressions/graph_call_chain_repo",
+      "diff_content": "diff --git a/routes.py b/routes.py\nindex 1111111..2222222 100644\n--- a/routes.py\n+++ b/routes.py\n@@ -2,4 +2,5 @@ from auth import lookup_user\n \n \n def get_profile(request, db):\n-    return {\"ok\": True}\n+    user = lookup_user(request.args[\"name\"], db)\n+    return {\"user\": user}\n",
+      "expected_findings": [
+        {
+          "description": "Cross-file SQL helper is called with unsanitized request input.",
+          "category": "Security",
+          "contains_any": [
+            "sql injection",
+            "unsafe sql",
+            "query built from user input",
+            "interpolates user-controlled"
+          ],
+          "tags_any": [
+            "sql-injection"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 12,
+      "description": "Tests repo-context retrieval across a helper call chain.",
+      "source": "repo-regression"
+    },
+    {
+      "name": "rust-path-traversal-read",
+      "category": "security",
+      "language": "rust",
+      "difficulty": "Hard",
+      "diff_content": "diff --git a/src/download.rs b/src/download.rs\nnew file mode 100644\n--- /dev/null\n+++ b/src/download.rs\n@@ -0,0 +1,5 @@\n+use std::fs;\n+\n+pub fn load_user_file(name: &str) -> std::io::Result<String> {\n+    fs::read_to_string(format!(\"/srv/uploads/{}\", name))\n+}\n",
+      "expected_findings": [
+        {
+          "description": "User-controlled file path is read without validation.",
+          "severity": "Error",
+          "category": "Security",
+          "file_pattern": "src/download.rs",
+          "line_hint": 4,
+          "contains_any": [
+            "path traversal",
+            "directory traversal",
+            "user-controlled path"
+          ],
+          "tags_any": [
+            "path-traversal"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Simple path traversal regression in a file-read helper.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "typescript-open-redirect",
+      "category": "security",
+      "language": "typescript",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/src/redirect.ts b/src/redirect.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/redirect.ts\n@@ -0,0 +1,4 @@\n+export function continueLogin(nextUrl: string) {\n+  window.location.href = nextUrl;\n+}\n+\n",
+      "expected_findings": [
+        {
+          "description": "Redirect target is controlled by caller input.",
+          "severity": "Warning",
+          "category": "Security",
+          "file_pattern": "src/redirect.ts",
+          "line_hint": 2,
+          "contains_any": [
+            "open redirect",
+            "unvalidated redirect",
+            "redirect to arbitrary url"
+          ],
+          "tags_any": [
+            "open-redirect"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Client-side redirect should validate or constrain destinations.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "python-n-plus-one-query",
+      "category": "performance",
+      "language": "python",
+      "difficulty": "Hard",
+      "diff_content": "diff --git a/service.py b/service.py\nindex 1111111..2222222 100644\n--- a/service.py\n+++ b/service.py\n@@ -1,4 +1,8 @@\n def load_profiles(db, users):\n-    return []\n+    profiles = []\n+    for user in users:\n+        profiles.append(db.query(\"SELECT * FROM profiles WHERE user_id = %s\", [user.id]))\n+    return profiles\n+\n",
+      "expected_findings": [
+        {
+          "description": "Database query is executed inside a loop.",
+          "severity": "Warning",
+          "category": "Performance",
+          "file_pattern": "service.py",
+          "line_hint": 4,
+          "contains_any": [
+            "n+1",
+            "query inside loop",
+            "database query in loop"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Classic N+1 query pattern in a service helper.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "go-swallowed-error",
+      "category": "bug",
+      "language": "go",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/cache.go b/cache.go\nindex 1111111..2222222 100644\n--- a/cache.go\n+++ b/cache.go\n@@ -1,5 +1,9 @@\n func loadConfig(path string) (*Config, error) {\n-    return parseConfig(path)\n+    cfg, err := parseConfig(path)\n+    if err != nil {\n+        return nil, nil\n+    }\n+    return cfg, nil\n }\n",
+      "expected_findings": [
+        {
+          "description": "Parse error is swallowed and converted into a nil success.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "cache.go",
+          "line_hint": 4,
+          "contains_any": [
+            "error is ignored",
+            "swallowed error",
+            "return nil, nil"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Error handling regression in a Go helper.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "rust-unwrap-on-user-input",
+      "category": "bug",
+      "language": "rust",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/src/parser.rs b/src/parser.rs\nindex 1111111..2222222 100644\n--- a/src/parser.rs\n+++ b/src/parser.rs\n@@ -1,3 +1,3 @@\n pub fn parse_user_id(input: &str) -> u64 {\n-    input.parse().unwrap_or(0)\n+    input.parse::<u64>().unwrap()\n }\n",
+      "expected_findings": [
+        {
+          "description": "Parsing user input now panics on invalid values.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "src/parser.rs",
+          "line_hint": 2,
+          "contains_any": [
+            "unwrap can panic",
+            "panic on invalid input",
+            "untrusted input"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Simple panic regression in a parser helper.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "python-stack-trace-response-leak",
+      "category": "security",
+      "language": "python",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/handlers.py b/handlers.py\nindex 1111111..2222222 100644\n--- a/handlers.py\n+++ b/handlers.py\n@@ -1,4 +1,6 @@\n+import traceback\n+\n def fetch_profile(request):\n     try:\n         return do_fetch(request)\n+    except Exception:\n+        return {\"error\": traceback.format_exc()}, 500\n",
+      "expected_findings": [
+        {
+          "description": "Stack traces should not be returned to clients.",
+          "severity": "Warning",
+          "category": "Security",
+          "file_pattern": "handlers.py",
+          "line_hint": 6,
+          "contains_any": [
+            "stack trace",
+            "information disclosure",
+            "debug details"
+          ],
+          "tags_any": [
+            "verbose-error"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Error responses should not leak stack traces.",
+      "source": "deep-review-suite"
+    }
+  ]
+}
