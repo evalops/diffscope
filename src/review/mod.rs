@@ -38,7 +38,9 @@ pub(crate) use context_helpers::PatternRepositoryMap;
 #[allow(unused_imports)]
 pub(crate) use feedback::{FeedbackStore, FeedbackTypeStats};
 #[allow(unused_imports)]
-pub(crate) use filters::{classify_comment_type, ReviewCommentType};
+pub(crate) use filters::{
+    classify_comment_type, is_vague_comment_text, is_vague_review_comment, ReviewCommentType,
+};
 #[allow(unused_imports)]
 pub(crate) use pipeline::is_line_in_diff;
 #[allow(unused_imports)]

@@ -49,6 +49,7 @@ Review the code changes below. Report only high-confidence, actionable findings 
 - Cite the most relevant changed line number for each finding.
 - Use the required response contract exactly.
 - Include a code suggestion block only when the fix is concrete and local to the shown diff.
+- Do not write vague comments that ask the author to ensure, verify, validate, consider, review, or confirm something.
 </instructions>"#.to_string(),
             max_tokens: 2000,
             include_context: true,
@@ -63,7 +64,9 @@ fn shared_review_principles() -> &'static str {
 - Only report issues with concrete evidence in the diff or provided context.
 - Do not speculate about code you cannot see.
 - If a sanitizer, guard, or safe pattern is clearly present, do not flag the issue.
-- Prefer fewer high-confidence findings over many low-confidence ones."#
+- Prefer fewer high-confidence findings over many low-confidence ones.
+- Do not write generic advice that starts with Ensure, Verify, Validate, Consider, Review, or Confirm.
+- State the concrete problem and the smallest safe fix instead of open-ended review tasks."#
 }
 
 fn shared_output_contract(category_label: &str, no_issues_message: &str) -> String {
@@ -483,6 +486,12 @@ mod tests {
             .contains("Preferred format: return a JSON array only"));
         assert!(config.system_prompt.contains("\"line\": 42"));
         assert!(config.system_prompt.contains("return `[]`"));
+        assert!(config
+            .system_prompt
+            .contains("Do not write generic advice that starts with Ensure"));
+        assert!(config
+            .user_prompt_template
+            .contains("Do not write vague comments"));
     }
 
     #[test]

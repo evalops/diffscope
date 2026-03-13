@@ -316,6 +316,23 @@ enum Commands {
         )]
         max_rule_f1_drop: Vec<String>,
     },
+    #[command(about = "Evaluate accepted/rejected human feedback from stored review data")]
+    FeedbackEval {
+        #[arg(
+            help = "Path to reviews.json, a labeled comments JSON file, or semantic feedback store JSON"
+        )]
+        input: PathBuf,
+
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        #[arg(
+            long,
+            default_value_t = 0.75,
+            help = "Confidence threshold used for acceptance calibration (0.0-1.0)"
+        )]
+        confidence_threshold: f32,
+    },
 }
 
 #[tokio::main]
@@ -511,6 +528,13 @@ async fn main() -> Result<()> {
                 max_rule_f1_drop,
             };
             commands::eval_command(config, fixtures, output, eval_options).await?;
+        }
+        Commands::FeedbackEval {
+            input,
+            output,
+            confidence_threshold,
+        } => {
+            commands::feedback_eval_command(input, output, confidence_threshold).await?;
         }
     }
 

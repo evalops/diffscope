@@ -80,6 +80,71 @@ pub fn apply_comment_type_filter(
     kept
 }
 
+const VAGUE_COMMENT_PREFIXES: &[&str] = &[
+    "ensure",
+    "verify",
+    "validate",
+    "consider",
+    "review",
+    "confirm",
+    "check",
+    "make sure",
+];
+
+const VAGUE_COMMENT_PHRASES: &[&str] = &[
+    "ensure that",
+    "verify that",
+    "validate that",
+    "consider adding",
+    "consider using",
+    "make sure",
+    "double-check",
+    "it may be worth",
+];
+
+pub fn is_vague_comment_text(text: &str) -> bool {
+    let trimmed = text
+        .trim()
+        .trim_start_matches(|ch: char| ch == '-' || ch == '*' || ch == ':' || ch.is_whitespace())
+        .trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if VAGUE_COMMENT_PREFIXES
+        .iter()
+        .any(|prefix| lower == *prefix || lower.starts_with(&format!("{} ", prefix)))
+    {
+        return true;
+    }
+
+    VAGUE_COMMENT_PHRASES
+        .iter()
+        .any(|phrase| lower.contains(phrase))
+}
+
+pub fn is_vague_review_comment(comment: &core::Comment) -> bool {
+    is_vague_comment_text(&comment.content)
+}
+
+pub fn apply_vague_comment_filter(comments: Vec<core::Comment>) -> Vec<core::Comment> {
+    let total = comments.len();
+    let kept: Vec<_> = comments
+        .into_iter()
+        .filter(|comment| !is_vague_review_comment(comment))
+        .collect();
+
+    if kept.len() != total {
+        info!(
+            "Dropped {} vague review comment(s) after generation",
+            total.saturating_sub(kept.len())
+        );
+    }
+
+    kept
+}
+
 pub fn should_adaptively_suppress_with_thresholds(
     comment: &core::Comment,
     feedback: &FeedbackStore,
@@ -231,6 +296,7 @@ pub fn apply_review_filters(
 ) -> Vec<core::Comment> {
     let comments = apply_confidence_threshold(comments, config.effective_min_confidence());
     let comments = apply_comment_type_filter(comments, &config.comment_types);
+    let comments = apply_vague_comment_filter(comments);
     apply_feedback_suppression_with_thresholds(
         comments,
         feedback,
@@ -431,6 +497,52 @@ mod tests {
         )];
         let filtered = apply_confidence_threshold(comments, 0.0);
         assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn vague_comment_detection_flags_generic_prefixes() {
+        assert!(is_vague_comment_text(
+            "Consider adding a guard clause here."
+        ));
+        assert!(is_vague_comment_text(
+            "Ensure this path is covered by tests."
+        ));
+        assert!(is_vague_comment_text(
+            "Make sure the dependency stays aligned."
+        ));
+    }
+
+    #[test]
+    fn vague_comment_detection_preserves_concrete_findings() {
+        assert!(!is_vague_comment_text(
+            "User-controlled SQL is interpolated directly into the query string."
+        ));
+    }
+
+    #[test]
+    fn vague_filter_drops_generic_comments_but_keeps_concrete_ones() {
+        let mut vague = build_comment(
+            "vague",
+            core::comment::Category::Bug,
+            core::comment::Severity::Suggestion,
+            0.9,
+        );
+        vague.content = "Consider adding a guard clause for this input.".to_string();
+
+        let mut concrete = build_comment(
+            "concrete",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.9,
+        );
+        concrete.content =
+            "This branch dereferences a nil pointer when the config lookup fails.".to_string();
+        concrete.suggestion = Some("Return early when the lookup misses.".to_string());
+
+        let filtered = apply_vague_comment_filter(vec![vague, concrete]);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "concrete");
     }
 
     #[test]

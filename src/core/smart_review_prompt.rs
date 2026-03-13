@@ -39,6 +39,8 @@ Core rules:
 - Do not speculate about code you cannot see
 - If a sanitizer, guard, or safe pattern is clearly present, do not flag the issue
 - Prefer fewer high-confidence findings over many low-confidence ones
+- Do not write generic advice that starts with Ensure, Verify, Validate, Consider, Review, or Confirm
+- State the concrete problem and the smallest safe fix instead of open-ended review tasks
 
 Your task is to provide intelligent code reviews that are:
 1. **Actionable**: Each comment should provide specific, implementable suggestions
@@ -314,5 +316,28 @@ mod tests {
                 .find(|l| l.contains("Hunk:"))
                 .unwrap_or("(no hunk header found)")
         );
+    }
+
+    #[test]
+    fn smart_review_system_prompt_discourages_vague_advice() {
+        let (system, _) = SmartReviewPromptBuilder::build_enhanced_review_prompt(
+            &UnifiedDiff {
+                file_path: PathBuf::from("test.rs"),
+                old_content: None,
+                new_content: None,
+                is_new: false,
+                is_deleted: false,
+                is_binary: false,
+                hunks: vec![],
+            },
+            &[],
+            1000,
+            10000,
+            None,
+        )
+        .unwrap();
+
+        assert!(system.contains("Do not write generic advice that starts with Ensure"));
+        assert!(system.contains("smallest safe fix"));
     }
 }
