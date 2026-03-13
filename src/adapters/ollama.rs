@@ -203,6 +203,7 @@ mod tests {
             user_prompt: "user".to_string(),
             temperature: None,
             max_tokens: None,
+            response_schema: None,
         }
     }
 
@@ -446,6 +447,7 @@ mod tests {
             user_prompt: "review this".to_string(),
             temperature: None,
             max_tokens: None,
+            response_schema: None,
         };
         let result = adapter.complete(request).await;
 
@@ -473,6 +475,7 @@ mod tests {
             user_prompt: "user".to_string(),
             temperature: Some(0.5),
             max_tokens: Some(200),
+            response_schema: None,
         };
         let result = adapter.complete(request).await;
 

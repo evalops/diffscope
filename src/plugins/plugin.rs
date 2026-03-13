@@ -2,6 +2,8 @@ use crate::config::PluginConfig;
 use crate::core::{Comment, UnifiedDiff};
 use crate::plugins::{PostProcessor, PreAnalysis, PreAnalyzer};
 use anyhow::Result;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct PluginManager {
@@ -47,6 +49,7 @@ impl PluginManager {
         self.post_processors.push(processor);
     }
 
+    #[allow(dead_code)]
     pub async fn run_pre_analyzers(
         &self,
         diff: &UnifiedDiff,
@@ -64,6 +67,29 @@ impl PluginManager {
         }
 
         Ok(analysis)
+    }
+
+    pub async fn run_pre_analyzers_for_review(
+        &self,
+        diffs: &[UnifiedDiff],
+        repo_path: &str,
+    ) -> Result<HashMap<PathBuf, PreAnalysis>> {
+        let mut merged: HashMap<PathBuf, PreAnalysis> = HashMap::new();
+
+        for analyzer in &self.pre_analyzers {
+            match analyzer.run_batch(diffs, repo_path).await {
+                Ok(results) => {
+                    for (file_path, analysis) in results {
+                        merged.entry(file_path).or_default().extend(analysis);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Pre-analyzer {} failed: {}", analyzer.id(), e);
+                }
+            }
+        }
+
+        Ok(merged)
     }
 
     pub async fn run_post_processors(

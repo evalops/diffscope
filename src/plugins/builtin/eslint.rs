@@ -4,6 +4,7 @@ use crate::plugins::{AnalyzerFinding, PreAnalysis, PreAnalyzer};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct EslintAnalyzer;
@@ -23,14 +24,35 @@ impl PreAnalyzer for EslintAnalyzer {
     }
 
     async fn run(&self, diff: &UnifiedDiff, repo_path: &str) -> Result<PreAnalysis> {
-        let path_str = diff.file_path.to_string_lossy();
-        if !JS_EXTENSIONS.iter().any(|ext| path_str.ends_with(ext)) {
-            return Ok(PreAnalysis::default());
+        let results = self
+            .run_batch(std::slice::from_ref(diff), repo_path)
+            .await?;
+        Ok(results.get(&diff.file_path).cloned().unwrap_or_default())
+    }
+
+    async fn run_batch(
+        &self,
+        diffs: &[UnifiedDiff],
+        repo_path: &str,
+    ) -> Result<HashMap<PathBuf, PreAnalysis>> {
+        let files = diffs
+            .iter()
+            .filter(|diff| {
+                let path_str = diff.file_path.to_string_lossy();
+                JS_EXTENSIONS.iter().any(|ext| path_str.ends_with(ext))
+            })
+            .map(|diff| diff.file_path.clone())
+            .collect::<Vec<_>>();
+
+        if files.is_empty() {
+            return Ok(HashMap::new());
         }
 
-        let file_path = PathBuf::from(repo_path).join(&diff.file_path);
-        let file_arg = file_path.to_string_lossy().to_string();
-        let diff_file_path = diff.file_path.clone();
+        let repo_root = PathBuf::from(repo_path);
+        let file_args = files
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
 
         let timeout = std::time::Duration::from_secs(30);
         let result = tokio::time::timeout(
@@ -38,9 +60,9 @@ impl PreAnalyzer for EslintAnalyzer {
             tokio::task::spawn_blocking(move || {
                 use std::process::Command;
                 Command::new("eslint")
+                    .current_dir(&repo_root)
                     .arg("--format=json")
-                    .arg("--no-eslintrc")
-                    .arg(&file_arg)
+                    .args(&file_args)
                     .output()
             }),
         )
@@ -49,40 +71,40 @@ impl PreAnalyzer for EslintAnalyzer {
         match result {
             Ok(Ok(Ok(output))) => {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                if !stdout.trim().is_empty() {
-                    let mut analysis = PreAnalysis::default();
-                    analysis.context_chunks.push(LLMContextChunk {
-                        file_path: diff_file_path.clone(),
-                        content: format!("ESLint analysis:\n{}", stdout),
-                        context_type: ContextType::Documentation,
-                        line_range: None,
-                    });
-                    analysis
-                        .findings
-                        .extend(parse_eslint_findings(&diff_file_path, &stdout));
-                    Ok(analysis)
-                } else {
-                    Ok(PreAnalysis::default())
+                if stdout.trim().is_empty() {
+                    return Ok(HashMap::new());
                 }
+
+                Ok(parse_eslint_analyses(Path::new(repo_path), &stdout))
             }
-            _ => Ok(PreAnalysis::default()),
+            _ => Ok(HashMap::new()),
         }
     }
 }
 
-fn parse_eslint_findings(file_path: &Path, payload: &str) -> Vec<AnalyzerFinding> {
-    let mut findings = Vec::new();
+fn parse_eslint_analyses(repo_root: &Path, payload: &str) -> HashMap<PathBuf, PreAnalysis> {
+    let mut analyses = HashMap::new();
     let Ok(value) = serde_json::from_str::<Value>(payload) else {
-        return findings;
+        return analyses;
     };
     let Some(files) = value.as_array() else {
-        return findings;
+        return analyses;
     };
 
     for file in files {
+        let file_path = file
+            .get("filePath")
+            .and_then(|value| value.as_str())
+            .map(|value| normalize_tool_path(repo_root, value))
+            .unwrap_or_else(|| PathBuf::from("unknown"));
         let Some(messages) = file.get("messages").and_then(|value| value.as_array()) else {
             continue;
         };
+        if messages.is_empty() {
+            continue;
+        }
+
+        let mut findings = Vec::new();
         for message in messages {
             let line_number = message
                 .get("line")
@@ -107,7 +129,7 @@ fn parse_eslint_findings(file_path: &Path, payload: &str) -> Vec<AnalyzerFinding
                 .unwrap_or("ESLint reported a JavaScript issue")
                 .to_string();
             findings.push(AnalyzerFinding {
-                file_path: file_path.to_path_buf(),
+                file_path: file_path.clone(),
                 line_number,
                 content,
                 rule_id,
@@ -120,9 +142,69 @@ fn parse_eslint_findings(file_path: &Path, payload: &str) -> Vec<AnalyzerFinding
                 metadata: Default::default(),
             });
         }
+
+        if !findings.is_empty() {
+            let mut analysis = PreAnalysis::default();
+            analysis.context_chunks.push(LLMContextChunk {
+                file_path: file_path.clone(),
+                content: build_context_chunk("ESLint", &findings),
+                context_type: ContextType::Documentation,
+                line_range: None,
+            });
+            analysis.findings = findings;
+            analyses.insert(file_path, analysis);
+        }
     }
 
-    findings
+    analyses
+}
+
+fn build_context_chunk(tool_name: &str, findings: &[AnalyzerFinding]) -> String {
+    let details = findings
+        .iter()
+        .take(20)
+        .map(|finding| {
+            let rule = finding
+                .rule_id
+                .as_deref()
+                .map(|value| format!(" [{value}]"))
+                .unwrap_or_default();
+            format!(
+                "- line {}{}: {}",
+                finding.line_number, rule, finding.content
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!("{tool_name} findings:\n{details}")
+}
+
+fn normalize_tool_path(repo_root: &Path, raw: &str) -> PathBuf {
+    let path = PathBuf::from(raw);
+    let relative = if path.is_absolute() {
+        path.strip_prefix(repo_root)
+            .map(|value| value.to_path_buf())
+            .unwrap_or(path)
+    } else {
+        path
+    };
+
+    normalize_relative_path(relative)
+}
+
+fn normalize_relative_path(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 #[cfg(test)]
@@ -187,5 +269,35 @@ mod tests {
         let diff = make_diff("test.js");
         let result = analyzer.run(&diff, "/nonexistent/repo").await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_eslint_analyses_groups_findings_by_file() {
+        let payload = r#"[
+            {
+                "filePath": "/repo/src/app.ts",
+                "messages": [
+                    {"line": 3, "severity": 2, "ruleId": "no-eval", "message": "Avoid eval"}
+                ]
+            },
+            {
+                "filePath": "/repo/src/ui.tsx",
+                "messages": [
+                    {"line": 8, "severity": 1, "ruleId": "react/jsx-key", "message": "Missing key"}
+                ]
+            }
+        ]"#;
+
+        let analyses = parse_eslint_analyses(Path::new("/repo"), payload);
+
+        assert_eq!(analyses.len(), 2);
+        assert_eq!(
+            analyses[Path::new("src/app.ts")].findings[0].severity,
+            Severity::Warning
+        );
+        assert_eq!(
+            analyses[Path::new("src/ui.tsx")].findings[0].content,
+            "Missing key"
+        );
     }
 }

@@ -29,18 +29,28 @@ impl SummaryCache {
         }
     }
 
-    pub fn get(&self, file_path: &Path, symbol_name: &str) -> Option<&CodeSummary> {
-        let key = cache_key(file_path, symbol_name);
+    pub fn get(
+        &self,
+        file_path: &Path,
+        symbol_name: &str,
+        line_range: (usize, usize),
+    ) -> Option<&CodeSummary> {
+        let key = cache_key(file_path, symbol_name, line_range);
         self.entries.get(&key)
     }
 
     pub fn insert(&mut self, summary: CodeSummary) {
-        let key = cache_key(&summary.file_path, &summary.symbol_name);
+        let key = cache_key(&summary.file_path, &summary.symbol_name, summary.line_range);
         self.entries.insert(key, summary);
     }
 
-    pub fn remove(&mut self, file_path: &Path, symbol_name: &str) -> Option<CodeSummary> {
-        let key = cache_key(file_path, symbol_name);
+    pub fn remove(
+        &mut self,
+        file_path: &Path,
+        symbol_name: &str,
+        line_range: (usize, usize),
+    ) -> Option<CodeSummary> {
+        let key = cache_key(file_path, symbol_name, line_range);
         self.entries.remove(&key)
     }
 
@@ -70,8 +80,14 @@ impl SummaryCache {
     }
 }
 
-fn cache_key(file_path: &Path, symbol_name: &str) -> String {
-    format!("{}:{}", file_path.display(), symbol_name)
+fn cache_key(file_path: &Path, symbol_name: &str, line_range: (usize, usize)) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        file_path.display(),
+        symbol_name,
+        line_range.0,
+        line_range.1
+    )
 }
 
 /// Generate a heuristic natural-language summary of a code block.
@@ -171,12 +187,13 @@ pub fn summarize_file_symbols(
     let mut summaries = Vec::new();
 
     for (name, code, start_line, end_line) in blocks {
-        if let Some(cached) = cache.get(file_path, &name) {
+        let line_range = (start_line, end_line);
+        if let Some(cached) = cache.get(file_path, &name, line_range) {
             summaries.push(cached.clone());
             continue;
         }
 
-        let summary = summarize_code_heuristic(&name, &code, file_path, (start_line, end_line));
+        let summary = summarize_code_heuristic(&name, &code, file_path, line_range);
         cache.insert(summary.clone());
         summaries.push(summary);
     }
@@ -492,7 +509,7 @@ mod tests {
         cache.insert(summary.clone());
         assert_eq!(cache.len(), 1);
 
-        let retrieved = cache.get(Path::new("test.rs"), "foo");
+        let retrieved = cache.get(Path::new("test.rs"), "foo", (1, 5));
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().summary, "A test function");
     }
@@ -525,7 +542,7 @@ mod tests {
         assert_eq!(cache.len(), 3);
         cache.invalidate_file(Path::new("a.rs"));
         assert_eq!(cache.len(), 1);
-        assert!(cache.get(Path::new("b.rs"), "baz").is_some());
+        assert!(cache.get(Path::new("b.rs"), "baz", (1, 5)).is_some());
     }
 
     #[test]
@@ -543,7 +560,10 @@ mod tests {
         let restored = SummaryCache::from_json(&json).unwrap();
         assert_eq!(restored.len(), 1);
         assert_eq!(
-            restored.get(Path::new("test.rs"), "foo").unwrap().summary,
+            restored
+                .get(Path::new("test.rs"), "foo", (1, 5))
+                .unwrap()
+                .summary,
             "test summary"
         );
     }
@@ -650,7 +670,7 @@ mod tests {
             embedding_text: "".to_string(),
         });
         assert_eq!(cache.len(), 1);
-        let removed = cache.remove(Path::new("test.rs"), "foo");
+        let removed = cache.remove(Path::new("test.rs"), "foo", (1, 5));
         assert!(removed.is_some());
         assert_eq!(cache.len(), 0);
     }
@@ -696,7 +716,7 @@ mod tests {
     #[test]
     fn test_cache_remove_nonexistent() {
         let mut cache = SummaryCache::new();
-        let removed = cache.remove(Path::new("nope.rs"), "missing");
+        let removed = cache.remove(Path::new("nope.rs"), "missing", (1, 1));
         assert!(removed.is_none());
     }
 

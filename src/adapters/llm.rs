@@ -47,6 +47,30 @@ pub struct LLMRequest {
     pub user_prompt: String,
     pub temperature: Option<f32>,
     pub max_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_schema: Option<StructuredOutputSchema>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StructuredOutputSchema {
+    pub name: String,
+    pub schema: serde_json::Value,
+    #[serde(default = "default_true")]
+    pub strict: bool,
+}
+
+impl StructuredOutputSchema {
+    pub fn json_schema(name: impl Into<String>, schema: serde_json::Value) -> Self {
+        Self {
+            name: name.into(),
+            schema,
+            strict: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,6 +222,7 @@ pub trait LLMAdapter: Send + Sync {
             user_prompt,
             temperature: request.temperature,
             max_tokens: request.max_tokens,
+            response_schema: None,
         };
 
         let response = self.complete(llm_request).await?;
@@ -590,6 +615,10 @@ mod tests {
             user_prompt: "Review this diff.".to_string(),
             temperature: Some(0.3),
             max_tokens: Some(2000),
+            response_schema: Some(StructuredOutputSchema::json_schema(
+                "review_comments",
+                serde_json::json!({"type": "array"}),
+            )),
         };
         let tools = vec![ToolDefinition {
             name: "read_file".to_string(),
@@ -602,6 +631,7 @@ mod tests {
         assert_eq!(chat_req.messages[0].role, ChatRole::User);
         assert_eq!(chat_req.tools.len(), 1);
         assert_eq!(chat_req.temperature, Some(0.3));
+        assert_eq!(chat_req.max_tokens, Some(2000));
     }
 
     #[test]

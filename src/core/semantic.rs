@@ -35,6 +35,10 @@ pub struct SemanticChunk {
 pub struct SemanticIndex {
     pub version: u32,
     pub entries: HashMap<String, SemanticChunk>,
+    #[serde(default)]
+    pub file_states: HashMap<PathBuf, SemanticFileState>,
+    #[serde(default)]
+    pub embedding: SemanticEmbeddingMetadata,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +61,26 @@ pub struct SemanticFeedbackExample {
 pub struct SemanticFeedbackStore {
     pub version: u32,
     pub examples: Vec<SemanticFeedbackExample>,
+    #[serde(default)]
+    pub embedding: SemanticEmbeddingMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct SemanticFileState {
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SemanticEmbeddingMetadata {
+    pub strategy: String,
+    pub model: String,
+    pub dimensions: usize,
+}
+
+impl Default for SemanticEmbeddingMetadata {
+    fn default() -> Self {
+        default_embedding_metadata()
+    }
 }
 
 impl Default for SemanticIndex {
@@ -64,6 +88,8 @@ impl Default for SemanticIndex {
         Self {
             version: 1,
             entries: HashMap::new(),
+            file_states: HashMap::new(),
+            embedding: default_embedding_metadata(),
         }
     }
 }
@@ -73,7 +99,16 @@ impl Default for SemanticFeedbackStore {
         Self {
             version: 1,
             examples: Vec::new(),
+            embedding: default_embedding_metadata(),
         }
+    }
+}
+
+fn default_embedding_metadata() -> SemanticEmbeddingMetadata {
+    SemanticEmbeddingMetadata {
+        strategy: "hash-v1".to_string(),
+        model: "local-hash".to_string(),
+        dimensions: FALLBACK_EMBEDDING_DIMENSIONS,
     }
 }
 
@@ -117,6 +152,17 @@ impl SemanticFeedbackStore {
     }
 }
 
+pub fn align_semantic_feedback_store(
+    store: &mut SemanticFeedbackStore,
+    embedding_adapter: Option<&dyn LLMAdapter>,
+) {
+    let expected = embedding_metadata_for_adapter(embedding_adapter);
+    if !embedding_metadata_compatible(&store.embedding, &expected) {
+        store.examples.clear();
+    }
+    store.embedding = merge_embedding_metadata(&store.embedding, &expected);
+}
+
 pub fn default_index_path(repo_root: &Path) -> PathBuf {
     let repo_key = hash_text(&repo_root.to_string_lossy());
     dirs::data_local_dir()
@@ -143,11 +189,7 @@ pub fn load_semantic_index(path: &Path) -> SemanticIndex {
 }
 
 pub fn save_semantic_index(path: &Path, index: &SemanticIndex) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, index.to_json()?)?;
-    Ok(())
+    atomic_write_string(path, &index.to_json()?)
 }
 
 pub fn load_semantic_feedback_store(path: &Path) -> SemanticFeedbackStore {
@@ -158,10 +200,21 @@ pub fn load_semantic_feedback_store(path: &Path) -> SemanticFeedbackStore {
 }
 
 pub fn save_semantic_feedback_store(path: &Path, store: &SemanticFeedbackStore) -> Result<()> {
+    atomic_write_string(path, &store.to_json()?)
+}
+
+fn atomic_write_string(path: &Path, content: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, store.to_json()?)?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("semantic.json");
+    let tmp_path = path.with_file_name(format!("{}.{}.tmp", file_name, std::process::id()));
+    std::fs::write(&tmp_path, content)?;
+    std::fs::rename(&tmp_path, path)?;
     Ok(())
 }
 
@@ -233,6 +286,8 @@ where
         }
     }
 
+    files.sort();
+
     files
 }
 
@@ -240,6 +295,7 @@ pub async fn refresh_semantic_index<F>(
     repo_root: &Path,
     index_path: &Path,
     embedding_adapter: Option<&dyn LLMAdapter>,
+    changed_files: &[PathBuf],
     should_exclude: F,
     max_files: usize,
 ) -> Result<SemanticIndex>
@@ -251,19 +307,72 @@ where
         index.version = 1;
     }
 
+    let expected_embedding = embedding_metadata_for_adapter(embedding_adapter);
+    if !embedding_metadata_compatible(&index.embedding, &expected_embedding) {
+        index.entries.clear();
+        index.file_states.clear();
+    }
+    index.embedding = merge_embedding_metadata(&index.embedding, &expected_embedding);
+
     let mut summary_cache = SummaryCache::new();
-    let source_files = discover_source_files(repo_root, should_exclude, max_files);
-    let mut live_keys = HashSet::new();
+    let full_refresh = index.entries.is_empty() || index.file_states.is_empty();
+    let mut source_files = if full_refresh {
+        discover_source_files(repo_root, &should_exclude, max_files)
+    } else {
+        changed_files
+            .iter()
+            .map(|path| normalize_relative_path(path.clone()))
+            .collect::<Vec<_>>()
+    };
+    source_files.sort();
+    source_files.dedup();
+
+    let mut pending_chunks: Vec<(String, String, SemanticChunk)> = Vec::new();
 
     for relative_path in source_files {
         let full_path = repo_root.join(&relative_path);
+        if should_exclude(&relative_path) || !is_code_file(&relative_path) || !full_path.is_file() {
+            remove_entries_for_file(&mut index, &relative_path);
+            index.file_states.remove(&relative_path);
+            continue;
+        }
+
+        if let Ok(metadata) = std::fs::metadata(&full_path) {
+            if metadata.len() as usize > MAX_CODE_FILE_BYTES {
+                remove_entries_for_file(&mut index, &relative_path);
+                index.file_states.remove(&relative_path);
+                continue;
+            }
+        }
+
         let content = match std::fs::read_to_string(&full_path) {
             Ok(content) => content,
-            Err(_) => continue,
+            Err(_) => {
+                remove_entries_for_file(&mut index, &relative_path);
+                index.file_states.remove(&relative_path);
+                continue;
+            }
         };
 
+        let file_hash = hash_text(&content);
+        if index
+            .file_states
+            .get(&relative_path)
+            .map(|state| state.content_hash.as_str())
+            == Some(file_hash.as_str())
+        {
+            continue;
+        }
+
+        remove_entries_for_file(&mut index, &relative_path);
+        index.file_states.insert(
+            relative_path.clone(),
+            SemanticFileState {
+                content_hash: file_hash,
+            },
+        );
+
         let summaries = summarize_file_symbols(&relative_path, &content, &mut summary_cache);
-        let mut stale_embeddings: Vec<(String, String, SemanticChunk)> = Vec::new();
 
         for summary in summaries {
             let code_excerpt = excerpt_for_range(&content, summary.line_range, 20);
@@ -285,31 +394,25 @@ where
                     code_excerpt
                 )),
             };
-
-            live_keys.insert(chunk.key.clone());
-
-            match index.entries.get(&chunk.key) {
-                Some(existing) if existing.content_hash == chunk.content_hash => {}
-                _ => {
-                    stale_embeddings.push((chunk.key.clone(), chunk.embedding_text.clone(), chunk))
-                }
-            }
-        }
-
-        if !stale_embeddings.is_empty() {
-            let texts = stale_embeddings
-                .iter()
-                .map(|(_, text, _)| text.clone())
-                .collect::<Vec<_>>();
-            let embeddings = embed_texts_with_fallback(embedding_adapter, &texts).await;
-            for ((key, _, mut chunk), embedding) in stale_embeddings.into_iter().zip(embeddings) {
-                chunk.embedding = embedding;
-                index.entries.insert(key, chunk);
-            }
+            pending_chunks.push((chunk.key.clone(), chunk.embedding_text.clone(), chunk));
         }
     }
 
-    index.entries.retain(|key, _| live_keys.contains(key));
+    if !pending_chunks.is_empty() {
+        let texts = pending_chunks
+            .iter()
+            .map(|(_, text, _)| text.clone())
+            .collect::<Vec<_>>();
+        let embeddings = embed_texts_with_fallback(embedding_adapter, &texts).await;
+        if let Some(dimensions) = embeddings.iter().find(|embedding| !embedding.is_empty()) {
+            index.embedding.dimensions = dimensions.len();
+        }
+        for ((key, _, mut chunk), embedding) in pending_chunks.into_iter().zip(embeddings) {
+            chunk.embedding = embedding;
+            index.entries.insert(key, chunk);
+        }
+    }
+
     save_semantic_index(index_path, &index)?;
     Ok(index)
 }
@@ -328,16 +431,8 @@ pub async fn semantic_context_for_diff(
     }
 
     let query_embeddings = embed_texts_with_fallback(embedding_adapter, &query_texts).await;
-    let mut matches = Vec::new();
-    for query_embedding in &query_embeddings {
-        matches.extend(find_related_chunks(
-            index,
-            query_embedding,
-            Some(&diff.file_path),
-            limit,
-            min_similarity,
-        ));
-    }
+    let matches =
+        find_related_chunks_for_diff(index, &query_embeddings, diff, limit, min_similarity);
 
     let mut seen = HashSet::new();
     let mut chunks = Vec::new();
@@ -366,6 +461,7 @@ pub async fn semantic_context_for_diff(
     chunks
 }
 
+#[allow(dead_code)]
 pub fn find_related_chunks(
     index: &SemanticIndex,
     query_embedding: &[f32],
@@ -391,6 +487,45 @@ pub fn find_related_chunks(
         })
         .collect::<Vec<_>>();
 
+    matches.sort_by(|a, b| b.similarity.total_cmp(&a.similarity));
+    matches.truncate(limit.max(1));
+    matches
+}
+
+fn find_related_chunks_for_diff(
+    index: &SemanticIndex,
+    query_embeddings: &[Vec<f32>],
+    diff: &UnifiedDiff,
+    limit: usize,
+    min_similarity: f32,
+) -> Vec<SemanticMatch> {
+    let changed_ranges = changed_line_ranges(diff);
+    let mut best_matches: HashMap<String, SemanticMatch> = HashMap::new();
+
+    for query_embedding in query_embeddings {
+        for chunk in index.entries.values() {
+            if should_exclude_semantic_chunk(chunk, diff, &changed_ranges) {
+                continue;
+            }
+
+            let similarity = cosine_similarity(query_embedding, &chunk.embedding);
+            if similarity < min_similarity {
+                continue;
+            }
+
+            let entry = best_matches
+                .entry(chunk.key.clone())
+                .or_insert_with(|| SemanticMatch {
+                    chunk: chunk.clone(),
+                    similarity,
+                });
+            if similarity > entry.similarity {
+                entry.similarity = similarity;
+            }
+        }
+    }
+
+    let mut matches = best_matches.into_values().collect::<Vec<_>>();
     matches.sort_by(|a, b| b.similarity.total_cmp(&a.similarity));
     matches.truncate(limit.max(1));
     matches
@@ -425,6 +560,44 @@ pub fn find_similar_feedback_examples(
     matches.sort_by(|a, b| b.1.total_cmp(&a.1));
     matches.truncate(max_neighbors);
     matches
+}
+
+fn should_exclude_semantic_chunk(
+    chunk: &SemanticChunk,
+    diff: &UnifiedDiff,
+    changed_ranges: &[(usize, usize)],
+) -> bool {
+    if chunk.embedding.is_empty() {
+        return true;
+    }
+
+    if chunk.file_path != diff.file_path {
+        return false;
+    }
+
+    changed_ranges
+        .iter()
+        .any(|range| ranges_overlap(chunk.line_range, *range))
+}
+
+fn changed_line_ranges(diff: &UnifiedDiff) -> Vec<(usize, usize)> {
+    diff.hunks
+        .iter()
+        .filter_map(|hunk| {
+            let mut lines = hunk
+                .changes
+                .iter()
+                .filter(|change| matches!(change.change_type, ChangeType::Added))
+                .filter_map(|change| change.new_line_no);
+            let first = lines.next()?;
+            let last = lines.next_back().unwrap_or(first);
+            Some((first, last))
+        })
+        .collect()
+}
+
+fn ranges_overlap(left: (usize, usize), right: (usize, usize)) -> bool {
+    left.0 <= right.1 && right.0 <= left.1
 }
 
 pub fn build_feedback_embedding_text(content: &str, category: &str) -> String {
@@ -462,14 +635,13 @@ pub fn local_hash_embedding(text: &str) -> Vec<f32> {
 }
 
 pub fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
-    if left.is_empty() || right.is_empty() {
+    if left.is_empty() || right.is_empty() || left.len() != right.len() {
         return 0.0;
     }
-    let len = left.len().min(right.len());
     let mut dot = 0.0;
     let mut left_norm = 0.0;
     let mut right_norm = 0.0;
-    for idx in 0..len {
+    for idx in 0..left.len() {
         dot += left[idx] * right[idx];
         left_norm += left[idx] * left[idx];
         right_norm += right[idx] * right[idx];
@@ -561,6 +733,67 @@ fn feedback_example_fingerprint(
         file_patterns.join(","),
         content
     ))
+}
+
+fn embedding_metadata_for_adapter(adapter: Option<&dyn LLMAdapter>) -> SemanticEmbeddingMetadata {
+    match adapter {
+        Some(adapter) if adapter.supports_embeddings() => SemanticEmbeddingMetadata {
+            strategy: "native".to_string(),
+            model: adapter.model_name().to_string(),
+            dimensions: 0,
+        },
+        _ => default_embedding_metadata(),
+    }
+}
+
+fn embedding_metadata_compatible(
+    existing: &SemanticEmbeddingMetadata,
+    expected: &SemanticEmbeddingMetadata,
+) -> bool {
+    existing.strategy == expected.strategy
+        && existing.model == expected.model
+        && (existing.dimensions == 0
+            || expected.dimensions == 0
+            || existing.dimensions == expected.dimensions)
+}
+
+fn merge_embedding_metadata(
+    existing: &SemanticEmbeddingMetadata,
+    expected: &SemanticEmbeddingMetadata,
+) -> SemanticEmbeddingMetadata {
+    if !embedding_metadata_compatible(existing, expected) {
+        return expected.clone();
+    }
+
+    SemanticEmbeddingMetadata {
+        strategy: expected.strategy.clone(),
+        model: expected.model.clone(),
+        dimensions: if expected.dimensions > 0 {
+            expected.dimensions
+        } else {
+            existing.dimensions
+        },
+    }
+}
+
+fn remove_entries_for_file(index: &mut SemanticIndex, file_path: &Path) {
+    index
+        .entries
+        .retain(|_, chunk| chunk.file_path.as_path() != file_path);
+}
+
+fn normalize_relative_path(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn hash_text(content: &str) -> String {

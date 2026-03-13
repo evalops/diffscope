@@ -202,35 +202,72 @@ pub fn generate_feedback_context(store: &FeedbackStore) -> String {
 }
 
 pub fn save_feedback_store(path: &Path, store: &FeedbackStore) -> Result<()> {
-    let content = serde_json::to_string_pretty(store)?;
-    std::fs::write(path, content)?;
-    Ok(())
+    atomic_write_string(path, &serde_json::to_string_pretty(store)?)
 }
 
+#[allow(dead_code)]
 pub async fn record_semantic_feedback_example(
     config: &config::Config,
     comment: &core::Comment,
     accepted: bool,
 ) -> Result<()> {
+    record_semantic_feedback_examples(config, std::slice::from_ref(comment), accepted).await?;
+    Ok(())
+}
+
+pub async fn record_semantic_feedback_examples(
+    config: &config::Config,
+    comments: &[core::Comment],
+    accepted: bool,
+) -> Result<usize> {
+    if comments.is_empty() {
+        return Ok(0);
+    }
+
     let semantic_path = core::default_semantic_feedback_path(&config.feedback_path);
     let mut store = core::load_semantic_feedback_store(&semantic_path);
-    let embedding_text =
-        core::build_feedback_embedding_text(&comment.content, comment.category.as_str());
     let model_config = config.to_model_config_for_role(config::ModelRole::Embedding);
     let adapter = adapters::llm::create_adapter(&model_config).ok();
-    let embeddings = core::embed_texts_with_fallback(adapter.as_deref(), &[embedding_text]).await;
-    let embedding = embeddings.into_iter().next().unwrap_or_default();
+    core::align_semantic_feedback_store(&mut store, adapter.as_deref());
 
-    store.add_example(core::SemanticFeedbackExample {
-        content: comment.content.clone(),
-        category: comment.category.as_str().to_string(),
-        file_patterns: derive_file_patterns(&comment.file_path),
-        accepted,
-        created_at: chrono::Utc::now().to_rfc3339(),
-        embedding,
-    });
+    let embedding_texts = comments
+        .iter()
+        .map(|comment| {
+            core::build_feedback_embedding_text(&comment.content, comment.category.as_str())
+        })
+        .collect::<Vec<_>>();
+    let embeddings = core::embed_texts_with_fallback(adapter.as_deref(), &embedding_texts).await;
+    let before = store.examples.len();
+    let timestamp = chrono::Utc::now().to_rfc3339();
 
-    core::save_semantic_feedback_store(&semantic_path, &store)
+    for (comment, embedding) in comments.iter().zip(embeddings.into_iter()) {
+        store.add_example(core::SemanticFeedbackExample {
+            content: comment.content.clone(),
+            category: comment.category.as_str().to_string(),
+            file_patterns: derive_file_patterns(&comment.file_path),
+            accepted,
+            created_at: timestamp.clone(),
+            embedding,
+        });
+    }
+
+    core::save_semantic_feedback_store(&semantic_path, &store)?;
+    Ok(store.examples.len().saturating_sub(before))
+}
+
+fn atomic_write_string(path: &Path, content: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("feedback.json");
+    let tmp_path = path.with_file_name(format!("{}.{}.tmp", file_name, std::process::id()));
+    std::fs::write(&tmp_path, content)?;
+    std::fs::rename(&tmp_path, path)?;
+    Ok(())
 }
 
 #[cfg(test)]

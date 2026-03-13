@@ -20,7 +20,6 @@ use crate::output::OutputFormat;
 use crate::parsing::parse_llm_response;
 use crate::plugins;
 
-use super::compression;
 use super::triage;
 
 /// Agent activity metadata from the agent loop.
@@ -197,22 +196,6 @@ async fn review_diff_content_raw_inner(
         }
     }
 
-    // Adaptive compression: decide strategy based on token budget
-    let token_budget = config.max_diff_chars / 4; // rough char→token conversion
-    let compression_result = compression::compress_diffs(&diffs, token_budget.max(2000), 5);
-    info!(
-        "Compression strategy: {:?} ({} batches, {} skipped)",
-        compression_result.strategy,
-        compression_result.batches.len(),
-        compression_result.skipped_indices.len(),
-    );
-    if !compression_result.skipped_summary.is_empty() {
-        info!(
-            "Compression analysis skipped files (advisory in per-file mode):\n{}",
-            compression_result.skipped_summary
-        );
-    }
-
     // Gather git history for enhanced context
     let git_log_output = gather_git_log(repo_path);
 
@@ -314,10 +297,15 @@ async fn review_diff_content_raw_inner(
 
     let semantic_index = if config.semantic_rag {
         let index_path = core::default_index_path(repo_path);
+        let changed_files = diffs
+            .iter()
+            .map(|diff| diff.file_path.clone())
+            .collect::<Vec<_>>();
         match core::refresh_semantic_index(
             repo_path,
             &index_path,
             embedding_adapter.as_deref(),
+            &changed_files,
             |path| config.should_exclude(path),
             config.semantic_rag_max_files,
         )
@@ -335,7 +323,9 @@ async fn review_diff_content_raw_inner(
 
     let semantic_feedback_store = if config.semantic_feedback {
         let path = core::default_semantic_feedback_path(&config.feedback_path);
-        Some(core::load_semantic_feedback_store(&path))
+        let mut store = core::load_semantic_feedback_store(&path);
+        core::align_semantic_feedback_store(&mut store, embedding_adapter.as_deref());
+        Some(store)
     } else {
         None
     };
@@ -350,9 +340,13 @@ async fn review_diff_content_raw_inner(
     let repo_path_str = repo_path.to_string_lossy().to_string();
     let context_fetcher = core::ContextFetcher::new(repo_path.to_path_buf());
     let is_local = should_optimize_for_local(&config);
+    let mut batched_pre_analysis = plugin_manager
+        .run_pre_analyzers_for_review(&diffs, &repo_path_str)
+        .await?;
 
     // Phase 1: Prepare LLM requests for each file (sequential context gathering)
     struct FileReviewJob {
+        job_order: usize,
         diff_index: usize,
         request: adapters::llm::LLMRequest,
         active_rules: Vec<crate::core::ReviewRule>,
@@ -361,9 +355,11 @@ async fn review_diff_content_raw_inner(
         deterministic_comments: Vec<core::Comment>,
         /// When running specialized multi-pass review, identifies which pass this job belongs to.
         pass_kind: Option<core::SpecializedPassKind>,
+        mark_file_complete: bool,
     }
 
     let mut jobs: Vec<FileReviewJob> = Vec::new();
+    let mut next_job_order = 0usize;
 
     for (diff_index, diff) in diffs.iter().enumerate() {
         // Check if file should be excluded
@@ -383,10 +379,13 @@ async fn review_diff_content_raw_inner(
             continue;
         }
 
-        let pre_analysis = plugin_manager
-            .run_pre_analyzers(diff, &repo_path_str)
-            .await?;
-        let deterministic_comments = synthesize_analyzer_comments(pre_analysis.findings.clone())?;
+        let pre_analysis = batched_pre_analysis
+            .remove(&diff.file_path)
+            .unwrap_or_default();
+        let deterministic_comments = filter_comments_for_diff(
+            diff,
+            synthesize_analyzer_comments(pre_analysis.findings.clone())?,
+        );
 
         // Triage: skip files that don't need expensive LLM review
         let triage_result = triage::triage_diff(diff);
@@ -592,9 +591,11 @@ async fn review_diff_content_raw_inner(
                 user_prompt,
                 temperature: None,
                 max_tokens: None,
+                response_schema: Some(review_comments_response_schema()),
             };
 
             jobs.push(FileReviewJob {
+                job_order: next_job_order,
                 diff_index,
                 request,
                 active_rules,
@@ -602,10 +603,12 @@ async fn review_diff_content_raw_inner(
                 file_path: diff.file_path.clone(),
                 deterministic_comments: deterministic_comments.clone(),
                 pass_kind: None,
+                mark_file_complete: true,
             });
+            next_job_order += 1;
         } else {
             // Multi-pass specialized mode: create one job per pass per file
-            for pass_kind in &specialized_passes {
+            for (pass_index, pass_kind) in specialized_passes.iter().enumerate() {
                 let deterministic_comments_for_job =
                     if specialized_passes.first() == Some(pass_kind) {
                         deterministic_comments.clone()
@@ -644,9 +647,11 @@ async fn review_diff_content_raw_inner(
                     user_prompt,
                     temperature: None,
                     max_tokens: None,
+                    response_schema: Some(review_comments_response_schema()),
                 };
 
                 jobs.push(FileReviewJob {
+                    job_order: next_job_order,
                     diff_index,
                     request,
                     active_rules: active_rules.clone(),
@@ -654,7 +659,9 @@ async fn review_diff_content_raw_inner(
                     file_path: diff.file_path.clone(),
                     deterministic_comments: deterministic_comments_for_job,
                     pass_kind: Some(*pass_kind),
+                    mark_file_complete: pass_index + 1 == specialized_passes.len(),
                 });
+                next_job_order += 1;
             }
         }
     }
@@ -748,12 +755,14 @@ async fn review_diff_content_raw_inner(
                     );
                 }
                 (
+                    job.job_order,
                     job.diff_index,
                     job.active_rules,
                     job.path_config,
                     job.file_path,
                     job.deterministic_comments,
                     job.pass_kind,
+                    job.mark_file_complete,
                     response,
                     latency_ms,
                     agent_data,
@@ -766,7 +775,7 @@ async fn review_diff_content_raw_inner(
 
     // Phase 3: Process results in file order
     let mut indexed_results = results;
-    indexed_results.sort_by_key(|(idx, _, _, _, _, _, _, _, _)| *idx);
+    indexed_results.sort_by_key(|(job_order, _, _, _, _, _, _, _, _, _, _)| *job_order);
 
     let mut total_prompt_tokens: usize = 0;
     let mut total_completion_tokens: usize = 0;
@@ -778,12 +787,14 @@ async fn review_diff_content_raw_inner(
     let mut has_agent_activity = false;
 
     for (
+        _job_order,
         diff_index,
         active_rules,
         path_config,
         file_path,
         deterministic_comments,
         pass_kind,
+        mark_file_complete,
         response,
         latency_ms,
         agent_data,
@@ -794,14 +805,15 @@ async fn review_diff_content_raw_inner(
         match response {
             Err(e) => {
                 warn!("LLM request failed for {}: {}", file_path.display(), e);
-                file_metrics.push(FileMetric {
-                    file_path: file_path.clone(),
+                merge_file_metric(
+                    &mut file_metrics,
+                    &file_path,
                     latency_ms,
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
-                    comment_count: deterministic_comments.len(),
-                });
+                    0,
+                    0,
+                    0,
+                    deterministic_comments.len(),
+                );
                 all_comments.extend(deterministic_comments);
             }
             Ok(response) => {
@@ -841,14 +853,15 @@ async fn review_diff_content_raw_inner(
                     }
                     // Still record file metric even for validation failures
                     let analyzer_comment_count = deterministic_comments.len();
-                    file_metrics.push(FileMetric {
-                        file_path: file_path.clone(),
+                    merge_file_metric(
+                        &mut file_metrics,
+                        &file_path,
                         latency_ms,
-                        prompt_tokens: resp_prompt_tokens,
-                        completion_tokens: resp_completion_tokens,
-                        total_tokens: resp_total_tokens,
-                        comment_count: analyzer_comment_count,
-                    });
+                        resp_prompt_tokens,
+                        resp_completion_tokens,
+                        resp_total_tokens,
+                        analyzer_comment_count,
+                    );
 
                     all_comments.extend(deterministic_comments);
                     continue;
@@ -895,53 +908,45 @@ async fn review_diff_content_raw_inner(
                     *comments_by_pass.entry(pass_tag).or_insert(0) += comment_count;
 
                     // Build per-file metric; merge with existing entry for same file if multi-pass
-                    if let Some(existing) =
-                        file_metrics.iter_mut().find(|m| m.file_path == file_path)
-                    {
-                        existing.prompt_tokens += resp_prompt_tokens;
-                        existing.completion_tokens += resp_completion_tokens;
-                        existing.total_tokens += resp_total_tokens;
-                        existing.comment_count += comment_count;
-                        if latency_ms > existing.latency_ms {
-                            existing.latency_ms = latency_ms;
-                        }
-                    } else {
-                        file_metrics.push(FileMetric {
-                            file_path: file_path.clone(),
-                            latency_ms,
-                            prompt_tokens: resp_prompt_tokens,
-                            completion_tokens: resp_completion_tokens,
-                            total_tokens: resp_total_tokens,
-                            comment_count,
-                        });
-                    }
+                    merge_file_metric(
+                        &mut file_metrics,
+                        &file_path,
+                        latency_ms,
+                        resp_prompt_tokens,
+                        resp_completion_tokens,
+                        resp_total_tokens,
+                        comment_count,
+                    );
 
                     all_comments.extend(comments);
                 } else {
                     // Parse failed; still record file metric
                     let analyzer_comment_count = deterministic_comments.len();
-                    file_metrics.push(FileMetric {
-                        file_path: file_path.clone(),
+                    merge_file_metric(
+                        &mut file_metrics,
+                        &file_path,
                         latency_ms,
-                        prompt_tokens: resp_prompt_tokens,
-                        completion_tokens: resp_completion_tokens,
-                        total_tokens: resp_total_tokens,
-                        comment_count: analyzer_comment_count,
-                    });
+                        resp_prompt_tokens,
+                        resp_completion_tokens,
+                        resp_total_tokens,
+                        analyzer_comment_count,
+                    );
                     all_comments.extend(deterministic_comments);
                 }
             }
         }
 
-        files_completed += 1;
-        if let Some(ref cb) = on_progress_ref {
-            cb(ProgressUpdate {
-                current_file: file_path.display().to_string(),
-                files_total,
-                files_completed,
-                files_skipped: files_skipped_snapshot,
-                comments_so_far: all_comments.clone(),
-            });
+        if mark_file_complete {
+            files_completed += 1;
+            if let Some(ref cb) = on_progress_ref {
+                cb(ProgressUpdate {
+                    current_file: file_path.display().to_string(),
+                    files_total,
+                    files_completed,
+                    files_skipped: files_skipped_snapshot,
+                    comments_so_far: all_comments.clone(),
+                });
+            }
         }
     }
 
@@ -976,11 +981,10 @@ async fn review_diff_content_raw_inner(
         && llm_comments.len() <= config.verification_max_comments
     {
         let comment_count_before = llm_comments.len();
-        let fallback_comments = llm_comments.clone();
         match super::verification::verify_comments(
             llm_comments,
             &diffs,
-            repo_path,
+            &source_files,
             verification_adapter.as_ref(),
             config.verification_min_score,
         )
@@ -995,8 +999,11 @@ async fn review_diff_content_raw_inner(
                 verified
             }
             Err(e) => {
-                warn!("Verification pass failed, keeping all comments: {}", e);
-                fallback_comments
+                warn!(
+                    "Verification pass failed, dropping unverified LLM comments: {}",
+                    e
+                );
+                Vec::new()
             }
         }
     } else {
@@ -1489,8 +1496,12 @@ fn validate_llm_response(response: &str) -> Result<(), String> {
         return Err("Empty response from model".to_string());
     }
 
-    if serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
-        return Ok(());
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if is_structured_review_payload(&value) {
+            return Ok(());
+        }
+
+        return Err("JSON response did not match the review output contract".to_string());
     }
 
     // Response too short to contain valid review
@@ -1504,6 +1515,29 @@ fn validate_llm_response(response: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn is_structured_review_payload(value: &serde_json::Value) -> bool {
+    let items = if let Some(array) = value.as_array() {
+        array
+    } else if let Some(array) = value
+        .get("comments")
+        .or_else(|| value.get("findings"))
+        .or_else(|| value.get("results"))
+        .and_then(|items| items.as_array())
+    {
+        array
+    } else {
+        return false;
+    };
+
+    items.iter().all(|item| {
+        item.is_object()
+            && (item.get("line").is_some()
+                || item.get("line_number").is_some()
+                || item.get("content").is_some()
+                || item.get("issue").is_some())
+    })
 }
 
 fn has_excessive_repetition(text: &str) -> bool {
@@ -1527,6 +1561,68 @@ fn has_excessive_repetition(text: &str) -> bool {
         }
     }
     false
+}
+
+fn review_comments_response_schema() -> adapters::llm::StructuredOutputSchema {
+    adapters::llm::StructuredOutputSchema::json_schema(
+        "review_findings",
+        serde_json::json!({
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["line", "content", "severity", "category", "confidence", "fix_effort", "tags"],
+                "properties": {
+                    "line": {"type": "integer", "minimum": 1},
+                    "content": {"type": "string"},
+                    "severity": {"type": "string", "enum": ["error", "warning", "info", "suggestion"]},
+                    "category": {"type": "string", "enum": ["bug", "security", "performance", "style", "best_practice"]},
+                    "confidence": {"type": ["number", "string"]},
+                    "fix_effort": {"type": "string", "enum": ["low", "medium", "high"]},
+                    "rule_id": {"type": ["string", "null"]},
+                    "suggestion": {"type": ["string", "null"]},
+                    "code_suggestion": {"type": ["string", "null"]},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    }
+                }
+            }
+        }),
+    )
+}
+
+fn merge_file_metric(
+    file_metrics: &mut Vec<FileMetric>,
+    file_path: &Path,
+    latency_ms: u64,
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    total_tokens: usize,
+    comment_count: usize,
+) {
+    if let Some(existing) = file_metrics
+        .iter_mut()
+        .find(|metric| metric.file_path == file_path)
+    {
+        existing.prompt_tokens += prompt_tokens;
+        existing.completion_tokens += completion_tokens;
+        existing.total_tokens += total_tokens;
+        existing.comment_count += comment_count;
+        if latency_ms > existing.latency_ms {
+            existing.latency_ms = latency_ms;
+        }
+        return;
+    }
+
+    file_metrics.push(FileMetric {
+        file_path: file_path.to_path_buf(),
+        latency_ms,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        comment_count,
+    });
 }
 
 /// Auto-detect instruction files commonly used by AI coding tools.

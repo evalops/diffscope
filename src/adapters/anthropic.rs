@@ -354,6 +354,7 @@ mod tests {
             user_prompt: "user".to_string(),
             temperature: None,
             max_tokens: None,
+            response_schema: None,
         }
     }
 
@@ -593,6 +594,7 @@ mod tests {
                 user_prompt: "u".to_string(),
                 temperature: Some(0.9),
                 max_tokens: Some(200),
+                response_schema: None,
             })
             .await;
 

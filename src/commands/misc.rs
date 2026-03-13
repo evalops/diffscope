@@ -211,9 +211,7 @@ pub async fn feedback_command(
     );
 
     let is_accepted = action == "accept";
-    for comment in &comments {
-        let _ = review::record_semantic_feedback_example(&config, comment, is_accepted).await;
-    }
+    let _ = review::record_semantic_feedback_examples(&config, &comments, is_accepted).await;
 
     // Also record in the convention store for learned suppression/boost patterns
     let convention_path = resolve_convention_store_path_for_feedback(&config);
@@ -497,6 +495,7 @@ async fn answer_discussion_question(
         user_prompt: prompt,
         temperature: Some(0.2),
         max_tokens: Some(1200),
+        response_schema: None,
     };
 
     let response = adapter.complete(request).await?;

@@ -7,15 +7,18 @@ mod rule_helpers;
 pub mod triage;
 pub(crate) mod verification;
 
+#[allow(unused_imports)]
 pub use context_helpers::{
     inject_custom_context, inject_pattern_repository_context, rank_and_trim_context_chunks,
     resolve_pattern_repositories,
 };
 pub use feedback::{
     derive_file_patterns, load_feedback_store, load_feedback_store_from_path,
-    record_semantic_feedback_example, save_feedback_store,
+    record_semantic_feedback_examples, save_feedback_store,
 };
+#[allow(unused_imports)]
 pub use filters::apply_review_filters;
+#[allow(unused_imports)]
 pub use pipeline::{
     build_review_guidance, build_symbol_index, extract_symbols_from_diff, filter_comments_for_diff,
     review_diff_content, review_diff_content_raw, review_diff_content_raw_with_progress,
@@ -23,6 +26,7 @@ pub use pipeline::{
 };
 #[allow(unused_imports)]
 pub(crate) use pipeline::{AgentActivity, FileMetric, ReviewResult};
+#[allow(unused_imports)]
 pub use rule_helpers::{
     apply_rule_overrides, build_pr_summary_comment_body, inject_rule_context, load_review_rules,
     normalize_rule_id, summarize_rule_hits,

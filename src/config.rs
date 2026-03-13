@@ -1219,16 +1219,6 @@ fn default_max_diff_chars() -> usize {
 
 fn default_exclude_patterns() -> Vec<String> {
     [
-        "*.lock",
-        "Cargo.lock",
-        "package-lock.json",
-        "yarn.lock",
-        "pnpm-lock.yaml",
-        "go.sum",
-        "Gemfile.lock",
-        "Pipfile.lock",
-        "poetry.lock",
-        "composer.lock",
         "*.min.js",
         "*.min.css",
         "*.map",

@@ -255,8 +255,8 @@ fn exercise_code_summary(source_files: &HashMap<PathBuf, String>, cache: &mut Su
         embedding_text: "temp".to_string(),
     };
     cache.insert(temp_summary);
-    let _got = cache.get(temp_path, "_temp_");
-    let _removed = cache.remove(temp_path, "_temp_");
+    let _got = cache.get(temp_path, "_temp_", (1, 1));
+    let _removed = cache.remove(temp_path, "_temp_", (1, 1));
     cache.invalidate_file(temp_path);
 
     // Serialization round-trip

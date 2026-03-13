@@ -90,6 +90,7 @@ impl InteractiveCommand {
                 user_prompt: prompt,
                 temperature: Some(0.3),
                 max_tokens: Some(1000),
+                response_schema: None,
             };
 
             let response = adapter.complete(request).await?;
@@ -134,6 +135,7 @@ impl InteractiveCommand {
             user_prompt: format!("Explain this code or change:\n\n{}", context),
             temperature: Some(0.5),
             max_tokens: Some(800),
+            response_schema: None,
         };
 
         let response = adapter.complete(request).await?;
@@ -174,6 +176,7 @@ impl InteractiveCommand {
             user_prompt,
             temperature: Some(0.7),
             max_tokens: Some(1500),
+            response_schema: None,
         };
 
         let response = adapter.complete(request).await?;

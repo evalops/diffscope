@@ -1,7 +1,7 @@
 use crate::adapters::common;
 use crate::adapters::llm::{
     ChatRequest, ChatResponse, ChatRole, ContentBlock, LLMAdapter, LLMRequest, LLMResponse,
-    ModelConfig, StopReason, Usage,
+    ModelConfig, StopReason, StructuredOutputSchema, Usage,
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -22,6 +22,8 @@ struct OpenAIRequest {
     messages: Vec<Message>,
     temperature: f32,
     max_tokens: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<OpenAIResponseFormat>,
 }
 
 #[derive(Serialize)]
@@ -43,6 +45,20 @@ struct OpenAIEmbeddingRequest {
 struct Message {
     role: String,
     content: String,
+}
+
+#[derive(Serialize)]
+struct OpenAIResponseFormat {
+    #[serde(rename = "type")]
+    format_type: String,
+    json_schema: OpenAIJsonSchemaFormat,
+}
+
+#[derive(Serialize)]
+struct OpenAIJsonSchemaFormat {
+    name: String,
+    schema: serde_json::Value,
+    strict: bool,
 }
 
 #[derive(Deserialize)]
@@ -221,7 +237,15 @@ impl OpenAIAdapter {
 
 #[async_trait]
 impl LLMAdapter for OpenAIAdapter {
-    async fn complete(&self, request: LLMRequest) -> Result<LLMResponse> {
+    async fn complete(&self, mut request: LLMRequest) -> Result<LLMResponse> {
+        if request.response_schema.is_some() {
+            if self.supports_native_response_schema() {
+                return self.complete_chat_completions(request).await;
+            }
+
+            request.response_schema = None;
+        }
+
         if should_use_responses_api(&self.config) {
             return self.complete_responses(request).await;
         }
@@ -482,6 +506,12 @@ fn should_use_responses_api(config: &ModelConfig) -> bool {
 }
 
 impl OpenAIAdapter {
+    fn supports_native_response_schema(&self) -> bool {
+        self.base_url.contains("api.openai.com")
+            || self.base_url.contains("127.0.0.1")
+            || self.base_url.contains("localhost")
+    }
+
     async fn complete_chat_completions(&self, request: LLMRequest) -> Result<LLMResponse> {
         let messages = vec![
             Message {
@@ -499,6 +529,10 @@ impl OpenAIAdapter {
             messages,
             temperature: request.temperature.unwrap_or(self.config.temperature),
             max_tokens: request.max_tokens.unwrap_or(self.config.max_tokens),
+            response_format: request
+                .response_schema
+                .as_ref()
+                .map(to_openai_response_format),
         };
 
         let url = format!("{}/chat/completions", self.base_url);
@@ -576,6 +610,17 @@ impl OpenAIAdapter {
     }
 }
 
+fn to_openai_response_format(schema: &StructuredOutputSchema) -> OpenAIResponseFormat {
+    OpenAIResponseFormat {
+        format_type: "json_schema".to_string(),
+        json_schema: OpenAIJsonSchemaFormat {
+            name: schema.name.clone(),
+            schema: schema.schema.clone(),
+            strict: schema.strict,
+        },
+    }
+}
+
 fn extract_response_text(response: &OpenAIResponsesResponse) -> String {
     let mut combined = String::new();
 
@@ -603,8 +648,9 @@ mod tests {
     use super::*;
     use crate::adapters::llm::{
         ChatMessage, ChatRequest, ContentBlock as CB, LLMAdapter, LLMRequest, ModelConfig,
-        StopReason, ToolDefinition,
+        StopReason, StructuredOutputSchema, ToolDefinition,
     };
+    use mockito::Matcher;
 
     fn test_config(base_url: &str) -> ModelConfig {
         ModelConfig {
@@ -625,7 +671,55 @@ mod tests {
             user_prompt: "user".to_string(),
             temperature: None,
             max_tokens: None,
+            response_schema: None,
         }
+    }
+
+    #[tokio::test]
+    async fn test_structured_output_schema_uses_chat_response_format() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/chat/completions")
+            .match_body(Matcher::PartialJsonString(
+                serde_json::json!({
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "review_findings",
+                            "strict": true
+                        }
+                    }
+                })
+                .to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [{"message": {"role": "assistant", "content": "[]"}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                    "model": "gpt-4o"
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let adapter = OpenAIAdapter::new(test_config(&server.url())).unwrap();
+        let result = adapter
+            .complete(LLMRequest {
+                system_prompt: "system".to_string(),
+                user_prompt: "user".to_string(),
+                temperature: None,
+                max_tokens: None,
+                response_schema: Some(StructuredOutputSchema::json_schema(
+                    "review_findings",
+                    serde_json::json!({"type": "array"}),
+                )),
+            })
+            .await;
+
+        assert!(result.is_ok());
+        mock.assert_async().await;
     }
 
     #[tokio::test]
@@ -1103,6 +1197,7 @@ mod tests {
                 user_prompt: "u".to_string(),
                 temperature: Some(0.8),
                 max_tokens: Some(500),
+                response_schema: None,
             })
             .await;
 

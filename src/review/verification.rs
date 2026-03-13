@@ -4,10 +4,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::Path;
 use tracing::info;
 
-use crate::adapters::llm::{LLMAdapter, LLMRequest};
+use crate::adapters::llm::{LLMAdapter, LLMRequest, StructuredOutputSchema};
 use crate::core::{Comment, UnifiedDiff};
 
 /// Result of verifying a single review comment
@@ -35,6 +34,8 @@ const AUTO_ZERO_PATTERNS: &[&str] = &[
     "trailing newline",
 ];
 
+const VERIFICATION_BATCH_SIZE: usize = 6;
+
 const VERIFICATION_SYSTEM_PROMPT: &str = r#"You are a code review verifier. Your job is to validate review findings against the exact code snippets provided.
 
 For each finding, assess:
@@ -42,6 +43,7 @@ For each finding, assess:
 2. Does the comment accurately describe the code shown in the diff and nearby file context?
 3. Is the suggestion sound, or would it introduce regressions / incorrect advice?
 4. Is the finding a false positive or hallucinated issue?
+If the evidence is missing, ambiguous, or the file/line cannot be confirmed, return a result anyway with accurate=false, line_correct=false, and a low score.
 
 Score each finding 0-10:
 - 8-10: Critical bugs or security issues that are clearly present
@@ -49,7 +51,7 @@ Score each finding 0-10:
 - 1-4: Questionable issues, possibly hallucinated or too trivial
 - 0: Noise (docstrings, type hints, import ordering, trailing whitespace)
 
-Respond with JSON only. Return an array of objects with this schema:
+Respond with JSON only. Return exactly one object per finding, in order, with this schema:
 [{"index":1,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":8,"reason":"brief reason"}]
 "#;
 
@@ -58,7 +60,7 @@ Respond with JSON only. Return an array of objects with this schema:
 pub async fn verify_comments(
     comments: Vec<Comment>,
     diffs: &[UnifiedDiff],
-    repo_path: &Path,
+    source_files: &HashMap<std::path::PathBuf, String>,
     adapter: &dyn LLMAdapter,
     min_score: u8,
 ) -> Result<Vec<Comment>> {
@@ -66,45 +68,58 @@ pub async fn verify_comments(
         return Ok(comments);
     }
 
-    // Build verification prompt
-    let prompt = build_verification_prompt(&comments, diffs, repo_path);
-
-    let request = LLMRequest {
-        system_prompt: VERIFICATION_SYSTEM_PROMPT.to_string(),
-        user_prompt: prompt,
-        temperature: Some(0.0),
-        max_tokens: Some(2000),
-    };
-
-    let response = adapter.complete(request).await?;
-    let results = parse_verification_response(&response.content, &comments);
-
-    // Filter comments based on verification results
     let total_count = comments.len();
     let mut verified = Vec::new();
-    for comment in comments {
-        let result = results.iter().find(|r| r.comment_id == comment.id);
-        match result {
-            Some(r) if r.score >= min_score && r.accurate && r.line_correct => {
-                let mut comment = comment;
-                // Update confidence based on verification score
-                comment.confidence = (r.score as f32 / 10.0).min(1.0);
-                if !r.suggestion_sound {
-                    comment.suggestion = None;
-                    comment.code_suggestion = None;
-                }
-                verified.push(comment);
-            }
-            Some(r) => {
-                // Score too low, skip
+    for batch in comments.chunks(VERIFICATION_BATCH_SIZE) {
+        let prompt = build_verification_prompt(batch, diffs, source_files);
+        let request = LLMRequest {
+            system_prompt: VERIFICATION_SYSTEM_PROMPT.to_string(),
+            user_prompt: prompt,
+            temperature: Some(0.0),
+            max_tokens: Some((batch.len() * 220).max(400)),
+            response_schema: Some(verification_response_schema()),
+        };
+
+        let response = match adapter.complete(request).await {
+            Ok(response) => response,
+            Err(error) => {
                 info!(
-                    "Verification filtered comment {} (score: {})",
-                    comment.id, r.score
+                    "Verification batch failed for {} comment(s): {}",
+                    batch.len(),
+                    error
                 );
+                continue;
             }
-            None => {
-                // No verification result found, keep with original confidence
-                verified.push(comment);
+        };
+        let results = parse_verification_response(&response.content, batch)
+            .into_iter()
+            .map(|result| (result.comment_id.clone(), result))
+            .collect::<HashMap<_, _>>();
+
+        for mut comment in batch.iter().cloned() {
+            match results.get(&comment.id) {
+                Some(result)
+                    if result.score >= min_score && result.accurate && result.line_correct =>
+                {
+                    comment.confidence = (result.score as f32 / 10.0).min(1.0);
+                    if !result.suggestion_sound {
+                        comment.suggestion = None;
+                        comment.code_suggestion = None;
+                    }
+                    verified.push(comment);
+                }
+                Some(result) => {
+                    info!(
+                        "Verification filtered comment {} (score: {}, accurate: {}, line_correct: {})",
+                        comment.id, result.score, result.accurate, result.line_correct
+                    );
+                }
+                None => {
+                    info!(
+                        "Verification dropped comment {} because the verifier returned no result",
+                        comment.id
+                    );
+                }
             }
         }
     }
@@ -127,7 +142,7 @@ pub fn is_auto_zero(content: &str) -> bool {
 fn build_verification_prompt(
     comments: &[Comment],
     diffs: &[UnifiedDiff],
-    repo_path: &Path,
+    source_files: &HashMap<std::path::PathBuf, String>,
 ) -> String {
     let diff_map = diffs
         .iter()
@@ -156,8 +171,8 @@ fn build_verification_prompt(
                 prompt.push_str("\n```\n");
             }
         }
-        if let Ok(content) = std::fs::read_to_string(repo_path.join(&comment.file_path)) {
-            let file_context = source_context_for_line(&content, comment.line_number, 6);
+        if let Some(content) = source_files.get(&comment.file_path) {
+            let file_context = source_context_for_line(content, comment.line_number, 6);
             if !file_context.trim().is_empty() {
                 prompt.push_str("- Nearby file context:\n```\n");
                 prompt.push_str(&file_context);
@@ -169,6 +184,35 @@ fn build_verification_prompt(
 
     prompt.push_str("Return JSON only. Do not add commentary outside the JSON array.\n");
     prompt
+}
+
+fn verification_response_schema() -> StructuredOutputSchema {
+    StructuredOutputSchema::json_schema(
+        "verification_results",
+        serde_json::json!({
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                    "index",
+                    "accurate",
+                    "line_correct",
+                    "suggestion_sound",
+                    "score",
+                    "reason"
+                ],
+                "properties": {
+                    "index": {"type": "integer", "minimum": 1},
+                    "accurate": {"type": "boolean"},
+                    "line_correct": {"type": "boolean"},
+                    "suggestion_sound": {"type": "boolean"},
+                    "score": {"type": "integer", "minimum": 0, "maximum": 10},
+                    "reason": {"type": "string"}
+                }
+            }
+        }),
+    )
 }
 
 fn parse_verification_response(content: &str, comments: &[Comment]) -> Vec<VerificationResult> {
@@ -354,8 +398,9 @@ fn source_context_for_line(content: &str, line_number: usize, radius: usize) -> 
     if lines.is_empty() {
         return String::new();
     }
-    let start = line_number.saturating_sub(radius + 1);
-    let end = (line_number + radius).min(lines.len());
+    let target_line = line_number.clamp(1, lines.len());
+    let start = target_line.saturating_sub(radius + 1);
+    let end = (target_line + radius).min(lines.len());
     lines[start..end]
         .iter()
         .enumerate()
@@ -380,10 +425,37 @@ fn safe_utf8_prefix(content: &str, max_bytes: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::llm::{LLMAdapter, LLMRequest, LLMResponse};
     use crate::core::comment::{Category, Comment, FixEffort, Severity};
     use crate::core::diff_parser::{ChangeType, DiffHunk, DiffLine};
+    use async_trait::async_trait;
     use std::path::PathBuf;
+    use std::sync::Mutex;
     use tempfile::tempdir;
+
+    struct FakeVerificationAdapter {
+        responses: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl LLMAdapter for FakeVerificationAdapter {
+        async fn complete(&self, _request: LLMRequest) -> anyhow::Result<LLMResponse> {
+            let response = self
+                .responses
+                .lock()
+                .expect("verification adapter mutex poisoned")
+                .remove(0);
+            Ok(LLMResponse {
+                content: response,
+                model: "fake-verifier".to_string(),
+                usage: None,
+            })
+        }
+
+        fn model_name(&self) -> &str {
+            "fake-verifier"
+        }
+    }
 
     fn make_comment(id: &str, content: &str, line: usize) -> Comment {
         Comment {
@@ -443,7 +515,7 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        std::fs::write(&file_path, file_content).unwrap();
+        std::fs::write(&file_path, &file_content).unwrap();
 
         let diffs = vec![make_diff(
             "src/lib.rs",
@@ -456,7 +528,9 @@ mod tests {
             ],
         )];
 
-        build_verification_prompt(comments, &diffs, dir.path())
+        let source_files = HashMap::from([(PathBuf::from("src/lib.rs"), file_content)]);
+
+        build_verification_prompt(comments, &diffs, &source_files)
     }
 
     #[test]
@@ -519,6 +593,66 @@ mod tests {
         comment.suggestion = Some("Use prepared statements instead".to_string());
         let prompt = build_prompt_for_tests(&[comment]);
         assert!(prompt.contains("Suggestion: Use prepared statements instead"));
+    }
+
+    #[tokio::test]
+    async fn test_verify_comments_drops_missing_results() {
+        let comments = vec![make_comment("c1", "SQL injection", 10)];
+        let diffs = vec![make_diff(
+            "src/lib.rs",
+            &[(10, "let query = format!(\"SELECT * FROM users\", id);")],
+        )];
+        let source_files = HashMap::from([(
+            PathBuf::from("src/lib.rs"),
+            "let query = format!(\"SELECT * FROM users\", id);".to_string(),
+        )]);
+        let adapter = FakeVerificationAdapter {
+            responses: Mutex::new(vec!["[]".to_string()]),
+        };
+
+        let verified = verify_comments(comments, &diffs, &source_files, &adapter, 6)
+            .await
+            .unwrap();
+
+        assert!(verified.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_verify_comments_batches_and_preserves_verified_order() {
+        let comments = (1..=7)
+            .map(|index| make_comment(&format!("c{index}"), &format!("issue {index}"), index))
+            .collect::<Vec<_>>();
+        let diffs = vec![make_diff(
+            "src/lib.rs",
+            &[(1, "let first = 1;"), (7, "let seventh = 7;")],
+        )];
+        let source_files = HashMap::from([(
+            PathBuf::from("src/lib.rs"),
+            (1..=10)
+                .map(|line| format!("let line_{line} = {line};"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )]);
+        let adapter = FakeVerificationAdapter {
+            responses: Mutex::new(vec![
+                r#"[{"index":1,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":8,"reason":"ok"},{"index":2,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":9,"reason":"ok"},{"index":3,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":8,"reason":"ok"},{"index":4,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":8,"reason":"ok"},{"index":5,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":8,"reason":"ok"},{"index":6,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":8,"reason":"ok"}]"#.to_string(),
+                "[]".to_string(),
+            ]),
+        };
+
+        let verified = verify_comments(comments, &diffs, &source_files, &adapter, 6)
+            .await
+            .unwrap();
+
+        assert_eq!(verified.len(), 6);
+        assert_eq!(
+            verified.first().map(|comment| comment.id.as_str()),
+            Some("c1")
+        );
+        assert_eq!(
+            verified.last().map(|comment| comment.id.as_str()),
+            Some("c6")
+        );
     }
 
     #[test]

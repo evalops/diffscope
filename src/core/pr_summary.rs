@@ -46,6 +46,7 @@ impl PRSummaryGenerator {
             user_prompt: prompt,
             temperature: Some(0.3),
             max_tokens: Some(1000),
+            response_schema: None,
         };
 
         let response = adapter.complete(request).await?;
@@ -63,6 +64,7 @@ impl PRSummaryGenerator {
             user_prompt: prompt,
             temperature: Some(0.2),
             max_tokens: Some(800),
+            response_schema: None,
         };
 
         let response = adapter.complete(request).await?;

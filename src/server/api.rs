@@ -710,9 +710,9 @@ pub async fn submit_feedback(
         let mut feedback_store = crate::review::load_feedback_store(&config);
         feedback_store.record_feedback_patterns(&comment_category, &file_patterns, is_accepted);
         let _ = crate::review::save_feedback_store(&config.feedback_path, &feedback_store);
-        let _ = crate::review::record_semantic_feedback_example(
+        let _ = crate::review::record_semantic_feedback_examples(
             &config,
-            &semantic_comment,
+            std::slice::from_ref(&semantic_comment),
             is_accepted,
         )
         .await;

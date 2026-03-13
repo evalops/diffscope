@@ -85,6 +85,7 @@ async fn suggest_commit_message(config: config::Config) -> Result<()> {
         user_prompt,
         temperature: Some(0.3),
         max_tokens: Some(500),
+        response_schema: None,
     };
 
     let response = adapter.complete(request).await?;
@@ -128,6 +129,7 @@ async fn suggest_pr_title(config: config::Config) -> Result<()> {
         user_prompt,
         temperature: Some(0.3),
         max_tokens: Some(200),
+        response_schema: None,
     };
 
     let response = adapter.complete(request).await?;

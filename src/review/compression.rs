@@ -6,6 +6,8 @@
 //!   Stage 3 – Clipped:    truncate remaining large files at clean line boundaries.
 //!   Stage 4 – MultiCall:  split into multiple LLM call batches.
 
+#![allow(dead_code)]
+
 use crate::core::diff_parser::{ChangeType, DiffHunk, UnifiedDiff};
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +41,7 @@ pub struct CompressionResult {
     /// Indices of diffs that were dropped entirely.
     pub skipped_indices: Vec<usize>,
     /// Human-readable summary of what was skipped.
+    #[allow(dead_code)]
     pub skipped_summary: String,
 }
 
