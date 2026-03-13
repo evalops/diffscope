@@ -8,6 +8,7 @@ mod options;
 mod report;
 
 use anyhow::Result;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::config;
@@ -15,7 +16,7 @@ use crate::config;
 use super::{EvalRunFilters, EvalRunMetadata, EvalRunOptions};
 use batch::run_eval_batch;
 use fixtures::run_eval_fixtures;
-use options::prepare_eval_options;
+use options::{ensure_frontier_eval_models, prepare_eval_options};
 use report::emit_eval_report;
 
 pub async fn eval_command(
@@ -25,6 +26,7 @@ pub async fn eval_command(
     options: EvalRunOptions,
 ) -> Result<()> {
     config.verification.fail_open = true;
+    ensure_frontier_eval_models(&config, &options)?;
     if options.repeat > 1 || !options.matrix_models.is_empty() {
         return run_eval_batch(config, &fixtures_dir, output_path.as_deref(), &options).await;
     }
@@ -69,6 +71,16 @@ fn build_eval_run_metadata(
         resolved_base_url.as_deref().or(config.base_url.as_deref()),
         resolved_adapter.as_deref().or(config.adapter.as_deref()),
     );
+    let mut verification_judges = Vec::new();
+    let mut seen_verification_judges = HashSet::new();
+    for role in std::iter::once(config.verification.model_role)
+        .chain(config.verification.additional_model_roles.iter().copied())
+    {
+        let model = config.model_for_role(role).to_string();
+        if seen_verification_judges.insert(model.clone()) {
+            verification_judges.push(model);
+        }
+    }
 
     EvalRunMetadata {
         started_at: chrono::Utc::now().to_rfc3339(),
@@ -88,6 +100,11 @@ fn build_eval_run_metadata(
             max_fixtures: options.max_fixtures,
         },
         verification_fail_open: config.verification.fail_open,
+        verification_judges,
+        verification_consensus_mode: config
+            .verification
+            .enabled
+            .then(|| config.verification.consensus_mode.as_str().to_string()),
         trend_file: options
             .trend_file
             .as_ref()
@@ -95,6 +112,7 @@ fn build_eval_run_metadata(
         artifact_dir: artifact_dir.map(|path| path.display().to_string()),
         repeat_index,
         repeat_total,
+        reproduction_validation: options.repro_validate,
     }
 }
 

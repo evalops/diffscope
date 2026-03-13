@@ -77,6 +77,16 @@ impl EvalPattern {
                 }
             }
         }
+        let rule_id_aliases: Vec<&str> = self
+            .rule_id_aliases
+            .iter()
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect();
+        if !rule_id_aliases.is_empty() {
+            parts.push(format!("rule_id_aliases={}", rule_id_aliases.join("|")));
+        }
 
         if parts.is_empty() {
             "empty-pattern".to_string()

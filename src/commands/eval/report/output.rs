@@ -29,6 +29,15 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
                 "strict"
             }
         );
+        if !report.run.verification_judges.is_empty() {
+            println!(
+                "Verification judges: {}",
+                report.run.verification_judges.join(", ")
+            );
+        }
+        if let Some(consensus_mode) = report.run.verification_consensus_mode.as_deref() {
+            println!("Verification consensus: {}", consensus_mode);
+        }
         if let Some(trend_file) = report.run.trend_file.as_deref() {
             println!("Trend file: {}", trend_file);
         }
@@ -39,6 +48,9 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
             (report.run.repeat_index, report.run.repeat_total)
         {
             println!("Repeat: {}/{}", repeat_index, repeat_total);
+        }
+        if report.run.reproduction_validation {
+            println!("Reproduction validation: enabled");
         }
     }
 
@@ -92,6 +104,38 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
         }
         for warning in &result.warnings {
             println!("  warning: {}", warning);
+        }
+        if let Some(verification_report) = result.verification_report.as_ref() {
+            println!(
+                "  verification-consensus: {} (required_votes={} judges={})",
+                verification_report.consensus_mode,
+                verification_report.required_votes,
+                verification_report.judge_count
+            );
+            for judge in &verification_report.judges {
+                println!(
+                    "    judge {}: passed={} filtered={} abstained={}",
+                    judge.model,
+                    judge.passed_comments,
+                    judge.filtered_comments,
+                    judge.abstained_comments
+                );
+            }
+        }
+        if let Some(agent_activity) = result.agent_activity.as_ref() {
+            println!(
+                "  review-agent: iterations={} tool-calls={}",
+                agent_activity.total_iterations,
+                agent_activity.tool_calls.len()
+            );
+        }
+        if let Some(reproduction_summary) = result.reproduction_summary.as_ref() {
+            println!(
+                "  reproduction: confirmed={} rejected={} inconclusive={}",
+                reproduction_summary.confirmed,
+                reproduction_summary.rejected,
+                reproduction_summary.inconclusive
+            );
         }
         if let Some(artifact_path) = result.artifact_path.as_deref() {
             println!("  artifact: {}", artifact_path);

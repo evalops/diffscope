@@ -25,6 +25,8 @@ pub use pipeline::{
     review_diff_content_with_repo, ProgressCallback, ProgressUpdate,
 };
 #[allow(unused_imports)]
+pub(crate) use pipeline::{describe_review_pipeline_graph, describe_review_postprocess_graph};
+#[allow(unused_imports)]
 pub(crate) use pipeline::{AgentActivity, FileMetric, ReviewResult};
 #[allow(unused_imports)]
 pub use rule_helpers::{

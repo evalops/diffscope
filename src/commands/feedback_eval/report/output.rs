@@ -44,6 +44,61 @@ pub(in super::super) fn print_feedback_eval_report(report: &FeedbackEvalReport) 
         );
     }
 
+    for bucket in report.by_rule.iter().take(6) {
+        println!(
+            "Rule {}: {}/{} accepted ({:.0}%)",
+            bucket.name,
+            bucket.accepted,
+            bucket.total,
+            bucket.acceptance_rate * 100.0
+        );
+    }
+
+    for bucket in report.high_confidence_by_category.iter().take(4) {
+        println!(
+            "High-confidence category {}: {}/{} accepted ({:.0}%)",
+            bucket.name,
+            bucket.accepted,
+            bucket.total,
+            bucket.acceptance_rate * 100.0
+        );
+    }
+
+    for bucket in report.high_confidence_by_rule.iter().take(4) {
+        println!(
+            "High-confidence rule {}: {}/{} accepted ({:.0}%)",
+            bucket.name,
+            bucket.accepted,
+            bucket.total,
+            bucket.acceptance_rate * 100.0
+        );
+    }
+
+    if let Some(correlation) = report.eval_correlation.as_ref() {
+        for bucket in correlation.by_category.iter().take(4) {
+            if let Some(eval_micro_f1) = bucket.eval_micro_f1 {
+                println!(
+                    "Category alignment {}: feedback={:.0}% high-confidence={:.0}% eval-F1={:.0}%",
+                    bucket.name,
+                    bucket.feedback_acceptance_rate * 100.0,
+                    bucket.high_confidence_acceptance_rate * 100.0,
+                    eval_micro_f1 * 100.0
+                );
+            }
+        }
+        for bucket in correlation.by_rule.iter().take(4) {
+            if let Some(eval_f1) = bucket.eval_f1 {
+                println!(
+                    "Rule alignment {}: feedback={:.0}% high-confidence={:.0}% eval-F1={:.0}%",
+                    bucket.rule_id,
+                    bucket.feedback_acceptance_rate * 100.0,
+                    bucket.high_confidence_acceptance_rate * 100.0,
+                    eval_f1 * 100.0
+                );
+            }
+        }
+    }
+
     if !report.showcase_candidates.is_empty() {
         println!(
             "Showcase candidates: {} accepted non-vague comment(s)",

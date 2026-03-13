@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::info;
 
 use crate::adapters::llm::{LLMAdapter, LLMRequest};
+use crate::config::VerificationConsensusMode;
 use crate::core::{Comment, LLMContextChunk, UnifiedDiff};
 
 #[path = "verification/parser.rs"]
@@ -33,9 +35,50 @@ pub struct VerificationResult {
 pub struct VerificationSummary {
     pub comments: Vec<Comment>,
     pub warnings: Vec<String>,
+    pub report: Option<VerificationReport>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct VerificationJudgeRun {
+    pub model: String,
+    pub total_comments: usize,
+    pub passed_comments: usize,
+    pub filtered_comments: usize,
+    pub abstained_comments: usize,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct VerificationReport {
+    pub consensus_mode: String,
+    pub required_votes: usize,
+    pub judge_count: usize,
+    pub judges: Vec<VerificationJudgeRun>,
 }
 
 const VERIFICATION_BATCH_SIZE: usize = 6;
+
+#[derive(Debug, Clone)]
+struct JudgeDecision {
+    comment_id: String,
+    kept_comment: Option<Comment>,
+    passed_vote: bool,
+    abstained: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SingleJudgeSummary {
+    model: String,
+    decisions: Vec<JudgeDecision>,
+    warnings: Vec<String>,
+}
+
+pub(crate) struct VerificationJudgeConfig<'a> {
+    pub adapters: &'a [Arc<dyn LLMAdapter>],
+    pub min_score: u8,
+    pub fail_open: bool,
+    pub consensus_mode: VerificationConsensusMode,
+}
 
 const VERIFICATION_SYSTEM_PROMPT: &str = r#"You are a code review verifier. Your job is to validate review findings against the exact code snippets provided.
 
@@ -59,9 +102,8 @@ Respond with JSON only. Return exactly one object per finding, in order, with th
 [{"index":1,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":8,"reason":"brief reason"}]
 "#;
 
-/// Verify a batch of review comments by asking the LLM to validate each one.
-/// Returns only comments that pass verification (score >= min_score), unless
-/// fail-open mode keeps the original batch after verifier failures.
+/// Verify a batch of review comments with a single judge model.
+#[cfg(test)]
 pub async fn verify_comments(
     comments: Vec<Comment>,
     diffs: &[UnifiedDiff],
@@ -75,8 +117,80 @@ pub async fn verify_comments(
         return VerificationSummary::default();
     }
 
+    let judge_summary = verify_comments_single(
+        &comments,
+        diffs,
+        source_files,
+        extra_context,
+        adapter,
+        min_score,
+        fail_open,
+    )
+    .await;
+    build_verification_summary(
+        comments,
+        vec![judge_summary],
+        VerificationConsensusMode::Any,
+        fail_open,
+    )
+}
+
+pub(crate) async fn verify_comments_with_judges(
+    comments: Vec<Comment>,
+    diffs: &[UnifiedDiff],
+    source_files: &HashMap<std::path::PathBuf, String>,
+    extra_context: &HashMap<std::path::PathBuf, Vec<LLMContextChunk>>,
+    judge_config: VerificationJudgeConfig<'_>,
+) -> VerificationSummary {
+    if comments.is_empty() {
+        return VerificationSummary::default();
+    }
+
+    if judge_config.adapters.is_empty() {
+        return VerificationSummary {
+            comments,
+            warnings: vec![
+                "verification skipped because no judge models were configured".to_string(),
+            ],
+            report: None,
+        };
+    }
+
+    let mut judge_summaries = Vec::new();
+    for adapter in judge_config.adapters {
+        judge_summaries.push(
+            verify_comments_single(
+                &comments,
+                diffs,
+                source_files,
+                extra_context,
+                adapter.as_ref(),
+                judge_config.min_score,
+                judge_config.fail_open,
+            )
+            .await,
+        );
+    }
+
+    build_verification_summary(
+        comments,
+        judge_summaries,
+        judge_config.consensus_mode,
+        judge_config.fail_open,
+    )
+}
+
+async fn verify_comments_single(
+    comments: &[Comment],
+    diffs: &[UnifiedDiff],
+    source_files: &HashMap<std::path::PathBuf, String>,
+    extra_context: &HashMap<std::path::PathBuf, Vec<LLMContextChunk>>,
+    adapter: &dyn LLMAdapter,
+    min_score: u8,
+    fail_open: bool,
+) -> SingleJudgeSummary {
     let total_count = comments.len();
-    let mut verified = Vec::new();
+    let mut decisions = Vec::new();
     let mut warnings = Vec::new();
     for batch in comments.chunks(VERIFICATION_BATCH_SIZE) {
         let prompt = build_verification_prompt(batch, diffs, source_files, extra_context);
@@ -92,34 +206,48 @@ pub async fn verify_comments(
             Ok(response) => response,
             Err(error) => {
                 info!(
-                    "Verification batch failed for {} comment(s): {}",
+                    "Verification batch failed for {} comment(s) with {}: {}",
                     batch.len(),
+                    adapter.model_name(),
                     error
                 );
                 if fail_open {
                     warnings.push(format!(
-                        "verification fail-open kept {} comment(s) after verifier request error: {}",
+                        "verification judge {} fail-open kept {} comment(s) after verifier request error: {}",
+                        adapter.model_name(),
                         batch.len(),
                         error
                     ));
-                    verified.extend(batch.iter().cloned());
                 }
+                decisions.extend(batch.iter().cloned().map(|comment| JudgeDecision {
+                    comment_id: comment.id.clone(),
+                    kept_comment: if fail_open { Some(comment) } else { None },
+                    passed_vote: false,
+                    abstained: true,
+                }));
                 continue;
             }
         };
 
         let Some(parsed_results) = try_parse_verification_response(&response.content, batch) else {
             info!(
-                "Verification batch returned an unparseable response for {} comment(s)",
-                batch.len()
+                "Verification batch returned an unparseable response for {} comment(s) with {}",
+                batch.len(),
+                adapter.model_name()
             );
             if fail_open {
                 warnings.push(format!(
-                    "verification fail-open kept {} comment(s) after unparseable verifier output",
+                    "verification judge {} fail-open kept {} comment(s) after unparseable verifier output",
+                    adapter.model_name(),
                     batch.len()
                 ));
-                verified.extend(batch.iter().cloned());
             }
+            decisions.extend(batch.iter().cloned().map(|comment| JudgeDecision {
+                comment_id: comment.id.clone(),
+                kept_comment: if fail_open { Some(comment) } else { None },
+                passed_vote: false,
+                abstained: true,
+            }));
             continue;
         };
 
@@ -138,32 +266,191 @@ pub async fn verify_comments(
                         comment.suggestion = None;
                         comment.code_suggestion = None;
                     }
-                    verified.push(comment);
+                    decisions.push(JudgeDecision {
+                        comment_id: comment.id.clone(),
+                        kept_comment: Some(comment),
+                        passed_vote: true,
+                        abstained: false,
+                    });
                 }
                 Some(result) => {
                     info!(
-                        "Verification filtered comment {} (score: {}, accurate: {}, line_correct: {})",
-                        comment.id, result.score, result.accurate, result.line_correct
+                        "Verification filtered comment {} by {} (score: {}, accurate: {}, line_correct: {})",
+                        comment.id,
+                        adapter.model_name(),
+                        result.score,
+                        result.accurate,
+                        result.line_correct
                     );
+                    decisions.push(JudgeDecision {
+                        comment_id: comment.id.clone(),
+                        kept_comment: None,
+                        passed_vote: false,
+                        abstained: false,
+                    });
                 }
                 None => {
                     info!(
-                        "Verification dropped comment {} because the verifier returned no result",
-                        comment.id
+                        "Verification dropped comment {} because {} returned no result",
+                        comment.id,
+                        adapter.model_name()
                     );
+                    decisions.push(JudgeDecision {
+                        comment_id: comment.id.clone(),
+                        kept_comment: None,
+                        passed_vote: false,
+                        abstained: false,
+                    });
                 }
             }
         }
     }
 
+    let verified_count = decisions
+        .iter()
+        .filter(|decision| decision.passed_vote)
+        .count();
     info!(
-        "Verification: {}/{} comments passed",
-        verified.len(),
+        "Verification judge {}: {}/{} comments passed",
+        adapter.model_name(),
+        verified_count,
         total_count
+    );
+
+    SingleJudgeSummary {
+        model: adapter.model_name().to_string(),
+        decisions,
+        warnings,
+    }
+}
+
+fn build_verification_summary(
+    comments: Vec<Comment>,
+    judge_summaries: Vec<SingleJudgeSummary>,
+    consensus_mode: VerificationConsensusMode,
+    fail_open: bool,
+) -> VerificationSummary {
+    let configured_required_votes = required_votes(consensus_mode, judge_summaries.len());
+    let warnings = judge_summaries
+        .iter()
+        .flat_map(|summary| summary.warnings.iter().cloned())
+        .collect::<Vec<_>>();
+    let decision_maps = judge_summaries
+        .iter()
+        .map(|summary| {
+            summary
+                .decisions
+                .iter()
+                .map(|decision| (decision.comment_id.clone(), decision))
+                .collect::<HashMap<_, _>>()
+        })
+        .collect::<Vec<_>>();
+
+    let mut verified = Vec::new();
+    for original_comment in comments {
+        let mut decisive_votes = 0usize;
+        let mut positive_comments = Vec::new();
+        let mut abstained_comments = Vec::new();
+
+        for decision_map in &decision_maps {
+            let Some(decision) = decision_map.get(&original_comment.id) else {
+                continue;
+            };
+            if decision.abstained {
+                if let Some(comment) = &decision.kept_comment {
+                    abstained_comments.push(comment.clone());
+                }
+                continue;
+            }
+
+            decisive_votes += 1;
+            if decision.passed_vote {
+                if let Some(comment) = &decision.kept_comment {
+                    positive_comments.push(comment.clone());
+                }
+            }
+        }
+
+        if decisive_votes == 0 {
+            if fail_open {
+                verified.push(
+                    abstained_comments
+                        .into_iter()
+                        .next()
+                        .unwrap_or(original_comment),
+                );
+            }
+            continue;
+        }
+
+        if positive_comments.len() >= required_votes(consensus_mode, decisive_votes) {
+            verified.push(select_best_verified_comment(
+                positive_comments,
+                &original_comment,
+            ));
+        }
+    }
+
+    info!(
+        "Verification consensus ({}) kept {}/{} comments across {} judge(s)",
+        consensus_mode.as_str(),
+        verified.len(),
+        decision_maps
+            .first()
+            .map(|map| map.len())
+            .unwrap_or_default(),
+        judge_summaries.len()
     );
 
     VerificationSummary {
         comments: verified,
         warnings,
+        report: Some(VerificationReport {
+            consensus_mode: consensus_mode.as_str().to_string(),
+            required_votes: configured_required_votes,
+            judge_count: judge_summaries.len(),
+            judges: judge_summaries
+                .into_iter()
+                .map(|summary| VerificationJudgeRun {
+                    total_comments: summary.decisions.len(),
+                    passed_comments: summary
+                        .decisions
+                        .iter()
+                        .filter(|decision| decision.passed_vote)
+                        .count(),
+                    filtered_comments: summary
+                        .decisions
+                        .iter()
+                        .filter(|decision| !decision.abstained && !decision.passed_vote)
+                        .count(),
+                    abstained_comments: summary
+                        .decisions
+                        .iter()
+                        .filter(|decision| decision.abstained)
+                        .count(),
+                    model: summary.model,
+                    warnings: summary.warnings,
+                })
+                .collect(),
+        }),
     }
+}
+
+fn required_votes(consensus_mode: VerificationConsensusMode, judge_count: usize) -> usize {
+    match consensus_mode {
+        VerificationConsensusMode::Any => 1,
+        VerificationConsensusMode::Majority => (judge_count / 2).saturating_add(1),
+        VerificationConsensusMode::All => judge_count.max(1),
+    }
+}
+
+fn select_best_verified_comment(candidates: Vec<Comment>, fallback: &Comment) -> Comment {
+    candidates
+        .into_iter()
+        .max_by(|left, right| {
+            left.confidence
+                .partial_cmp(&right.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or_else(|| fallback.clone())
 }

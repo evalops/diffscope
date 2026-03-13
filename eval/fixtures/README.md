@@ -5,6 +5,7 @@ Starter fixture set for `diffscope eval`.
 - `repo_regressions/` contains regression-style diffs based on realistic mistakes in this codebase.
 - Each fixture can include `rule_id` as a label for rule-level precision/recall metrics.
 - Set `require_rule_id: true` on a pattern if the rule id must be emitted by the model for a match.
+- `deep_review_suite/` now includes core, authz, supply-chain, and async-correctness packs for broader live benchmarking.
 
 Run:
 
@@ -81,3 +82,4 @@ Notes:
 - Use `--trend-file` with `--label` to append comparable live-run checkpoints into a reusable `QualityTrend` JSON history, including suite/category/language micro-F1 series and verifier-health counters.
 - Use `--matrix-model` plus `--repeat` to compare the configured primary model against a small frontier-model matrix and to spot flaky live-run variance.
 - Use `--artifact-dir` to persist failed-fixture artifacts and per-run JSON reports for debugging.
+- Text expectations now use lighter semantic phrase matching and optional rule-id aliases, so fixtures are less brittle about exact wording.

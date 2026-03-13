@@ -7,10 +7,16 @@ mod pattern;
 #[path = "types/report.rs"]
 mod report;
 
-pub(super) use fixtures::{EvalFixture, EvalFixtureMetadata, LoadedEvalFixture};
+pub use fixtures::EvalFixtureMetadata;
+pub(super) use fixtures::{EvalFixture, LoadedEvalFixture};
 pub use options::EvalRunOptions;
 pub(super) use pattern::{EvalExpectations, EvalPattern};
+pub use report::{
+    EvalAgentActivity, EvalAgentToolCall, EvalReport, EvalReproductionCheck,
+    EvalReproductionSummary, EvalRuleMetrics, EvalRunMetadata, EvalVerificationJudgeReport,
+    EvalVerificationReport,
+};
 pub(super) use report::{
-    EvalFixtureResult, EvalNamedMetricComparison, EvalReport, EvalRuleMetrics,
-    EvalRuleScoreSummary, EvalRunFilters, EvalRunMetadata, EvalSuiteResult, EvalVerificationHealth,
+    EvalFixtureResult, EvalNamedMetricComparison, EvalRuleScoreSummary, EvalRunFilters,
+    EvalSuiteResult, EvalVerificationHealth,
 };

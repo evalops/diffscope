@@ -40,6 +40,8 @@ use chunking::maybe_review_chunked_diff_content;
 pub use comments::{filter_comments_for_diff, is_line_in_diff};
 pub use context::{build_symbol_index, extract_symbols_from_diff};
 pub use guidance::build_review_guidance;
+pub(crate) use orchestrate::describe_review_pipeline_graph;
+pub(crate) use postprocess::describe_review_postprocess_graph;
 pub(crate) use types::{AgentActivity, FileMetric, ReviewResult};
 pub use types::{ProgressCallback, ProgressUpdate};
 

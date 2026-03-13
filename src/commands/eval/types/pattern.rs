@@ -39,5 +39,7 @@ pub(in super::super) struct EvalPattern {
     #[serde(default)]
     pub(in super::super) rule_id: Option<String>,
     #[serde(default)]
+    pub(in super::super) rule_id_aliases: Vec<String>,
+    #[serde(default)]
     pub(in super::super) require_rule_id: bool,
 }

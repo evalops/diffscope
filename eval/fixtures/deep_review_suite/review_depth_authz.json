@@ -1,0 +1,98 @@
+{
+  "name": "review-depth-authz",
+  "author": "diffscope",
+  "version": "1.0.0",
+  "description": "Authorization and tenant-isolation benchmark pack for deeper live review runs.",
+  "languages": [
+    "typescript",
+    "python"
+  ],
+  "categories": [
+    "security"
+  ],
+  "thresholds": {
+    "min_precision": 0.45,
+    "min_recall": 0.35,
+    "min_f1": 0.4,
+    "max_false_positive_rate": 0.45,
+    "min_weighted_score": 0.45
+  },
+  "metadata": {
+    "purpose": "live-regression-eval",
+    "family": "review-depth"
+  },
+  "fixtures": [
+    {
+      "name": "typescript-idor-project-membership",
+      "category": "security",
+      "language": "typescript",
+      "difficulty": "Hard",
+      "diff_content": "diff --git a/src/routes/projects.ts b/src/routes/projects.ts\nindex 1111111..2222222 100644\n--- a/src/routes/projects.ts\n+++ b/src/routes/projects.ts\n@@ -1,5 +1,5 @@\n export async function getProject(req, res) {\n-  const project = await db.project.findFirst({ where: { id: req.params.id, ownerId: req.user.id } });\n+  const project = await db.project.findUnique({ where: { id: req.params.id } });\n   return res.json(project);\n }\n",
+      "expected_findings": [
+        {
+          "description": "Project lookup is no longer scoped to the current user or tenant.",
+          "severity": "Error",
+          "category": "Security",
+          "file_pattern": "src/routes/projects.ts",
+          "line_hint": 2,
+          "contains_any": [
+            "idor",
+            "authorization bypass",
+            "missing ownership check",
+            "project access is not scoped"
+          ],
+          "tags_any": [
+            "authorization",
+            "idor"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Object access should stay constrained to the caller's project membership.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "python-admin-delete-without-role-check",
+      "category": "security",
+      "language": "python",
+      "difficulty": "Hard",
+      "diff_content": "diff --git a/admin.py b/admin.py\nindex 1111111..2222222 100644\n--- a/admin.py\n+++ b/admin.py\n@@ -1,5 +1,6 @@\n def delete_account(request, store):\n-    if not request.user.is_admin:\n+    if request.args.get(\"as_admin\") == \"1\" or request.user.is_admin:\n+        pass\n+    else:\n         raise PermissionError(\"admin required\")\n     store.delete_user(request.args[\"user_id\"])\n     return {\"deleted\": True}\n",
+      "expected_findings": [
+        {
+          "description": "Dangerous admin operation no longer verifies the caller is an admin.",
+          "severity": "Error",
+          "category": "Security",
+          "file_pattern": "admin.py",
+          "line_hint": 2,
+          "contains_any": [
+            "missing authorization",
+            "authz bypass",
+            "admin action without role check",
+            "privilege escalation",
+            "user-controlled bypass"
+          ],
+          "tags_any": [
+            "authorization"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Privilege-gated destructive operations must keep their role checks.",
+      "source": "deep-review-suite"
+    }
+  ]
+}

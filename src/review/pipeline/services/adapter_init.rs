@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -8,7 +9,7 @@ use crate::config;
 
 pub(super) struct AdapterServices {
     pub adapter: Arc<dyn adapters::llm::LLMAdapter>,
-    pub verification_adapter: Arc<dyn adapters::llm::LLMAdapter>,
+    pub verification_adapters: Vec<Arc<dyn adapters::llm::LLMAdapter>>,
     pub embedding_adapter: Option<Arc<dyn adapters::llm::LLMAdapter>>,
     pub is_local: bool,
 }
@@ -20,31 +21,48 @@ pub(super) fn build_adapter_services(config: &config::Config) -> Result<AdapterS
     info!("Review adapter: {}", adapter.model_name());
 
     Ok(AdapterServices {
-        verification_adapter: build_verification_adapter(config, &model_config, &adapter)?,
+        verification_adapters: build_verification_adapters(config, &model_config, &adapter)?,
         embedding_adapter: build_embedding_adapter(config, &model_config, &adapter),
         is_local: should_optimize_for_local(config),
         adapter,
     })
 }
 
-fn build_verification_adapter(
+fn build_verification_adapters(
     config: &config::Config,
     model_config: &ModelConfig,
     adapter: &Arc<dyn adapters::llm::LLMAdapter>,
-) -> Result<Arc<dyn adapters::llm::LLMAdapter>> {
-    let verification_config = config.to_model_config_for_role(config.verification.model_role);
-    if verification_config.model_name != model_config.model_name {
-        info!(
-            "Using '{}' model '{}' for verification pass",
-            format!("{:?}", config.verification.model_role).to_lowercase(),
-            verification_config.model_name
-        );
-        Ok(Arc::from(adapters::llm::create_adapter(
-            &verification_config,
-        )?))
-    } else {
-        Ok(adapter.clone())
+) -> Result<Vec<Arc<dyn adapters::llm::LLMAdapter>>> {
+    let mut verification_adapters = Vec::new();
+    let mut seen_models = HashSet::new();
+    let mut roles = vec![config.verification.model_role];
+    roles.extend(config.verification.additional_model_roles.iter().copied());
+
+    for role in roles {
+        let verification_config = config.to_model_config_for_role(role);
+        if !seen_models.insert(verification_config.model_name.clone()) {
+            continue;
+        }
+
+        if verification_config.model_name != model_config.model_name {
+            info!(
+                "Using '{}' model '{}' for verification pass",
+                format!("{:?}", role).to_lowercase(),
+                verification_config.model_name
+            );
+            verification_adapters.push(Arc::from(adapters::llm::create_adapter(
+                &verification_config,
+            )?));
+        } else {
+            verification_adapters.push(adapter.clone());
+        }
     }
+
+    if verification_adapters.is_empty() {
+        verification_adapters.push(adapter.clone());
+    }
+
+    Ok(verification_adapters)
 }
 
 fn build_embedding_adapter(

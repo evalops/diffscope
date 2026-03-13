@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct EvalRunOptions {
     pub baseline_report: Option<PathBuf>,
     pub max_micro_f1_drop: Option<f32>,
@@ -21,4 +21,7 @@ pub struct EvalRunOptions {
     pub label: Option<String>,
     pub trend_file: Option<PathBuf>,
     pub artifact_dir: Option<PathBuf>,
+    pub allow_subfrontier_models: bool,
+    pub repro_validate: bool,
+    pub repro_max_comments: usize,
 }

@@ -334,6 +334,9 @@ mod tests {
             label: Some("smoke".to_string()),
             trend_file: None,
             artifact_dir: None,
+            allow_subfrontier_models: false,
+            repro_validate: false,
+            repro_max_comments: 3,
         }
     }
 

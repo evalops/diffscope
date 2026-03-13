@@ -48,7 +48,16 @@ pub(super) async fn run_eval_fixtures(
 
     let mut results = Vec::new();
     for fixture in fixtures {
-        results.push(run_eval_fixture(config, fixture, artifact_context.as_ref()).await?);
+        results.push(
+            run_eval_fixture(
+                config,
+                fixture,
+                options.repro_validate,
+                options.repro_max_comments,
+                artifact_context.as_ref(),
+            )
+            .await?,
+        );
     }
 
     Ok(EvalFixtureExecution {
@@ -221,6 +230,9 @@ mod tests {
                 label: None,
                 trend_file: None,
                 artifact_dir: None,
+                allow_subfrontier_models: false,
+                repro_validate: false,
+                repro_max_comments: 3,
             },
         );
 
@@ -260,6 +272,9 @@ mod tests {
                 label: None,
                 trend_file: None,
                 artifact_dir: None,
+                allow_subfrontier_models: false,
+                repro_validate: false,
+                repro_max_comments: 3,
             },
         );
 

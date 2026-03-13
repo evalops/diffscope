@@ -5,7 +5,10 @@ use std::path::PathBuf;
 use crate::core;
 use crate::core::eval_benchmarks::FixtureResult as BenchmarkFixtureResult;
 
-use super::super::super::{EvalFixtureMetadata, EvalRuleMetrics, EvalRuleScoreSummary};
+use super::super::super::{
+    EvalAgentActivity, EvalFixtureMetadata, EvalReproductionSummary, EvalRuleMetrics,
+    EvalRuleScoreSummary, EvalVerificationReport,
+};
 use super::loading::PreparedFixtureExecution;
 
 #[derive(Debug, Clone)]
@@ -25,6 +28,9 @@ pub(super) struct EvalFixtureArtifactInput<'a> {
     pub(super) benchmark_metrics: Option<&'a BenchmarkFixtureResult>,
     pub(super) rule_metrics: &'a [EvalRuleMetrics],
     pub(super) rule_summary: Option<EvalRuleScoreSummary>,
+    pub(super) verification_report: Option<&'a EvalVerificationReport>,
+    pub(super) agent_activity: Option<&'a EvalAgentActivity>,
+    pub(super) reproduction_summary: Option<&'a EvalReproductionSummary>,
 }
 
 #[derive(Debug, Serialize)]
@@ -44,6 +50,9 @@ struct EvalFixtureArtifact {
     benchmark_metrics: Option<BenchmarkFixtureResult>,
     rule_metrics: Vec<EvalRuleMetrics>,
     rule_summary: Option<EvalRuleScoreSummary>,
+    verification_report: Option<EvalVerificationReport>,
+    agent_activity: Option<EvalAgentActivity>,
+    reproduction_summary: Option<EvalReproductionSummary>,
 }
 
 pub(super) async fn maybe_write_fixture_artifact(
@@ -78,6 +87,9 @@ pub(super) async fn maybe_write_fixture_artifact(
         benchmark_metrics: input.benchmark_metrics.cloned(),
         rule_metrics: input.rule_metrics.to_vec(),
         rule_summary: input.rule_summary,
+        verification_report: input.verification_report.cloned(),
+        agent_activity: input.agent_activity.cloned(),
+        reproduction_summary: input.reproduction_summary.cloned(),
     };
     tokio::fs::write(&artifact_path, serde_json::to_string_pretty(&artifact)?).await?;
 

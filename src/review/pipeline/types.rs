@@ -22,6 +22,7 @@ pub struct ReviewResult {
     pub comments_by_pass: HashMap<String, usize>,
     pub hotspots: Vec<core::multi_pass::HotspotResult>,
     pub agent_activity: Option<AgentActivity>,
+    pub verification_report: Option<crate::review::verification::VerificationReport>,
     pub warnings: Vec<String>,
 }
 

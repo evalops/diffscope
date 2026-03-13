@@ -67,6 +67,7 @@ fn load_feedback_eval_input_from_semantic_store(
             line_number: None,
             file_patterns: example.file_patterns,
             content: example.content,
+            rule_id: None,
             category: example.category,
             severity: None,
             confidence: None,

@@ -6,7 +6,7 @@ use crate::core::diff_parser::{ChangeType, DiffHunk, DiffLine};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
 
 struct FakeVerificationAdapter {
@@ -378,6 +378,97 @@ async fn test_verify_comments_fail_open_on_adapter_error() {
     assert_eq!(verified.comments[0].id, comments[0].id);
     assert_eq!(verified.warnings.len(), 1);
     assert!(verified.warnings[0].contains("verifier request error"));
+}
+
+#[tokio::test]
+async fn test_verify_comments_with_judges_any_consensus_keeps_single_judge_pass() {
+    let comments = vec![make_comment("c1", "SQL injection", 10)];
+    let diffs = vec![make_diff(
+        "src/lib.rs",
+        &[(10, "let query = format!(\"SELECT * FROM users\", id);")],
+    )];
+    let source_files = HashMap::from([(
+        PathBuf::from("src/lib.rs"),
+        "let query = format!(\"SELECT * FROM users\", id);".to_string(),
+    )]);
+    let passing_judge: Arc<dyn LLMAdapter> = Arc::new(FakeVerificationAdapter {
+        responses: Mutex::new(vec![
+            r#"[{"index":1,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":9,"reason":"ok"}]"#
+                .to_string(),
+        ]),
+    });
+    let rejecting_judge: Arc<dyn LLMAdapter> = Arc::new(FakeVerificationAdapter {
+        responses: Mutex::new(vec![
+            r#"[{"index":1,"accurate":false,"line_correct":false,"suggestion_sound":false,"score":1,"reason":"nope"}]"#
+                .to_string(),
+        ]),
+    });
+
+    let verified = verify_comments_with_judges(
+        comments.clone(),
+        &diffs,
+        &source_files,
+        &HashMap::new(),
+        VerificationJudgeConfig {
+            adapters: &[passing_judge, rejecting_judge],
+            min_score: 6,
+            fail_open: false,
+            consensus_mode: crate::config::VerificationConsensusMode::Any,
+        },
+    )
+    .await;
+
+    assert_eq!(verified.comments.len(), 1);
+    assert_eq!(verified.comments[0].id, comments[0].id);
+    assert_eq!(
+        verified.report.as_ref().map(|report| report.judge_count),
+        Some(2)
+    );
+}
+
+#[tokio::test]
+async fn test_verify_comments_with_judges_all_consensus_drops_disagreement() {
+    let comments = vec![make_comment("c1", "SQL injection", 10)];
+    let diffs = vec![make_diff(
+        "src/lib.rs",
+        &[(10, "let query = format!(\"SELECT * FROM users\", id);")],
+    )];
+    let source_files = HashMap::from([(
+        PathBuf::from("src/lib.rs"),
+        "let query = format!(\"SELECT * FROM users\", id);".to_string(),
+    )]);
+    let passing_judge: Arc<dyn LLMAdapter> = Arc::new(FakeVerificationAdapter {
+        responses: Mutex::new(vec![
+            r#"[{"index":1,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":9,"reason":"ok"}]"#
+                .to_string(),
+        ]),
+    });
+    let rejecting_judge: Arc<dyn LLMAdapter> = Arc::new(FakeVerificationAdapter {
+        responses: Mutex::new(vec![
+            r#"[{"index":1,"accurate":false,"line_correct":false,"suggestion_sound":false,"score":1,"reason":"nope"}]"#
+                .to_string(),
+        ]),
+    });
+
+    let verified = verify_comments_with_judges(
+        comments,
+        &diffs,
+        &source_files,
+        &HashMap::new(),
+        VerificationJudgeConfig {
+            adapters: &[passing_judge, rejecting_judge],
+            min_score: 6,
+            fail_open: false,
+            consensus_mode: crate::config::VerificationConsensusMode::All,
+        },
+    )
+    .await;
+
+    assert!(verified.comments.is_empty());
+    assert_eq!(
+        verified.report.as_ref().map(|report| report.required_votes),
+        Some(2)
+    );
 }
 
 #[test]

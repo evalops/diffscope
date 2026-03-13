@@ -25,6 +25,7 @@ pub(in super::super) fn feedback_comment_from_comment(
         line_number: Some(comment.line_number),
         file_patterns,
         content: comment.content,
+        rule_id: comment.rule_id,
         category: comment.category.to_string(),
         severity: Some(comment.severity.to_string()),
         confidence: Some(comment.confidence),

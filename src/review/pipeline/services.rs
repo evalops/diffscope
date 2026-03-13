@@ -28,7 +28,7 @@ pub(super) struct PipelineServices {
     pub feedback_context: String,
     pub plugin_manager: plugins::plugin::PluginManager,
     pub adapter: Arc<dyn adapters::llm::LLMAdapter>,
-    pub verification_adapter: Arc<dyn adapters::llm::LLMAdapter>,
+    pub verification_adapters: Vec<Arc<dyn adapters::llm::LLMAdapter>>,
     pub embedding_adapter: Option<Arc<dyn adapters::llm::LLMAdapter>>,
     pub base_prompt_config: core::prompt::PromptConfig,
     pub convention_store_path: Option<PathBuf>,

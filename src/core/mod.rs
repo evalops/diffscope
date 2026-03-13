@@ -8,6 +8,7 @@ pub mod composable_pipeline;
 pub mod context;
 pub mod context_provenance;
 pub mod convention_learner;
+pub mod dag;
 pub mod diff_parser;
 pub mod enhanced_review;
 pub mod eval_benchmarks;

@@ -1,3 +1,4 @@
+mod dag;
 mod doctor;
 mod eval;
 mod feedback_eval;
@@ -7,6 +8,7 @@ mod pr;
 mod review;
 mod smart_review;
 
+pub(crate) use dag::{build_dag_catalog, describe_dag_graph, plan_dag_graph, DagGraphSelection};
 pub use doctor::doctor_command;
 pub use eval::{eval_command, EvalRunOptions};
 pub use feedback_eval::feedback_eval_command;

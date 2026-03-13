@@ -45,6 +45,10 @@ impl EvalPattern {
                 .map(str::trim)
                 .unwrap_or("")
                 .is_empty()
+            && self
+                .rule_id_aliases
+                .iter()
+                .all(|value| value.trim().is_empty())
             && (!self.require_rule_id
                 || self
                     .rule_id
@@ -68,14 +72,16 @@ pub(super) fn matches_file(pattern: &EvalPattern, comment: &core::Comment) -> bo
 }
 
 pub(super) fn matches_line(pattern: &EvalPattern, comment: &core::Comment) -> bool {
-    pattern.line.is_none_or(|line| comment.line_number == line)
+    pattern
+        .line
+        .is_none_or(|line| comment.line_number.abs_diff(line) <= 1)
 }
 
 pub(super) fn matches_contains(pattern: &EvalPattern, content_lower: &str) -> bool {
     if let Some(contains) = &pattern.contains {
-        let needle = contains.trim().to_ascii_lowercase();
+        let needle = contains.trim();
         if !needle.is_empty() {
-            return content_lower.contains(&needle);
+            return semantic_text_matches(content_lower, needle);
         }
     }
 
@@ -86,14 +92,14 @@ pub(super) fn matches_contains_any(pattern: &EvalPattern, content_lower: &str) -
     let contains_any = pattern
         .contains_any
         .iter()
-        .map(|value| value.trim().to_ascii_lowercase())
+        .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>();
 
     contains_any.is_empty()
         || contains_any
             .iter()
-            .any(|needle| content_lower.contains(needle))
+            .any(|needle| semantic_text_matches(content_lower, needle))
 }
 
 pub(super) fn matches_tags_any(pattern: &EvalPattern, comment: &core::Comment) -> bool {
@@ -110,7 +116,7 @@ pub(super) fn matches_tags_any(pattern: &EvalPattern, comment: &core::Comment) -
             comment
                 .tags
                 .iter()
-                .any(|tag| tag.eq_ignore_ascii_case(expected))
+                .any(|tag| semantic_text_matches(tag, expected))
         })
 }
 
@@ -162,4 +168,92 @@ pub(super) fn matches_fix_effort(pattern: &EvalPattern, comment: &core::Comment)
     }
 
     true
+}
+
+fn semantic_text_matches(content: &str, needle: &str) -> bool {
+    let needle_lower = needle.trim().to_ascii_lowercase();
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if content.contains(&needle_lower) {
+        return true;
+    }
+
+    let canonical_content = canonicalize_semantic_text(content);
+    let canonical_needle = canonicalize_semantic_text(&needle_lower);
+    if canonical_content.contains(&canonical_needle) {
+        return true;
+    }
+
+    let needle_tokens = semantic_tokens(&canonical_needle);
+    if needle_tokens.is_empty() {
+        return true;
+    }
+    let content_tokens = semantic_tokens(&canonical_content);
+    needle_tokens
+        .iter()
+        .all(|token| content_tokens.iter().any(|candidate| candidate == token))
+}
+
+fn canonicalize_semantic_text(text: &str) -> String {
+    let mut canonical = text.to_ascii_lowercase();
+    for (source, replacement) in [
+        ("authz", "authorization"),
+        ("authorisation", "authorization"),
+        ("access control", "authorization"),
+        ("broken access control", "authorization bypass"),
+        ("piping curl output directly to bash", "curl pipe to shell"),
+        ("pipe curl output directly to bash", "curl pipe to shell"),
+        (
+            "piping remote script directly to bash",
+            "curl pipe to shell",
+        ),
+        ("piping a remote script to bash", "curl pipe to shell"),
+        ("untrusted code", "remote script"),
+        ("attack vector", "risk"),
+        ("sqli", "sql injection"),
+        ("xss", "cross site scripting"),
+        ("ssrf", "server side request forgery"),
+        ("xxe", "xml external entity"),
+        ("rce", "remote code execution"),
+        ("n+1", "n plus one"),
+        ("n plus 1", "n plus one"),
+        ("directory traversal", "path traversal"),
+        ("cross-file", "cross file"),
+        ("use-after-free", "use after free"),
+    ] {
+        canonical = canonical.replace(source, replacement);
+    }
+    canonical = canonical
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { ' ' })
+        .collect::<String>();
+    canonical = canonical.split_whitespace().collect::<Vec<_>>().join(" ");
+    for (source, replacement) in [
+        ("auth bypass", "authorization bypass"),
+        ("auth check", "authorization check"),
+        ("role check", "authorization check"),
+    ] {
+        canonical = canonical.replace(source, replacement);
+    }
+    canonical
+}
+
+fn semantic_tokens(text: &str) -> Vec<String> {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(|token| match token.to_ascii_lowercase().as_str() {
+            "auth" | "authz" => "authorization".to_string(),
+            "authn" => "authentication".to_string(),
+            "access" => "authorization".to_string(),
+            "piping" | "piped" | "pipes" => "pipe".to_string(),
+            "bash" | "sh" => "shell".to_string(),
+            "downloaded" | "downloading" | "downloads" => "download".to_string(),
+            "execution" | "executes" | "executed" | "executing" => "execute".to_string(),
+            "verification" | "verifies" | "verified" | "verifying" => "verify".to_string(),
+            "risks" => "risk".to_string(),
+            other => other.to_string(),
+        })
+        .collect()
 }

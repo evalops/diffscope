@@ -20,15 +20,15 @@ pub(in super::super) struct EvalFixture {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(in super::super) struct EvalFixtureMetadata {
+pub struct EvalFixtureMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) category: Option<String>,
+    pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) language: Option<String>,
+    pub language: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) source: Option<String>,
+    pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) description: Option<String>,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone)]

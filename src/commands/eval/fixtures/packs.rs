@@ -39,6 +39,7 @@ pub(super) fn expand_community_fixture_pack(
                             confidence_at_most: finding.confidence_at_most,
                             fix_effort: finding.fix_effort,
                             rule_id: finding.rule_id.clone(),
+                            rule_id_aliases: finding.rule_id_aliases,
                             require_rule_id: finding.rule_id.is_some(),
                             ..Default::default()
                         })

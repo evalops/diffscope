@@ -1,0 +1,97 @@
+{
+  "name": "review-depth-supply-chain",
+  "author": "diffscope",
+  "version": "1.0.0",
+  "description": "Supply-chain and dependency trust benchmark pack for deeper live review runs.",
+  "languages": [
+    "yaml",
+    "docker"
+  ],
+  "categories": [
+    "security"
+  ],
+  "thresholds": {
+    "min_precision": 0.45,
+    "min_recall": 0.35,
+    "min_f1": 0.4,
+    "max_false_positive_rate": 0.45,
+    "min_weighted_score": 0.45
+  },
+  "metadata": {
+    "purpose": "live-regression-eval",
+    "family": "review-depth"
+  },
+  "fixtures": [
+    {
+      "name": "yaml-unpinned-github-action",
+      "category": "security",
+      "language": "yaml",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml\nindex 1111111..2222222 100644\n--- a/.github/workflows/build.yml\n+++ b/.github/workflows/build.yml\n@@ -6,4 +6,5 @@ jobs:\n   build:\n     runs-on: ubuntu-latest\n     steps:\n-      - uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608\n+      - uses: actions/checkout@v4\n+      - uses: docker/setup-buildx-action@v3\n",
+      "expected_findings": [
+        {
+          "description": "GitHub Actions are no longer pinned to immutable commit SHAs.",
+          "severity": "Warning",
+          "category": "Security",
+          "file_pattern": ".github/workflows/build.yml",
+          "line_hint": 9,
+          "contains_any": [
+            "unpinned action",
+            "pin github action to a commit sha",
+            "supply chain risk",
+            "mutable action tag"
+          ],
+          "tags_any": [
+            "supply-chain"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Workflow dependencies should stay pinned to immutable revisions.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "docker-curl-pipe-bash",
+      "category": "security",
+      "language": "docker",
+      "difficulty": "Hard",
+      "diff_content": "diff --git a/Dockerfile b/Dockerfile\nindex 1111111..2222222 100644\n--- a/Dockerfile\n+++ b/Dockerfile\n@@ -3,3 +3,4 @@ FROM python:3.12-slim\n RUN apt-get update && apt-get install -y curl\n-RUN pip install -r requirements.txt\n+RUN curl -fsSL https://downloads.example.com/install.sh | bash\n+RUN pip install -r requirements.txt\n",
+      "expected_findings": [
+        {
+          "description": "Remote installation script is piped directly into a shell without verification.",
+          "severity": "Error",
+          "category": "Security",
+          "file_pattern": "Dockerfile",
+          "line_hint": 4,
+          "contains_any": [
+            "curl pipe to shell",
+            "remote script execution",
+            "verify downloaded script",
+            "supply chain risk"
+          ],
+          "tags_any": [
+            "supply-chain",
+            "remote-exec"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Build pipelines should not execute unverified remote scripts.",
+      "source": "deep-review-suite"
+    }
+  ]
+}
