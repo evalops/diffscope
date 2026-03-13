@@ -86,7 +86,7 @@
 - [x] `src/commands/git/suggest.rs`: split commit-message prompting from PR-title prompting and response extraction.
 - [x] `src/commands/review/command.rs`: split review/check/compare entrypoints if they keep diverging.
 - [x] `src/commands/misc/feedback/command.rs`: separate file loading/ID normalization from store persistence.
-- [ ] `src/commands/misc/feedback/apply.rs`: split acceptance/rejection counters from store mutation helpers.
+- [x] `src/commands/misc/feedback/apply.rs`: split acceptance/rejection counters from store mutation helpers.
 - [ ] `src/commands/misc/discussion/command.rs`: separate the interactive loop from single-shot execution.
 - [ ] `src/commands/misc/discussion/selection.rs`: split file loading/ID repair from selection rules.
 - [ ] `src/commands/misc/changelog.rs`: evaluate splitting changelog collection from output formatting.
