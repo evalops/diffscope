@@ -10,14 +10,6 @@
 
 ## Immediate Queue
 
-- [ ] `src/review/rule_helpers/reporting.rs`
-  - Split rule-hit aggregation from priority-aware ordering and truncation.
-  - Split file-grouped finding formatting from shared severity/rule display helpers.
-  - Split PR summary body assembly from summary-stat rendering.
-- [ ] `src/review/rule_helpers/runtime.rs`
-  - Split rule-context line rendering from `LLMContextChunk` injection.
-  - Split active-rule lookup/index building from per-comment override mutation.
-  - Isolate severity/category override parsing and tag/confidence mutation helpers.
 - [ ] `src/review/context_helpers/ranking.rs`
   - Split chunk dedupe key generation from the dedupe pass.
   - Split changed-range extraction and overlap helpers from chunk scoring.

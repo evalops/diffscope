@@ -1,126 +1,17 @@
-use std::collections::HashMap;
+#[path = "runtime/context.rs"]
+mod context;
+#[path = "runtime/overrides.rs"]
+mod overrides;
+#[path = "runtime/parsing.rs"]
+mod parsing;
 
-use crate::core;
-use crate::parsing::parse_smart_category;
-
-pub fn inject_rule_context(
-    diff: &core::UnifiedDiff,
-    active_rules: &[core::ReviewRule],
-    context_chunks: &mut Vec<core::LLMContextChunk>,
-) {
-    if active_rules.is_empty() {
-        return;
-    }
-
-    let mut lines = Vec::new();
-    lines.push(
-        "Active review rules. If a finding maps to a rule, include `RULE: <id>` in the issue."
-            .to_string(),
-    );
-
-    for rule in active_rules {
-        let mut attrs = Vec::new();
-        if let Some(scope) = &rule.scope {
-            attrs.push(format!("scope={}", scope));
-        }
-        if let Some(severity) = &rule.severity {
-            attrs.push(format!("severity={}", severity));
-        }
-        if let Some(category) = &rule.category {
-            attrs.push(format!("category={}", category));
-        }
-        if !rule.tags.is_empty() {
-            attrs.push(format!("tags={}", rule.tags.join("|")));
-        }
-
-        if attrs.is_empty() {
-            lines.push(format!("- {}: {}", rule.id, rule.description));
-        } else {
-            lines.push(format!(
-                "- {}: {} ({})",
-                rule.id,
-                rule.description,
-                attrs.join(", ")
-            ));
-        }
-    }
-
-    context_chunks.push(
-        core::LLMContextChunk::documentation(diff.file_path.clone(), lines.join("\n"))
-            .with_provenance(core::ContextProvenance::ActiveReviewRules),
-    );
-}
-
-pub fn apply_rule_overrides(
-    mut comments: Vec<core::Comment>,
-    active_rules: &[core::ReviewRule],
-) -> Vec<core::Comment> {
-    if comments.is_empty() || active_rules.is_empty() {
-        return comments;
-    }
-
-    let mut by_id = HashMap::new();
-    for rule in active_rules {
-        by_id.insert(rule.id.to_ascii_lowercase(), rule);
-    }
-
-    for comment in &mut comments {
-        let Some(rule_id) = comment.rule_id.clone() else {
-            continue;
-        };
-        let key = rule_id.trim().to_ascii_lowercase();
-        let Some(rule) = by_id.get(&key) else {
-            continue;
-        };
-
-        comment.rule_id = Some(rule.id.clone());
-        if let Some(severity) = rule
-            .severity
-            .as_deref()
-            .and_then(parse_rule_severity_override)
-        {
-            comment.severity = severity;
-        }
-        if let Some(category) = rule
-            .category
-            .as_deref()
-            .and_then(parse_rule_category_override)
-        {
-            comment.category = category;
-        }
-
-        let marker = format!("rule:{}", rule.id);
-        if !comment.tags.iter().any(|tag| tag == &marker) {
-            comment.tags.push(marker);
-        }
-        for tag in &rule.tags {
-            if !comment.tags.iter().any(|existing| existing == tag) {
-                comment.tags.push(tag.clone());
-            }
-        }
-        comment.confidence = comment.confidence.max(0.8);
-    }
-
-    comments
-}
-
-fn parse_rule_severity_override(value: &str) -> Option<core::comment::Severity> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "critical" | "error" => Some(core::comment::Severity::Error),
-        "high" | "warning" | "warn" => Some(core::comment::Severity::Warning),
-        "medium" | "info" | "informational" => Some(core::comment::Severity::Info),
-        "low" | "suggestion" => Some(core::comment::Severity::Suggestion),
-        _ => None,
-    }
-}
-
-fn parse_rule_category_override(value: &str) -> Option<core::comment::Category> {
-    parse_smart_category(value)
-}
+pub use context::inject_rule_context;
+pub use overrides::apply_rule_overrides;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core;
     use std::path::PathBuf;
 
     fn build_comment(
