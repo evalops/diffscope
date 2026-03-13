@@ -96,7 +96,7 @@
 ### Review pipeline backlog
 
 - [x] `src/review/pipeline/execution/responses/processing.rs`: split raw response normalization, comment extraction, and merge logic.
-- [ ] `src/review/pipeline/execution/responses/validation.rs`: separate schema validation from per-comment sanitization.
+- [x] `src/review/pipeline/execution/responses/validation.rs`: separate schema validation from per-comment sanitization.
 - [ ] `src/review/pipeline/prepare/runner.rs`: split per-diff orchestration, pre-analysis/triage decisions, and progress updates.
 - [ ] `src/review/pipeline/context/symbols.rs`: split symbol search, snippet selection, and fallback behavior.
 - [ ] `src/review/pipeline/context/related.rs`: separate related-file discovery from ranking/selection.

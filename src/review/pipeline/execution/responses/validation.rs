@@ -1,15 +1,19 @@
+#[path = "validation/contract.rs"]
+mod contract;
+#[path = "validation/repetition.rs"]
+mod repetition;
+
+use contract::validate_structured_review_payload;
+use repetition::has_excessive_repetition;
+
 pub(super) fn validate_llm_response(response: &str) -> Result<(), String> {
     let trimmed = response.trim();
     if trimmed.is_empty() {
         return Err("Empty response from model".to_string());
     }
 
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-        if is_structured_review_payload(&value) {
-            return Ok(());
-        }
-
-        return Err("JSON response did not match the review output contract".to_string());
+    if validate_structured_review_payload(trimmed)? {
+        return Ok(());
     }
 
     if response.len() < 10 {
@@ -21,50 +25,6 @@ pub(super) fn validate_llm_response(response: &str) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-fn is_structured_review_payload(value: &serde_json::Value) -> bool {
-    let items = if let Some(array) = value.as_array() {
-        array
-    } else if let Some(array) = value
-        .get("comments")
-        .or_else(|| value.get("findings"))
-        .or_else(|| value.get("results"))
-        .and_then(|items| items.as_array())
-    {
-        array
-    } else {
-        return false;
-    };
-
-    items.iter().all(|item| {
-        item.is_object()
-            && (item.get("line").is_some()
-                || item.get("line_number").is_some()
-                || item.get("content").is_some()
-                || item.get("issue").is_some())
-    })
-}
-
-pub(super) fn has_excessive_repetition(text: &str) -> bool {
-    if text.len() < 100 {
-        return false;
-    }
-    let window = 20.min(text.len() / 5);
-    let search_end = text.len().saturating_sub(window);
-    for start in 0..search_end.max(1) {
-        if !text.is_char_boundary(start) || !text.is_char_boundary(start + window) {
-            continue;
-        }
-        let pattern = &text[start..start + window];
-        if pattern.trim().is_empty() {
-            continue;
-        }
-        if text.matches(pattern).count() > 5 {
-            return true;
-        }
-    }
-    false
 }
 
 #[cfg(test)]
