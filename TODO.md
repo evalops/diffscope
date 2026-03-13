@@ -85,7 +85,7 @@
 - [x] `src/commands/pr/gh.rs`: carve PR resolution, diff fetching, and metadata fetching.
 - [x] `src/commands/git/suggest.rs`: split commit-message prompting from PR-title prompting and response extraction.
 - [x] `src/commands/review/command.rs`: split review/check/compare entrypoints if they keep diverging.
-- [ ] `src/commands/misc/feedback/command.rs`: separate file loading/ID normalization from store persistence.
+- [x] `src/commands/misc/feedback/command.rs`: separate file loading/ID normalization from store persistence.
 - [ ] `src/commands/misc/feedback/apply.rs`: split acceptance/rejection counters from store mutation helpers.
 - [ ] `src/commands/misc/discussion/command.rs`: separate the interactive loop from single-shot execution.
 - [ ] `src/commands/misc/discussion/selection.rs`: split file loading/ID repair from selection rules.
