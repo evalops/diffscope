@@ -16,11 +16,12 @@ use options::prepare_eval_options;
 use report::emit_eval_report;
 
 pub async fn eval_command(
-    config: config::Config,
+    mut config: config::Config,
     fixtures_dir: PathBuf,
     output_path: Option<PathBuf>,
     options: EvalRunOptions,
 ) -> Result<()> {
+    config.verification_fail_open = true;
     let execution = run_eval_fixtures(&config, &fixtures_dir, &options).await?;
     let prepared_options = prepare_eval_options(&options)?;
     let run_metadata = build_eval_run_metadata(&config, &fixtures_dir, &options, &execution);
@@ -62,6 +63,7 @@ fn build_eval_run_metadata(
             fixture_name_filters: options.fixture_name_filters.clone(),
             max_fixtures: options.max_fixtures,
         },
+        verification_fail_open: config.verification_fail_open,
     }
 }
 

@@ -207,6 +207,7 @@ mod tests {
             metadata: None,
             rule_metrics: vec![],
             rule_summary: None,
+            warnings: vec![],
             failures: vec!["missing finding".to_string()],
         }];
 
@@ -239,6 +240,7 @@ mod tests {
                 }),
                 rule_metrics: vec![],
                 rule_summary: None,
+                warnings: vec![],
                 failures: vec![],
             },
             EvalFixtureResult {
@@ -259,6 +261,7 @@ mod tests {
                 }),
                 rule_metrics: vec![],
                 rule_summary: None,
+                warnings: vec![],
                 failures: vec![],
             },
         ];

@@ -33,6 +33,19 @@ impl LLMAdapter for FakeVerificationAdapter {
     }
 }
 
+struct FailingVerificationAdapter;
+
+#[async_trait]
+impl LLMAdapter for FailingVerificationAdapter {
+    async fn complete(&self, _request: LLMRequest) -> anyhow::Result<LLMResponse> {
+        anyhow::bail!("verification transport failed")
+    }
+
+    fn model_name(&self) -> &str {
+        "failing-verifier"
+    }
+}
+
 fn make_comment(id: &str, content: &str, line: usize) -> Comment {
     Comment {
         id: id.to_string(),
@@ -252,11 +265,12 @@ async fn test_verify_comments_drops_missing_results() {
         &HashMap::new(),
         &adapter,
         6,
+        false,
     )
-    .await
-    .unwrap();
+    .await;
 
-    assert!(verified.is_empty());
+    assert!(verified.comments.is_empty());
+    assert!(verified.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -289,19 +303,81 @@ async fn test_verify_comments_batches_and_preserves_verified_order() {
         &HashMap::new(),
         &adapter,
         6,
+        false,
     )
-    .await
-    .unwrap();
+    .await;
 
-    assert_eq!(verified.len(), 6);
+    assert_eq!(verified.comments.len(), 6);
     assert_eq!(
-        verified.first().map(|comment| comment.id.as_str()),
+        verified.comments.first().map(|comment| comment.id.as_str()),
         Some("c1")
     );
     assert_eq!(
-        verified.last().map(|comment| comment.id.as_str()),
+        verified.comments.last().map(|comment| comment.id.as_str()),
         Some("c6")
     );
+    assert!(verified.warnings.is_empty());
+}
+
+#[tokio::test]
+async fn test_verify_comments_fail_open_on_unparseable_response() {
+    let comments = vec![make_comment("c1", "SQL injection", 10)];
+    let diffs = vec![make_diff(
+        "src/lib.rs",
+        &[(10, "let query = format!(\"SELECT * FROM users\", id);")],
+    )];
+    let source_files = HashMap::from([(
+        PathBuf::from("src/lib.rs"),
+        "let query = format!(\"SELECT * FROM users\", id);".to_string(),
+    )]);
+    let adapter = FakeVerificationAdapter {
+        responses: Mutex::new(vec!["definitely not valid verification output".to_string()]),
+    };
+
+    let verified = verify_comments(
+        comments.clone(),
+        &diffs,
+        &source_files,
+        &HashMap::new(),
+        &adapter,
+        6,
+        true,
+    )
+    .await;
+
+    assert_eq!(verified.comments.len(), 1);
+    assert_eq!(verified.comments[0].id, comments[0].id);
+    assert_eq!(verified.warnings.len(), 1);
+    assert!(verified.warnings[0].contains("unparseable verifier output"));
+}
+
+#[tokio::test]
+async fn test_verify_comments_fail_open_on_adapter_error() {
+    let comments = vec![make_comment("c1", "SQL injection", 10)];
+    let diffs = vec![make_diff(
+        "src/lib.rs",
+        &[(10, "let query = format!(\"SELECT * FROM users\", id);")],
+    )];
+    let source_files = HashMap::from([(
+        PathBuf::from("src/lib.rs"),
+        "let query = format!(\"SELECT * FROM users\", id);".to_string(),
+    )]);
+
+    let verified = verify_comments(
+        comments.clone(),
+        &diffs,
+        &source_files,
+        &HashMap::new(),
+        &FailingVerificationAdapter,
+        6,
+        true,
+    )
+    .await;
+
+    assert_eq!(verified.comments.len(), 1);
+    assert_eq!(verified.comments[0].id, comments[0].id);
+    assert_eq!(verified.warnings.len(), 1);
+    assert!(verified.warnings[0].contains("verifier request error"));
 }
 
 #[test]

@@ -58,7 +58,8 @@ pub(super) async fn run_postprocess(
         .plugin_manager
         .run_post_processors(all_comments, &repo_path_str)
         .await?;
-    let processed_comments = apply_verification_pass(processed_comments, services, session).await;
+    let verification_output = apply_verification_pass(processed_comments, services, session).await;
+    let processed_comments = verification_output.comments;
 
     let processed_comments = if services.config.semantic_feedback {
         apply_semantic_feedback_adjustment(
@@ -103,5 +104,6 @@ pub(super) async fn run_postprocess(
         comments_by_pass,
         hotspots: session.enhanced_ctx.hotspots.clone(),
         agent_activity,
+        warnings: verification_output.warnings,
     })
 }

@@ -1,4 +1,3 @@
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::info;
@@ -14,7 +13,9 @@ mod prompt;
 #[path = "verification/tests.rs"]
 mod tests;
 
-use parser::{parse_verification_response, verification_response_schema};
+#[cfg(test)]
+use parser::parse_verification_response;
+use parser::{try_parse_verification_response, verification_response_schema};
 use prompt::build_verification_prompt;
 
 /// Result of verifying a single review comment
@@ -26,6 +27,12 @@ pub struct VerificationResult {
     pub suggestion_sound: bool,
     pub score: u8, // 0-10
     pub reason: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct VerificationSummary {
+    pub comments: Vec<Comment>,
+    pub warnings: Vec<String>,
 }
 
 const VERIFICATION_BATCH_SIZE: usize = 6;
@@ -53,7 +60,8 @@ Respond with JSON only. Return exactly one object per finding, in order, with th
 "#;
 
 /// Verify a batch of review comments by asking the LLM to validate each one.
-/// Returns only comments that pass verification (score >= min_score).
+/// Returns only comments that pass verification (score >= min_score), unless
+/// fail-open mode keeps the original batch after verifier failures.
 pub async fn verify_comments(
     comments: Vec<Comment>,
     diffs: &[UnifiedDiff],
@@ -61,13 +69,15 @@ pub async fn verify_comments(
     extra_context: &HashMap<std::path::PathBuf, Vec<LLMContextChunk>>,
     adapter: &dyn LLMAdapter,
     min_score: u8,
-) -> Result<Vec<Comment>> {
+    fail_open: bool,
+) -> VerificationSummary {
     if comments.is_empty() {
-        return Ok(comments);
+        return VerificationSummary::default();
     }
 
     let total_count = comments.len();
     let mut verified = Vec::new();
+    let mut warnings = Vec::new();
     for batch in comments.chunks(VERIFICATION_BATCH_SIZE) {
         let prompt = build_verification_prompt(batch, diffs, source_files, extra_context);
         let request = LLMRequest {
@@ -86,10 +96,34 @@ pub async fn verify_comments(
                     batch.len(),
                     error
                 );
+                if fail_open {
+                    warnings.push(format!(
+                        "verification fail-open kept {} comment(s) after verifier request error: {}",
+                        batch.len(),
+                        error
+                    ));
+                    verified.extend(batch.iter().cloned());
+                }
                 continue;
             }
         };
-        let results = parse_verification_response(&response.content, batch)
+
+        let Some(parsed_results) = try_parse_verification_response(&response.content, batch) else {
+            info!(
+                "Verification batch returned an unparseable response for {} comment(s)",
+                batch.len()
+            );
+            if fail_open {
+                warnings.push(format!(
+                    "verification fail-open kept {} comment(s) after unparseable verifier output",
+                    batch.len()
+                ));
+                verified.extend(batch.iter().cloned());
+            }
+            continue;
+        };
+
+        let results = parsed_results
             .into_iter()
             .map(|result| (result.comment_id.clone(), result))
             .collect::<HashMap<_, _>>();
@@ -128,5 +162,8 @@ pub async fn verify_comments(
         total_count
     );
 
-    Ok(verified)
+    VerificationSummary {
+        comments: verified,
+        warnings,
+    }
 }

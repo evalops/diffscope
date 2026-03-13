@@ -45,6 +45,8 @@ pub(in super::super) struct EvalRunMetadata {
     pub(in super::super) base_url: Option<String>,
     #[serde(default)]
     pub(in super::super) filters: EvalRunFilters,
+    #[serde(default)]
+    pub(in super::super) verification_fail_open: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +114,8 @@ pub(in super::super) struct EvalFixtureResult {
     #[serde(default)]
     pub(in super::super) rule_summary: Option<EvalRuleScoreSummary>,
     #[serde(default)]
+    pub(in super::super) warnings: Vec<String>,
+    #[serde(default)]
     pub(in super::super) failures: Vec<String>,
 }
 
@@ -153,6 +157,8 @@ pub(in super::super) struct EvalReport {
     pub(in super::super) benchmark_by_language: HashMap<String, BenchmarkAggregateMetrics>,
     #[serde(default)]
     pub(in super::super) benchmark_by_difficulty: HashMap<String, BenchmarkAggregateMetrics>,
+    #[serde(default)]
+    pub(in super::super) warnings: Vec<String>,
     #[serde(default)]
     pub(in super::super) threshold_failures: Vec<String>,
     #[serde(default)]

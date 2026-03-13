@@ -61,4 +61,5 @@ fn merge_chunk_result(merged: &mut ReviewResult, chunk_result: ReviewResult) {
         *merged.comments_by_pass.entry(pass).or_insert(0) += count;
     }
     merged.hotspots.extend(chunk_result.hotspots);
+    merged.warnings.extend(chunk_result.warnings);
 }

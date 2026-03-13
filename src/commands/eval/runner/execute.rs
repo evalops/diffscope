@@ -21,6 +21,7 @@ pub(in super::super) async fn run_eval_fixture(
     let review_result =
         review_diff_content_raw(&prepared.diff_content, config.clone(), &prepared.repo_path)
             .await?;
+    let warnings = review_result.warnings;
     let comments = review_result.comments;
     let total_comments = comments.len();
     let match_summary = evaluate_fixture_expectations(&prepared.fixture.expect, &comments);
@@ -35,6 +36,7 @@ pub(in super::super) async fn run_eval_fixture(
         total_comments,
         match_summary,
         benchmark_metrics,
+        warnings,
         failures,
     ))
 }

@@ -60,6 +60,7 @@ mod tests {
             benchmark_by_category: Default::default(),
             benchmark_by_language: Default::default(),
             benchmark_by_difficulty: Default::default(),
+            warnings: vec![],
             threshold_failures: vec![],
             results: vec![],
         };
@@ -102,6 +103,7 @@ mod tests {
             benchmark_by_category: Default::default(),
             benchmark_by_language: Default::default(),
             benchmark_by_difficulty: Default::default(),
+            warnings: vec![],
             threshold_failures: vec![],
             results: vec![],
         };
@@ -126,6 +128,7 @@ mod tests {
             benchmark_by_category: Default::default(),
             benchmark_by_language: Default::default(),
             benchmark_by_difficulty: Default::default(),
+            warnings: vec![],
             threshold_failures: vec![],
             results: vec![],
         };

@@ -306,6 +306,11 @@ pub struct Config {
     #[serde(default = "default_verification_max_comments")]
     pub verification_max_comments: usize,
 
+    /// When true, keep original comments if the verification pass fails or
+    /// returns an unparseable response (default false).
+    #[serde(default = "default_false")]
+    pub verification_fail_open: bool,
+
     /// Enable enhanced feedback loop with per-category/file-pattern tracking
     /// and feedback-adjusted confidence scores (default false).
     #[serde(default)]
@@ -506,6 +511,7 @@ impl Default for Config {
             verification_model_role: default_verification_model_role(),
             verification_min_score: default_verification_min_score(),
             verification_max_comments: default_verification_max_comments(),
+            verification_fail_open: false,
             enhanced_feedback: false,
             feedback_min_observations: default_feedback_min_observations(),
             semantic_rag: false,

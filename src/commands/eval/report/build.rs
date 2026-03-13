@@ -14,6 +14,15 @@ pub(in super::super) fn build_eval_report(
     let fixtures_total = results.len();
     let fixtures_passed = results.iter().filter(|result| result.passed).count();
     let fixtures_failed = fixtures_total.saturating_sub(fixtures_passed);
+    let warnings = results
+        .iter()
+        .flat_map(|result| {
+            result
+                .warnings
+                .iter()
+                .map(|warning| format!("{}: {}", result.fixture, warning))
+        })
+        .collect::<Vec<_>>();
     let rule_metrics = aggregate_rule_metrics(&results);
     let rule_summary = summarize_rule_metrics(&rule_metrics);
     let suite_results = build_suite_results(&results);
@@ -30,6 +39,7 @@ pub(in super::super) fn build_eval_report(
         benchmark_by_category: breakdowns.by_category,
         benchmark_by_language: breakdowns.by_language,
         benchmark_by_difficulty: breakdowns.by_difficulty,
+        warnings,
         threshold_failures: Vec::new(),
         results,
     };

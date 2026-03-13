@@ -14,7 +14,6 @@
   - Persist labeled eval runs into `QualityTrend` JSON so live provider sweeps can be trended over time.
   - Add suite/category/language baseline comparisons instead of only whole-run threshold gates.
   - Expand `review-depth-core` with authz, supply-chain, and async-correctness benchmark packs.
-  - Harden verification fallback for live eval runs that return unparseable verification responses.
 - [ ] `src/commands/feedback_eval/`
   - Correlate feedback calibration with eval-suite category and rule-level performance.
 

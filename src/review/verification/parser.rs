@@ -23,11 +23,26 @@ pub(super) fn verification_response_schema() -> StructuredOutputSchema {
     schema::verification_response_schema()
 }
 
+pub(super) fn try_parse_verification_response(
+    content: &str,
+    comments: &[Comment],
+) -> Option<Vec<VerificationResult>> {
+    if let Some(results) = parse_verification_json(content, comments) {
+        return Some(apply_auto_zero(results, comments));
+    }
+
+    let text_results = parse_verification_text(content, comments);
+    if text_results.is_empty() {
+        None
+    } else {
+        Some(apply_auto_zero(text_results, comments))
+    }
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn parse_verification_response(
     content: &str,
     comments: &[Comment],
 ) -> Vec<VerificationResult> {
-    let results = parse_verification_json(content, comments)
-        .unwrap_or_else(|| parse_verification_text(content, comments));
-    apply_auto_zero(results, comments)
+    try_parse_verification_response(content, comments).unwrap_or_default()
 }

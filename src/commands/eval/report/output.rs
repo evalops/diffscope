@@ -21,6 +21,14 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
         if !report.run.fixtures_root.is_empty() {
             println!("Fixtures root: {}", report.run.fixtures_root);
         }
+        println!(
+            "Verification fallback: {}",
+            if report.run.verification_fail_open {
+                "fail-open"
+            } else {
+                "strict"
+            }
+        );
     }
 
     println!(
@@ -70,6 +78,9 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
             if !labels.is_empty() {
                 println!("  metadata: {}", labels.join(", "));
             }
+        }
+        for warning in &result.warnings {
+            println!("  warning: {}", warning);
         }
     }
 
@@ -162,6 +173,10 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
                 metrics.weighted_score * 100.0
             );
         }
+    }
+
+    for warning in &report.warnings {
+        println!("Warning: {}", warning);
     }
 
     for failure in &report.threshold_failures {
