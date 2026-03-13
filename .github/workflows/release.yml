@@ -110,7 +110,7 @@ jobs:
         run: cd web && npm ci && npm run build
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.88.0
         with:
           targets: ${{ matrix.target }}
 
