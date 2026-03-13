@@ -65,7 +65,7 @@
 ### Immediate queue
 
 - [x] `src/commands/eval/pattern/matching.rs`: split normalized rule-id helpers, matcher predicates, and focused matcher tests.
-- [ ] `src/commands/eval/metrics/rules.rs`: separate aggregate math, rule counting, and summary reduction helpers.
+- [x] `src/commands/eval/metrics/rules.rs`: separate aggregate math, rule counting, and summary reduction helpers.
 - [ ] `src/commands/doctor/endpoint/inference.rs`: split request building, HTTP execution/error handling, and response parsing.
 - [ ] `src/commands/feedback_eval/report/build/stats.rs`: split threshold confusion-matrix scoring from bucket primitives.
 - [ ] `src/commands/doctor/command/display.rs`: separate header/config output, endpoint listing, and inference result rendering.
