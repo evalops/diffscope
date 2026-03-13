@@ -1,65 +1,15 @@
-use anyhow::Result;
-use tracing::info;
+#[path = "comments/analyzer.rs"]
+mod analyzer;
+#[path = "comments/filter.rs"]
+mod filter;
 
-use crate::core;
-use crate::plugins;
-
-pub fn filter_comments_for_diff(
-    diff: &core::UnifiedDiff,
-    comments: Vec<core::Comment>,
-) -> Vec<core::Comment> {
-    let mut filtered = Vec::new();
-    let total = comments.len();
-    for comment in comments {
-        if is_line_in_diff(diff, comment.line_number) {
-            filtered.push(comment);
-        }
-    }
-
-    if filtered.len() != total {
-        let dropped = total.saturating_sub(filtered.len());
-        info!(
-            "Dropped {} comment(s) for {} due to unmatched line numbers",
-            dropped,
-            diff.file_path.display()
-        );
-    }
-
-    filtered
-}
-
-pub(super) fn synthesize_analyzer_comments(
-    findings: Vec<plugins::AnalyzerFinding>,
-) -> Result<Vec<core::Comment>> {
-    if findings.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let raw_comments = findings
-        .into_iter()
-        .map(|finding| finding.into_raw_comment())
-        .collect::<Vec<_>>();
-    core::CommentSynthesizer::synthesize(raw_comments)
-}
-
-pub(super) fn is_analyzer_comment(comment: &core::Comment) -> bool {
-    comment.tags.iter().any(|tag| tag.starts_with("source:"))
-}
-
-pub fn is_line_in_diff(diff: &core::UnifiedDiff, line_number: usize) -> bool {
-    if line_number == 0 {
-        return false;
-    }
-    diff.hunks.iter().any(|hunk| {
-        hunk.changes
-            .iter()
-            .any(|line| line.new_line_no == Some(line_number))
-    })
-}
+pub(super) use analyzer::{is_analyzer_comment, synthesize_analyzer_comments};
+pub use filter::{filter_comments_for_diff, is_line_in_diff};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core;
     use std::path::PathBuf;
 
     #[test]
