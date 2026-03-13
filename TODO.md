@@ -1,64 +1,44 @@
-# Pipeline Refactor TODO
+# Pipeline Refactor TODO (Wave 2)
 
 ## Goals
 
-- [x] Split `src/review/pipeline/helpers.rs` into focused modules with clearer ownership.
-- [x] Introduce shared pipeline session/services types so preparation, execution, and post-processing stop threading long parameter lists.
-- [x] Extract post-processing and verification orchestration into a dedicated pipeline submodule.
-- [x] Move pipeline tests out of `src/review/pipeline.rs` and colocate them with the modules that own the behavior.
-- [x] Keep the refactor behavior-preserving and validate with `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test`.
+- [ ] Extract shared phase contracts so `prepare.rs`, `execution.rs`, and `postprocess.rs` stop depending on `execution.rs` internals.
+- [ ] Decompose `prepare_file_review_jobs()` into smaller context-assembly and request-building steps.
+- [ ] Split `session.rs` into service/bootstrap concerns and repo-support concerns.
+- [ ] Keep the refactor behavior-preserving and validate with `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test` after each slice.
+- [ ] Commit and push regularly after each completed slice.
 
-## Planned module split
+## Slice 1 — shared phase contracts
 
-### 1. Shared pipeline state
+- [x] Create `src/review/pipeline/contracts.rs`.
+- [x] Move shared phase structs into `contracts.rs`:
+  - `PreparedReviewJobs`
+  - `FileReviewJob`
+  - `ReviewExecutionContext`
+  - `ExecutionSummary`
+- [x] Update `prepare.rs`, `execution.rs`, `postprocess.rs`, and `pipeline.rs` to use the new contracts module.
+- [x] Split `execute_review_jobs()` into dispatch/reduction helpers while preserving behavior.
+- [ ] Validate, commit, and push.
 
-- [x] Create `src/review/pipeline/types.rs` for shared pipeline result/progress types.
-- [x] Create `src/review/pipeline/session.rs` for `PipelineServices` and `ReviewSession` plus runtime/repo helpers:
-  - local-model optimization detection
+## Slice 2 — prepare decomposition
+
+- [ ] Create `src/review/pipeline/request.rs`.
+- [ ] Extract request schema and prompt/request-building helpers out of `prepare.rs`.
+- [ ] Introduce a small per-file preparation carrier type for assembled context and request metadata.
+- [ ] Split `prepare_file_review_jobs()` into:
+  - file eligibility / triage handling
+  - context assembly
+  - request/job construction
+- [ ] Validate, commit, and push.
+
+## Slice 3 — session split
+
+- [ ] Create `src/review/pipeline/services.rs` for `PipelineServices` and service bootstrapping.
+- [ ] Create `src/review/pipeline/repo_support.rs` for repo/runtime helpers:
   - diff chunking
   - instruction file detection
   - git log gathering
-  - convention store path resolution and saving
-
-### 2. Context and guidance
-
-- [x] Create `src/review/pipeline/context.rs` for:
-  - symbol extraction from diffs
-  - symbol index construction
-  - related-file context gathering
-  - test-file discovery helper
-- [x] Create `src/review/pipeline/guidance.rs` for review guidance assembly.
-
-### 3. Comment preparation and execution support
-
-- [x] Create `src/review/pipeline/comments.rs` for:
-  - analyzer finding synthesis
-  - diff-line filtering
-  - analyzer comment detection
-- [x] Keep execution-specific validation and metric aggregation near `execution.rs`.
-
-### 4. Dedicated post-processing stage
-
-- [x] Create `src/review/pipeline/postprocess.rs` for:
-  - specialized-pass deduplication
-  - plugin post-processing orchestration
-  - verification pass orchestration
-  - semantic feedback confidence adjustment
-  - enhanced feedback adjustment
-  - review filtering, enhanced filters, and convention suppression
-
-### 5. Test relocation
-
-- [x] Move symbol/context tests into `context.rs`.
-- [x] Move guidance tests into `guidance.rs`.
-- [x] Move diff chunking tests into `session.rs`.
-- [x] Move response validation tests into `execution.rs`.
-- [x] Move comment filtering/dedup tests into `comments.rs` and `postprocess.rs`.
-- [x] Move prompt/config ownership tests to `src/core/prompt.rs` and `src/config.rs`.
-
-## Execution checklist
-
-- [x] Rewire `src/review/pipeline.rs` into a thin orchestration facade over the new modules.
-- [x] Run validators.
-- [x] Review git diff for scope and sensitive data.
-- [x] Commit and push the refactor.
+  - convention store persistence
+- [ ] Keep `ReviewSession` focused on per-review state in `session.rs`.
+- [ ] Update imports in `pipeline.rs`, `prepare.rs`, and `postprocess.rs`.
+- [ ] Validate, commit, and push.

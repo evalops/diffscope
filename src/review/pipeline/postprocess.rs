@@ -8,7 +8,7 @@ use crate::core;
 use super::super::feedback::derive_file_patterns;
 use super::super::filters::{apply_feedback_confidence_adjustment, apply_review_filters};
 use super::comments::is_analyzer_comment;
-use super::execution::ExecutionSummary;
+use super::contracts::ExecutionSummary;
 use super::session::{save_convention_store, PipelineServices, ReviewSession};
 use super::types::ReviewResult;
 

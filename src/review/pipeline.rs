@@ -8,6 +8,8 @@ use crate::output::OutputFormat;
 mod comments;
 #[path = "pipeline/context.rs"]
 mod context;
+#[path = "pipeline/contracts.rs"]
+mod contracts;
 #[path = "pipeline/execution.rs"]
 mod execution;
 #[path = "pipeline/guidance.rs"]
@@ -21,7 +23,8 @@ mod session;
 #[path = "pipeline/types.rs"]
 mod types;
 
-use execution::{execute_review_jobs, ReviewExecutionContext};
+use contracts::ReviewExecutionContext;
+use execution::execute_review_jobs;
 use postprocess::run_postprocess;
 use prepare::prepare_file_review_jobs;
 use session::{chunk_diff_for_context, should_optimize_for_local, PipelineServices, ReviewSession};

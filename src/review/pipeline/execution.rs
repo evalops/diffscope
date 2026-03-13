@@ -11,43 +11,35 @@ use crate::core;
 use crate::parsing::parse_llm_response;
 
 use super::comments::filter_comments_for_diff;
-use super::session::{PipelineServices, ReviewSession};
+use super::contracts::{ExecutionSummary, FileReviewJob, ReviewExecutionContext};
 use super::types::{AgentActivity, FileMetric, ProgressUpdate};
-
-pub(super) struct FileReviewJob {
-    pub job_order: usize,
-    pub diff_index: usize,
-    pub request: adapters::llm::LLMRequest,
-    pub active_rules: Vec<crate::core::ReviewRule>,
-    pub path_config: Option<crate::config::PathConfig>,
-    pub file_path: PathBuf,
-    pub deterministic_comments: Vec<core::Comment>,
-    pub pass_kind: Option<core::SpecializedPassKind>,
-    pub mark_file_complete: bool,
-}
-
-pub(super) struct ReviewExecutionContext<'a> {
-    pub services: &'a PipelineServices,
-    pub session: &'a ReviewSession,
-    pub initial_comments: Vec<core::Comment>,
-    pub files_completed: usize,
-    pub files_skipped: usize,
-}
-
-pub(super) struct ExecutionSummary {
-    pub all_comments: Vec<core::Comment>,
-    pub total_prompt_tokens: usize,
-    pub total_completion_tokens: usize,
-    pub total_tokens: usize,
-    pub file_metrics: Vec<FileMetric>,
-    pub comments_by_pass: HashMap<String, usize>,
-    pub agent_activity: Option<AgentActivity>,
-}
 
 pub(super) async fn execute_review_jobs(
     jobs: Vec<FileReviewJob>,
     context: ReviewExecutionContext<'_>,
 ) -> Result<ExecutionSummary> {
+    let dispatched_results = dispatch_jobs(jobs, &context).await;
+    reduce_job_results(dispatched_results, context)
+}
+
+struct DispatchedJobResult {
+    job_order: usize,
+    diff_index: usize,
+    active_rules: Vec<crate::core::ReviewRule>,
+    path_config: Option<crate::config::PathConfig>,
+    file_path: PathBuf,
+    deterministic_comments: Vec<core::Comment>,
+    pass_kind: Option<core::SpecializedPassKind>,
+    mark_file_complete: bool,
+    response: Result<adapters::llm::LLMResponse>,
+    latency_ms: u64,
+    agent_data: Option<AgentActivity>,
+}
+
+async fn dispatch_jobs(
+    jobs: Vec<FileReviewJob>,
+    context: &ReviewExecutionContext<'_>,
+) -> Vec<DispatchedJobResult> {
     const MAX_CONCURRENT_FILES: usize = 5;
     let concurrency = if context.services.is_local {
         1
@@ -81,9 +73,8 @@ pub(super) async fn execute_review_jobs(
         max_total_tokens: context.services.config.agent_max_total_tokens,
     };
     let agent_tools_filter = context.services.config.agent_tools_enabled.clone();
-    let files_skipped_snapshot = context.files_skipped;
 
-    let results: Vec<_> = futures::stream::iter(jobs)
+    futures::stream::iter(jobs)
         .map(|job| {
             let adapter = context.services.adapter.clone();
             let agent_ctx = agent_tool_ctx.clone();
@@ -137,27 +128,33 @@ pub(super) async fn execute_review_jobs(
                         latency_ms as f64 / 1000.0
                     );
                 }
-                (
-                    job.job_order,
-                    job.diff_index,
-                    job.active_rules,
-                    job.path_config,
-                    job.file_path,
-                    job.deterministic_comments,
-                    job.pass_kind,
-                    job.mark_file_complete,
+                DispatchedJobResult {
+                    job_order: job.job_order,
+                    diff_index: job.diff_index,
+                    active_rules: job.active_rules,
+                    path_config: job.path_config,
+                    file_path: job.file_path,
+                    deterministic_comments: job.deterministic_comments,
+                    pass_kind: job.pass_kind,
+                    mark_file_complete: job.mark_file_complete,
                     response,
                     latency_ms,
                     agent_data,
-                )
+                }
             }
         })
         .buffer_unordered(concurrency)
         .collect()
-        .await;
+        .await
+}
 
-    let mut indexed_results = results;
-    indexed_results.sort_by_key(|(job_order, _, _, _, _, _, _, _, _, _, _)| *job_order);
+fn reduce_job_results(
+    mut dispatched_results: Vec<DispatchedJobResult>,
+    context: ReviewExecutionContext<'_>,
+) -> Result<ExecutionSummary> {
+    let files_skipped_snapshot = context.files_skipped;
+
+    dispatched_results.sort_by_key(|result| result.job_order);
 
     let mut all_comments = context.initial_comments;
     let mut files_completed = context.files_completed;
@@ -170,35 +167,26 @@ pub(super) async fn execute_review_jobs(
     let mut aggregate_agent_tool_calls: Vec<core::agent_loop::AgentToolCallLog> = Vec::new();
     let mut has_agent_activity = false;
 
-    for (
-        _job_order,
-        diff_index,
-        active_rules,
-        path_config,
-        file_path,
-        deterministic_comments,
-        pass_kind,
-        mark_file_complete,
-        response,
-        latency_ms,
-        agent_data,
-    ) in indexed_results
-    {
-        let diff = &context.session.diffs[diff_index];
+    for result in dispatched_results {
+        let diff = &context.session.diffs[result.diff_index];
 
-        match response {
+        match result.response {
             Err(error) => {
-                warn!("LLM request failed for {}: {}", file_path.display(), error);
+                warn!(
+                    "LLM request failed for {}: {}",
+                    result.file_path.display(),
+                    error
+                );
                 merge_file_metric(
                     &mut file_metrics,
-                    &file_path,
-                    latency_ms,
+                    &result.file_path,
+                    result.latency_ms,
                     0,
                     0,
                     0,
-                    deterministic_comments.len(),
+                    result.deterministic_comments.len(),
                 );
-                all_comments.extend(deterministic_comments);
+                all_comments.extend(result.deterministic_comments);
             }
             Ok(response) => {
                 let (resp_prompt_tokens, resp_completion_tokens, resp_total_tokens) =
@@ -215,7 +203,7 @@ pub(super) async fn execute_review_jobs(
                 total_completion_tokens += resp_completion_tokens;
                 total_tokens += resp_total_tokens;
 
-                if let Some(activity) = agent_data {
+                if let Some(activity) = result.agent_data {
                     has_agent_activity = true;
                     aggregate_agent_iterations += activity.total_iterations;
                     aggregate_agent_tool_calls.extend(activity.tool_calls);
@@ -224,7 +212,7 @@ pub(super) async fn execute_review_jobs(
                 if let Err(validation_error) = validate_llm_response(&response.content) {
                     eprintln!(
                         "Warning: LLM response validation failed for {}: {}",
-                        file_path.display(),
+                        result.file_path.display(),
                         validation_error
                     );
                     if context.services.is_local {
@@ -232,24 +220,24 @@ pub(super) async fn execute_review_jobs(
                             "Hint: Try a larger model or reduce diff size for better results with local models."
                         );
                     }
-                    let analyzer_comment_count = deterministic_comments.len();
+                    let analyzer_comment_count = result.deterministic_comments.len();
                     merge_file_metric(
                         &mut file_metrics,
-                        &file_path,
-                        latency_ms,
+                        &result.file_path,
+                        result.latency_ms,
                         resp_prompt_tokens,
                         resp_completion_tokens,
                         resp_total_tokens,
                         analyzer_comment_count,
                     );
-                    all_comments.extend(deterministic_comments);
+                    all_comments.extend(result.deterministic_comments);
                     continue;
                 }
 
                 if let Ok(raw_comments) = parse_llm_response(&response.content, &diff.file_path) {
                     let mut comments = core::CommentSynthesizer::synthesize(raw_comments)?;
 
-                    if let Some(kind) = pass_kind {
+                    if let Some(kind) = result.pass_kind {
                         for comment in &mut comments {
                             if !comment.tags.contains(&kind.tag().to_string()) {
                                 comment.tags.push(kind.tag().to_string());
@@ -257,7 +245,7 @@ pub(super) async fn execute_review_jobs(
                         }
                     }
 
-                    if let Some(ref path_config) = path_config {
+                    if let Some(ref path_config) = result.path_config {
                         for comment in &mut comments {
                             for (category, severity) in &path_config.severity_overrides {
                                 if comment.category.as_str() == category.to_lowercase() {
@@ -272,22 +260,25 @@ pub(super) async fn execute_review_jobs(
                             }
                         }
                     }
-                    let comments =
-                        super::super::rule_helpers::apply_rule_overrides(comments, &active_rules);
+                    let comments = super::super::rule_helpers::apply_rule_overrides(
+                        comments,
+                        &result.active_rules,
+                    );
 
                     let mut comments = filter_comments_for_diff(diff, comments);
-                    comments.extend(deterministic_comments);
+                    comments.extend(result.deterministic_comments);
                     let comment_count = comments.len();
 
-                    let pass_tag = pass_kind
+                    let pass_tag = result
+                        .pass_kind
                         .map(|kind| kind.tag().to_string())
                         .unwrap_or_else(|| "default".to_string());
                     *comments_by_pass.entry(pass_tag).or_insert(0) += comment_count;
 
                     merge_file_metric(
                         &mut file_metrics,
-                        &file_path,
-                        latency_ms,
+                        &result.file_path,
+                        result.latency_ms,
                         resp_prompt_tokens,
                         resp_completion_tokens,
                         resp_total_tokens,
@@ -296,26 +287,26 @@ pub(super) async fn execute_review_jobs(
 
                     all_comments.extend(comments);
                 } else {
-                    let analyzer_comment_count = deterministic_comments.len();
+                    let analyzer_comment_count = result.deterministic_comments.len();
                     merge_file_metric(
                         &mut file_metrics,
-                        &file_path,
-                        latency_ms,
+                        &result.file_path,
+                        result.latency_ms,
                         resp_prompt_tokens,
                         resp_completion_tokens,
                         resp_total_tokens,
                         analyzer_comment_count,
                     );
-                    all_comments.extend(deterministic_comments);
+                    all_comments.extend(result.deterministic_comments);
                 }
             }
         }
 
-        if mark_file_complete {
+        if result.mark_file_complete {
             files_completed += 1;
             if let Some(ref callback) = context.session.on_progress {
                 callback(ProgressUpdate {
-                    current_file: file_path.display().to_string(),
+                    current_file: result.file_path.display().to_string(),
                     files_total: context.session.files_total,
                     files_completed,
                     files_skipped: files_skipped_snapshot,

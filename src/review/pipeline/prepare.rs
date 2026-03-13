@@ -5,17 +5,10 @@ use anyhow::Result;
 
 use super::comments::{filter_comments_for_diff, synthesize_analyzer_comments};
 use super::context::{extract_symbols_from_diff, gather_related_file_context};
-use super::execution::FileReviewJob;
+use super::contracts::{FileReviewJob, PreparedReviewJobs};
 use super::guidance::build_review_guidance;
 use super::session::{PipelineServices, ReviewSession};
 use super::types::ProgressUpdate;
-
-pub(super) struct PreparedReviewJobs {
-    pub jobs: Vec<FileReviewJob>,
-    pub all_comments: Vec<core::Comment>,
-    pub files_completed: usize,
-    pub files_skipped: usize,
-}
 
 pub(super) async fn prepare_file_review_jobs(
     services: &PipelineServices,
