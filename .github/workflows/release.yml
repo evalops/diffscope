@@ -26,6 +26,39 @@ jobs:
       - name: Extract version
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify release metadata matches tag
+        env:
+          TAG_NAME: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          expected_version="${TAG_NAME#v}"
+          cargo_version="$(python - <<'PY'
+import tomllib
+from pathlib import Path
+
+print(tomllib.loads(Path("Cargo.toml").read_text())["package"]["version"])
+PY
+)"
+          chart_app_version="$(python - <<'PY'
+import re
+from pathlib import Path
+
+content = Path("charts/diffscope/Chart.yaml").read_text()
+match = re.search(r'^appVersion:\s*"?(.*?)"?\s*$', content, re.MULTILINE)
+if not match:
+    raise SystemExit("charts/diffscope/Chart.yaml is missing appVersion")
+print(match.group(1))
+PY
+)"
+          test "$cargo_version" = "$expected_version" || {
+            echo "Cargo.toml version ($cargo_version) does not match tag ($expected_version)"
+            exit 1
+          }
+          test "$chart_app_version" = "$expected_version" || {
+            echo "Chart appVersion ($chart_app_version) does not match tag ($expected_version)"
+            exit 1
+          }
         
       - name: Create Release
         id: create_release
