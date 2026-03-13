@@ -1,5 +1,6 @@
 mod duplicate_filter;
 mod eslint;
+mod path_utils;
 mod secret_scanner;
 mod semgrep;
 mod supply_chain;

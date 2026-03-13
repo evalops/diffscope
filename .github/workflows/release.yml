@@ -25,11 +25,11 @@ jobs:
         
       - name: Extract version
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
         
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref }}
           name: Release ${{ steps.get_version.outputs.VERSION }}
@@ -129,8 +129,8 @@ jobs:
       - name: Set up macOS cross-compilation
         if: matrix.os == 'macos-latest' && matrix.target == 'aarch64-apple-darwin'
         run: |
-          echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> $GITHUB_ENV
-          echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> $GITHUB_ENV
+          echo "SDKROOT=$(xcrun -sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)" >> "$GITHUB_ENV"
       
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
@@ -158,9 +158,9 @@ jobs:
           cd target/${{ matrix.target }}/release/
           if [ -f "${{ matrix.artifact_name }}" ]; then
             if [[ "$RUNNER_OS" == "macOS" ]]; then
-              shasum -a 256 ${{ matrix.artifact_name }} > ${{ matrix.asset_name }}.sha256
+              shasum -a 256 "${{ matrix.artifact_name }}" > "${{ matrix.asset_name }}.sha256"
             else
-              sha256sum ${{ matrix.artifact_name }} > ${{ matrix.asset_name }}.sha256
+              sha256sum "${{ matrix.artifact_name }}" > "${{ matrix.asset_name }}.sha256"
             fi
           else
             echo "Binary not found, build may have failed"
@@ -169,6 +169,7 @@ jobs:
           
       - name: Create checksum (Windows)
         if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
           cd target/${{ matrix.target }}/release/
           (Get-FileHash -Algorithm SHA256 ${{ matrix.artifact_name }}).Hash + "  " + "${{ matrix.artifact_name }}" | Out-File -Encoding ASCII ${{ matrix.asset_name }}.sha256
@@ -195,6 +196,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
         run: |
           cd target/${{ matrix.target }}/release/
           # Upload binary
@@ -227,7 +229,7 @@ jobs:
 
       - name: Extract version from tag
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
         id: build-and-push

@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Lint GitHub Actions
+        uses: rhysd/actionlint@v1
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -26,7 +28,7 @@ jobs:
       - name: Format
         run: cargo fmt -- --check
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
   security:
     runs-on: ubuntu-latest

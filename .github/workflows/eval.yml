@@ -18,21 +18,36 @@ env:
 
 jobs:
   eval:
-    if: ${{ secrets.OPENAI_API_KEY != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      - name: Check eval secret
+        id: secret-check
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "${OPENAI_API_KEY}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
+        if: ${{ steps.secret-check.outputs.configured == 'true' }}
         with:
           fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
+        if: ${{ steps.secret-check.outputs.configured == 'true' }}
       - uses: Swatinem/rust-cache@v2
+        if: ${{ steps.secret-check.outputs.configured == 'true' }}
 
       - name: Build current branch binary
+        if: ${{ steps.secret-check.outputs.configured == 'true' }}
         run: cargo build --release
 
       - name: Build baseline report from origin/main
+        if: ${{ steps.secret-check.outputs.configured == 'true' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
@@ -47,6 +62,7 @@ jobs:
             --output /tmp/eval-baseline.json
 
       - name: Run eval thresholds on current branch
+        if: ${{ steps.secret-check.outputs.configured == 'true' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
@@ -64,7 +80,7 @@ jobs:
             --max-rule-f1-drop reliability.unwrap_panic=0.25
 
       - name: Upload eval reports
-        if: always()
+        if: ${{ always() && steps.secret-check.outputs.configured == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: eval-reports
@@ -72,9 +88,6 @@ jobs:
             eval-current.json
             /tmp/eval-baseline.json
 
-  eval-skipped:
-    if: ${{ secrets.OPENAI_API_KEY == '' }}
-    runs-on: ubuntu-latest
-    steps:
       - name: Skip message
+        if: ${{ steps.secret-check.outputs.configured != 'true' }}
         run: echo "Skipping eval workflow because OPENAI_API_KEY secret is not configured."

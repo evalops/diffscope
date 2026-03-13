@@ -1002,6 +1002,16 @@ The summary includes:
 
 Contributions are welcome! Please open an issue first to discuss what you would like to change.
 
+### Local Development Checks
+
+Enable the repository-managed git hooks after cloning:
+
+```bash
+bash scripts/install-hooks.sh
+```
+
+The hooks validate GitHub Actions workflows and run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` before code leaves your machine. Install `actionlint` if you want full local workflow linting; otherwise the fallback check still blocks invalid `secrets.*` usage inside workflow `if:` expressions.
+
 ## Supported Platforms
 
 DiffScope provides pre-built binaries for the following platforms:

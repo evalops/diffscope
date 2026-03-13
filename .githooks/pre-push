@@ -13,11 +13,7 @@ cargo fmt --check
 echo "==> Running cargo clippy --all-targets..."
 cargo clippy --all-targets -- -D warnings
 
-if [ "${SKIP_TESTS:-0}" = "1" ]; then
-    echo "==> Skipping cargo test (SKIP_TESTS=1). Pre-push still enforces the full Rust gate."
-else
-    echo "==> Running cargo test..."
-    cargo test
-fi
+echo "==> Running cargo test..."
+cargo test
 
-echo "==> Pre-commit checks passed."
+echo "==> Pre-push checks passed."

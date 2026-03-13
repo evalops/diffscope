@@ -7,6 +7,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use super::path_utils::normalize_tool_path;
+
 pub struct EslintAnalyzer;
 
 impl EslintAnalyzer {
@@ -179,33 +181,6 @@ fn build_context_chunk(tool_name: &str, findings: &[AnalyzerFinding]) -> String 
         .join("\n");
 
     format!("{tool_name} findings:\n{details}")
-}
-
-fn normalize_tool_path(repo_root: &Path, raw: &str) -> PathBuf {
-    let path = PathBuf::from(raw);
-    let relative = if path.is_absolute() {
-        path.strip_prefix(repo_root)
-            .map(|value| value.to_path_buf())
-            .unwrap_or(path)
-    } else {
-        path
-    };
-
-    normalize_relative_path(relative)
-}
-
-fn normalize_relative_path(path: PathBuf) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-    normalized
 }
 
 #[cfg(test)]
