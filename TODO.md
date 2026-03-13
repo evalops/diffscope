@@ -81,7 +81,7 @@
 - [x] `src/commands/feedback_eval/types.rs`: separate input payload types from report/output types.
 - [x] `src/commands/feedback_eval/input/loading.rs`: split format detection from JSON parsing/loading.
 - [x] `src/commands/feedback_eval/input/conversion.rs`: split review-session conversion from label normalization helpers.
-- [ ] `src/commands/pr.rs`: separate summary-only flow, full review flow, and comment-posting orchestration.
+- [x] `src/commands/pr.rs`: separate summary-only flow, full review flow, and comment-posting orchestration.
 - [ ] `src/commands/pr/gh.rs`: carve PR resolution, diff fetching, and metadata fetching.
 - [ ] `src/commands/git/suggest.rs`: split commit-message prompting from PR-title prompting and response extraction.
 - [ ] `src/commands/review/command.rs`: split review/check/compare entrypoints if they keep diverging.

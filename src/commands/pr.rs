@@ -1,20 +1,23 @@
 use anyhow::Result;
-use std::path::PathBuf;
 use tracing::info;
 
 #[path = "pr/comments.rs"]
 mod comments;
+#[path = "pr/context.rs"]
+mod context;
 #[path = "pr/gh.rs"]
 mod gh;
+#[path = "pr/review_flow.rs"]
+mod review_flow;
+#[path = "pr/summary_flow.rs"]
+mod summary_flow;
 
-use crate::adapters;
 use crate::config;
-use crate::core;
 use crate::output::OutputFormat;
-use crate::review;
 
-use comments::post_review_comments;
-use gh::{fetch_pr_diff, fetch_pr_metadata, resolve_pr_number};
+use context::prepare_pr_context;
+use review_flow::run_pr_review_flow;
+use summary_flow::run_pr_summary_flow;
 
 pub async fn pr_command(
     number: Option<u32>,
@@ -24,72 +27,19 @@ pub async fn pr_command(
     config: config::Config,
     format: OutputFormat,
 ) -> Result<()> {
-    let pr_number = resolve_pr_number(number, repo.as_deref())?;
+    let context = prepare_pr_context(number, repo.as_deref())?;
 
-    info!("Reviewing PR #{}", pr_number);
+    info!("Reviewing PR #{}", context.pr_number);
 
-    let git = core::GitIntegration::new(".")?;
-    let repo_root = git.workdir().unwrap_or_else(|| PathBuf::from("."));
-    if let Ok(branch) = git.get_current_branch() {
-        info!("Current branch: {}", branch);
-    }
-    if let Ok(Some(remote)) = git.get_remote_url() {
-        info!("Remote URL: {}", remote);
-    }
-
-    let diff_content = fetch_pr_diff(&pr_number, repo.as_deref())?;
-
-    if diff_content.is_empty() {
+    if context.diff_content.is_empty() {
         println!("No changes in PR");
         return Ok(());
     }
 
     if summary {
-        let diffs = core::DiffParser::parse_unified_diff(&diff_content)?;
-        let git = core::GitIntegration::new(".")?;
-
-        let fast_config = config.to_model_config_for_role(config::ModelRole::Fast);
-        let adapter = adapters::llm::create_adapter(&fast_config)?;
-        let options = core::SummaryOptions {
-            include_diagram: config.smart_review_diagram,
-        };
-        let pr_summary = core::PRSummaryGenerator::generate_summary_with_options(
-            &diffs,
-            &git,
-            adapter.as_ref(),
-            options,
-        )
-        .await?;
-
-        println!("{}", pr_summary.to_markdown());
+        run_pr_summary_flow(&config, &context.diff_content).await?;
         return Ok(());
     }
 
-    let review_result =
-        review::review_diff_content_raw(&diff_content, config.clone(), &repo_root).await?;
-    let comments = review_result.comments;
-
-    if post_comments {
-        info!("Posting {} comments to PR", comments.len());
-        let metadata = fetch_pr_metadata(&pr_number, repo.as_deref())?;
-        let stats = post_review_comments(
-            &pr_number,
-            repo.as_deref(),
-            &metadata,
-            &comments,
-            &config.rule_priority,
-        )?;
-
-        println!(
-            "Posted {} comments to PR #{} (inline: {}, fallback: {}, summary: updated)",
-            comments.len(),
-            pr_number,
-            stats.inline_posted,
-            stats.fallback_posted
-        );
-    } else {
-        crate::output::output_comments(&comments, None, format, &config.rule_priority).await?;
-    }
-
-    Ok(())
+    run_pr_review_flow(&context, repo.as_deref(), post_comments, &config, format).await
 }
