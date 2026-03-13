@@ -5,7 +5,8 @@ use tracing::debug;
 
 use crate::config;
 use crate::core::dag::{
-    describe_dag, execute_dag, DagGraphContract, DagNode, DagNodeContract, DagNodeKind, DagNodeSpec,
+    describe_dag, execute_dag, DagGraphContract, DagNode, DagNodeContract, DagNodeExecutionHints,
+    DagNodeKind, DagNodeSpec,
 };
 
 use super::super::contracts::{ExecutionSummary, PreparedReviewJobs, ReviewExecutionContext};
@@ -108,6 +109,12 @@ pub(in super::super) fn describe_review_pipeline_graph() -> DagGraphContract {
                 dependencies: vec![],
                 inputs: vec!["config".to_string(), "repo_path".to_string()],
                 outputs: vec!["pipeline_services".to_string()],
+                hints: DagNodeExecutionHints {
+                    parallelizable: false,
+                    retryable: true,
+                    side_effects: false,
+                    subgraph: None,
+                },
                 enabled: true,
             },
             DagNodeContract {
@@ -117,6 +124,12 @@ pub(in super::super) fn describe_review_pipeline_graph() -> DagGraphContract {
                 dependencies: vec!["initialize_services".to_string()],
                 inputs: vec!["diff_content".to_string(), "pipeline_services".to_string(), "progress_callback".to_string()],
                 outputs: vec!["review_session".to_string()],
+                hints: DagNodeExecutionHints {
+                    parallelizable: false,
+                    retryable: true,
+                    side_effects: false,
+                    subgraph: None,
+                },
                 enabled: true,
             },
             DagNodeContract {
@@ -126,6 +139,12 @@ pub(in super::super) fn describe_review_pipeline_graph() -> DagGraphContract {
                 dependencies: vec!["build_session".to_string()],
                 inputs: vec!["pipeline_services".to_string(), "review_session".to_string()],
                 outputs: vec!["prepared_review_jobs".to_string()],
+                hints: DagNodeExecutionHints {
+                    parallelizable: false,
+                    retryable: true,
+                    side_effects: false,
+                    subgraph: None,
+                },
                 enabled: true,
             },
             DagNodeContract {
@@ -135,6 +154,12 @@ pub(in super::super) fn describe_review_pipeline_graph() -> DagGraphContract {
                 dependencies: vec!["prepare_jobs".to_string()],
                 inputs: vec!["prepared_review_jobs".to_string(), "pipeline_services".to_string(), "review_session".to_string()],
                 outputs: vec!["execution_summary".to_string()],
+                hints: DagNodeExecutionHints {
+                    parallelizable: true,
+                    retryable: true,
+                    side_effects: false,
+                    subgraph: None,
+                },
                 enabled: true,
             },
             DagNodeContract {
@@ -144,6 +169,12 @@ pub(in super::super) fn describe_review_pipeline_graph() -> DagGraphContract {
                 dependencies: vec!["execute_jobs".to_string()],
                 inputs: vec!["execution_summary".to_string(), "pipeline_services".to_string(), "review_session".to_string()],
                 outputs: vec!["review_result".to_string()],
+                hints: DagNodeExecutionHints {
+                    parallelizable: false,
+                    retryable: true,
+                    side_effects: false,
+                    subgraph: Some("review_postprocess".to_string()),
+                },
                 enabled: true,
             },
         ],
@@ -304,5 +335,9 @@ mod tests {
             vec!["pipeline_services", "review_session"]
         );
         assert_eq!(graph.nodes[4].outputs, vec!["review_result"]);
+        assert_eq!(
+            graph.nodes[4].hints.subgraph.as_deref(),
+            Some("review_postprocess")
+        );
     }
 }

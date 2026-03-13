@@ -5,7 +5,8 @@ use tracing::debug;
 use crate::config;
 use crate::core;
 use crate::core::dag::{
-    describe_dag, execute_dag, DagGraphContract, DagNode, DagNodeContract, DagNodeKind, DagNodeSpec,
+    describe_dag, execute_dag, DagGraphContract, DagNode, DagNodeContract, DagNodeExecutionHints,
+    DagNodeKind, DagNodeSpec,
 };
 use crate::core::eval_benchmarks::FixtureResult as BenchmarkFixtureResult;
 use crate::review::review_diff_content_raw;
@@ -153,6 +154,12 @@ pub(in super::super::super) fn describe_eval_fixture_graph(
                     "verification_report".to_string(),
                     "agent_activity".to_string(),
                 ],
+                hints: DagNodeExecutionHints {
+                    parallelizable: false,
+                    retryable: true,
+                    side_effects: false,
+                    subgraph: Some("review_pipeline".to_string()),
+                },
                 enabled: spec.enabled,
             },
             EvalFixtureStage::ExpectationMatching => DagNodeContract {
@@ -168,6 +175,12 @@ pub(in super::super::super) fn describe_eval_fixture_graph(
                     .collect(),
                 inputs: vec!["comments".to_string(), "fixture_expectations".to_string()],
                 outputs: vec!["match_summary".to_string(), "failures".to_string()],
+                hints: DagNodeExecutionHints {
+                    parallelizable: true,
+                    retryable: true,
+                    side_effects: false,
+                    subgraph: None,
+                },
                 enabled: spec.enabled,
             },
             EvalFixtureStage::CommentCountValidation => DagNodeContract {
@@ -186,6 +199,12 @@ pub(in super::super::super) fn describe_eval_fixture_graph(
                     "failures".to_string(),
                 ],
                 outputs: vec!["failures".to_string()],
+                hints: DagNodeExecutionHints {
+                    parallelizable: true,
+                    retryable: true,
+                    side_effects: false,
+                    subgraph: None,
+                },
                 enabled: spec.enabled,
             },
             EvalFixtureStage::BenchmarkMetrics => DagNodeContract {
@@ -205,6 +224,12 @@ pub(in super::super::super) fn describe_eval_fixture_graph(
                     "failures".to_string(),
                 ],
                 outputs: vec!["benchmark_metrics".to_string()],
+                hints: DagNodeExecutionHints {
+                    parallelizable: true,
+                    retryable: true,
+                    side_effects: false,
+                    subgraph: None,
+                },
                 enabled: spec.enabled,
             },
             EvalFixtureStage::ReproductionValidation => DagNodeContract {
@@ -224,6 +249,12 @@ pub(in super::super::super) fn describe_eval_fixture_graph(
                     "comments".to_string(),
                 ],
                 outputs: vec!["reproduction_summary".to_string(), "warnings".to_string()],
+                hints: DagNodeExecutionHints {
+                    parallelizable: false,
+                    retryable: true,
+                    side_effects: false,
+                    subgraph: None,
+                },
                 enabled: spec.enabled,
             },
             EvalFixtureStage::ArtifactCapture => DagNodeContract {
@@ -245,6 +276,12 @@ pub(in super::super::super) fn describe_eval_fixture_graph(
                     "benchmark_metrics".to_string(),
                 ],
                 outputs: vec!["artifact_path".to_string()],
+                hints: DagNodeExecutionHints {
+                    parallelizable: false,
+                    retryable: true,
+                    side_effects: true,
+                    subgraph: None,
+                },
                 enabled: spec.enabled,
             },
         })
@@ -462,6 +499,9 @@ mod tests {
 
         assert_eq!(graph.name, "eval_fixture_execution");
         assert_eq!(graph.entry_nodes, vec!["review"]);
+        assert!(graph.nodes.iter().any(|node| {
+            node.name == "review" && node.hints.subgraph.as_deref() == Some("review_pipeline")
+        }));
         assert!(graph.nodes.iter().any(|node| {
             node.name == "reproduction_validation"
                 && node.outputs.contains(&"reproduction_summary".to_string())

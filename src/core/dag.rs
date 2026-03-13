@@ -43,6 +43,7 @@ pub struct DagNodeContract {
     pub dependencies: Vec<String>,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    pub hints: DagNodeExecutionHints,
     pub enabled: bool,
 }
 
@@ -53,6 +54,37 @@ pub struct DagGraphContract {
     pub entry_nodes: Vec<String>,
     pub terminal_nodes: Vec<String>,
     pub nodes: Vec<DagNodeContract>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DagNodeExecutionHints {
+    pub parallelizable: bool,
+    pub retryable: bool,
+    pub side_effects: bool,
+    pub subgraph: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DagCatalog {
+    pub graphs: Vec<DagGraphContract>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DagNodePlanState {
+    pub name: String,
+    pub enabled: bool,
+    pub completed: bool,
+    pub ready: bool,
+    pub unmet_dependencies: Vec<String>,
+    pub subgraph: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DagExecutionPlan {
+    pub graph_name: String,
+    pub completed: Vec<String>,
+    pub ready: Vec<String>,
+    pub nodes: Vec<DagNodePlanState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +153,50 @@ where
     }
 
     Ok(records)
+}
+
+pub fn plan_dag_execution(
+    graph: &DagGraphContract,
+    completed: &[String],
+) -> Result<DagExecutionPlan> {
+    let completed_set = completed.iter().cloned().collect::<HashSet<_>>();
+
+    for name in &completed_set {
+        if !graph.nodes.iter().any(|node| node.name == *name) {
+            anyhow::bail!("Unknown completed node '{}' for DAG '{}'", name, graph.name);
+        }
+    }
+
+    let mut ready = Vec::new();
+    let mut nodes = Vec::with_capacity(graph.nodes.len());
+    for node in &graph.nodes {
+        let unmet_dependencies = node
+            .dependencies
+            .iter()
+            .filter(|dependency| !completed_set.contains(*dependency))
+            .cloned()
+            .collect::<Vec<_>>();
+        let is_completed = completed_set.contains(&node.name);
+        let is_ready = node.enabled && !is_completed && unmet_dependencies.is_empty();
+        if is_ready {
+            ready.push(node.name.clone());
+        }
+        nodes.push(DagNodePlanState {
+            name: node.name.clone(),
+            enabled: node.enabled,
+            completed: is_completed,
+            ready: is_ready,
+            unmet_dependencies,
+            subgraph: node.hints.subgraph.clone(),
+        });
+    }
+
+    Ok(DagExecutionPlan {
+        graph_name: graph.name.clone(),
+        completed: completed.to_vec(),
+        ready,
+        nodes,
+    })
 }
 
 #[cfg(test)]
@@ -198,5 +274,53 @@ mod tests {
         assert_eq!(descriptions[0].name, "root");
         assert_eq!(descriptions[1].dependencies, vec!["root"]);
         assert!(!descriptions[1].enabled);
+    }
+
+    #[test]
+    fn plan_dag_execution_marks_ready_nodes() {
+        let graph = DagGraphContract {
+            name: "test".to_string(),
+            description: "test graph".to_string(),
+            entry_nodes: vec!["root".to_string()],
+            terminal_nodes: vec!["leaf".to_string()],
+            nodes: vec![
+                DagNodeContract {
+                    name: "root".to_string(),
+                    description: "root".to_string(),
+                    kind: DagNodeKind::Setup,
+                    dependencies: vec![],
+                    inputs: vec![],
+                    outputs: vec![],
+                    hints: DagNodeExecutionHints {
+                        parallelizable: false,
+                        retryable: true,
+                        side_effects: false,
+                        subgraph: None,
+                    },
+                    enabled: true,
+                },
+                DagNodeContract {
+                    name: "leaf".to_string(),
+                    description: "leaf".to_string(),
+                    kind: DagNodeKind::Execution,
+                    dependencies: vec!["root".to_string()],
+                    inputs: vec![],
+                    outputs: vec![],
+                    hints: DagNodeExecutionHints {
+                        parallelizable: true,
+                        retryable: true,
+                        side_effects: false,
+                        subgraph: Some("child".to_string()),
+                    },
+                    enabled: true,
+                },
+            ],
+        };
+
+        let plan = plan_dag_execution(&graph, &["root".to_string()]).unwrap();
+
+        assert_eq!(plan.ready, vec!["leaf"]);
+        assert!(plan.nodes[0].completed);
+        assert_eq!(plan.nodes[1].subgraph.as_deref(), Some("child"));
     }
 }

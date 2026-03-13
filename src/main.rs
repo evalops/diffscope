@@ -10,7 +10,7 @@ mod server;
 mod vault;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "otel")]
 use opentelemetry::trace::TracerProvider as _;
 use std::path::PathBuf;
@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::EnvFilter;
 
-use commands::{describe_eval_fixture_graph, EvalRunOptions, GitCommands};
+use commands::{DagGraphSelection, EvalRunOptions, GitCommands};
 use config::CliOverrides;
 use output::OutputFormat;
 
@@ -465,6 +465,51 @@ enum DagCommands {
         )]
         repro_validate: bool,
     },
+    #[command(about = "Describe the full DAG catalog with nested graph references")]
+    Catalog {
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Describe the postprocess graph as if convention-store persistence is enabled"
+        )]
+        convention_store_path: bool,
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Describe the eval graph with reproduction validation enabled"
+        )]
+        repro_validate: bool,
+    },
+    #[command(about = "Plan which DAG nodes are ready given a completed set")]
+    Ready {
+        #[arg(long, value_enum, help = "Graph to plan")]
+        graph: DagGraphKind,
+        #[arg(
+            long,
+            value_delimiter = ',',
+            help = "Comma-separated completed node names"
+        )]
+        completed: Vec<String>,
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Plan the postprocess graph as if convention-store persistence is enabled"
+        )]
+        convention_store_path: bool,
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Plan the eval graph with reproduction validation enabled"
+        )]
+        repro_validate: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DagGraphKind {
+    Review,
+    Postprocess,
+    Eval,
 }
 
 #[tokio::main]
@@ -702,16 +747,54 @@ async fn main() -> Result<()> {
             commands::feedback_eval_command(input, output, confidence_threshold, eval_report)
                 .await?;
         }
-        Commands::Dag { command } => {
-            let graph = match command {
-                DagCommands::Review => review::describe_review_pipeline_graph(),
-                DagCommands::Postprocess {
-                    convention_store_path,
-                } => review::describe_review_postprocess_graph(&config, convention_store_path),
-                DagCommands::Eval { repro_validate } => describe_eval_fixture_graph(repro_validate),
-            };
-            println!("{}", serde_json::to_string_pretty(&graph)?);
-        }
+        Commands::Dag { command } => match command {
+            DagCommands::Review => {
+                let graph = commands::describe_dag_graph(&config, DagGraphSelection::Review);
+                println!("{}", serde_json::to_string_pretty(&graph)?);
+            }
+            DagCommands::Postprocess {
+                convention_store_path,
+            } => {
+                let graph = commands::describe_dag_graph(
+                    &config,
+                    DagGraphSelection::Postprocess {
+                        convention_store_path,
+                    },
+                );
+                println!("{}", serde_json::to_string_pretty(&graph)?);
+            }
+            DagCommands::Eval { repro_validate } => {
+                let graph = commands::describe_dag_graph(
+                    &config,
+                    DagGraphSelection::Eval { repro_validate },
+                );
+                println!("{}", serde_json::to_string_pretty(&graph)?);
+            }
+            DagCommands::Catalog {
+                convention_store_path,
+                repro_validate,
+            } => {
+                let catalog =
+                    commands::build_dag_catalog(&config, repro_validate, convention_store_path);
+                println!("{}", serde_json::to_string_pretty(&catalog)?);
+            }
+            DagCommands::Ready {
+                graph,
+                completed,
+                convention_store_path,
+                repro_validate,
+            } => {
+                let selection = match graph {
+                    DagGraphKind::Review => DagGraphSelection::Review,
+                    DagGraphKind::Postprocess => DagGraphSelection::Postprocess {
+                        convention_store_path,
+                    },
+                    DagGraphKind::Eval => DagGraphSelection::Eval { repro_validate },
+                };
+                let plan = commands::plan_dag_graph(&config, selection, &completed)?;
+                println!("{}", serde_json::to_string_pretty(&plan)?);
+            }
+        },
     }
 
     #[cfg(feature = "otel")]
