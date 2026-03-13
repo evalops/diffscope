@@ -77,7 +77,7 @@
 
 ### Commands backlog
 
-- [ ] `src/commands/eval/types.rs`: split fixture, pattern, report, and run-option types if churn keeps touching unrelated structs.
+- [x] `src/commands/eval/types.rs`: split fixture, pattern, report, and run-option types if churn keeps touching unrelated structs.
 - [x] `src/commands/feedback_eval/types.rs`: separate input payload types from report/output types.
 - [x] `src/commands/feedback_eval/input/loading.rs`: split format detection from JSON parsing/loading.
 - [x] `src/commands/feedback_eval/input/conversion.rs`: split review-session conversion from label normalization helpers.

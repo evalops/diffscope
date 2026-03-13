@@ -1,0 +1,29 @@
+use serde::Deserialize;
+use std::path::PathBuf;
+
+use crate::core::eval_benchmarks::{BenchmarkThresholds, Difficulty};
+
+use super::pattern::EvalExpectations;
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub(in super::super) struct EvalFixture {
+    #[serde(default)]
+    pub(in super::super) name: Option<String>,
+    #[serde(default)]
+    pub(in super::super) diff: Option<String>,
+    #[serde(default)]
+    pub(in super::super) diff_file: Option<PathBuf>,
+    #[serde(default)]
+    pub(in super::super) repo_path: Option<PathBuf>,
+    #[serde(default)]
+    pub(in super::super) expect: EvalExpectations,
+}
+
+#[derive(Debug, Clone)]
+pub(in super::super) struct LoadedEvalFixture {
+    pub(in super::super) fixture_path: PathBuf,
+    pub(in super::super) fixture: EvalFixture,
+    pub(in super::super) suite_name: Option<String>,
+    pub(in super::super) suite_thresholds: Option<BenchmarkThresholds>,
+    pub(in super::super) difficulty: Option<Difficulty>,
+}
