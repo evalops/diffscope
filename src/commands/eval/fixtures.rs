@@ -1,192 +1,23 @@
-use anyhow::Result;
-use regex::Regex;
-use serde::Deserialize;
-use std::path::{Path, PathBuf};
+#[path = "fixtures/discovery.rs"]
+mod discovery;
+#[path = "fixtures/loading.rs"]
+mod loading;
+#[path = "fixtures/packs.rs"]
+mod packs;
+#[path = "fixtures/validation.rs"]
+mod validation;
 
-use crate::core::eval_benchmarks::CommunityFixturePack;
+pub(super) use loading::{collect_eval_fixtures, load_eval_report};
 
-use super::{EvalExpectations, EvalFixture, EvalPattern, EvalReport, LoadedEvalFixture};
-
-pub(super) fn collect_fixture_paths(fixtures_dir: &Path) -> Result<Vec<PathBuf>> {
-    if !fixtures_dir.exists() {
-        anyhow::bail!("Fixtures directory not found: {}", fixtures_dir.display());
-    }
-    if !fixtures_dir.is_dir() {
-        anyhow::bail!(
-            "Fixtures path is not a directory: {}",
-            fixtures_dir.display()
-        );
-    }
-
-    let mut paths = Vec::new();
-    let mut stack = vec![fixtures_dir.to_path_buf()];
-
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-
-            let extension = path
-                .extension()
-                .and_then(|value| value.to_str())
-                .map(|value| value.to_ascii_lowercase());
-            if matches!(extension.as_deref(), Some("json" | "yml" | "yaml")) {
-                paths.push(path);
-            }
-        }
-    }
-
-    paths.sort();
-    Ok(paths)
-}
-
-pub(super) fn collect_eval_fixtures(fixtures_dir: &Path) -> Result<Vec<LoadedEvalFixture>> {
-    let mut fixtures = Vec::new();
-    for path in collect_fixture_paths(fixtures_dir)? {
-        fixtures.extend(load_eval_fixtures_from_path(&path)?);
-    }
-    fixtures.sort_by(|left, right| {
-        left.fixture_path
-            .cmp(&right.fixture_path)
-            .then_with(|| left.fixture.name.cmp(&right.fixture.name))
-    });
-    Ok(fixtures)
-}
-
-pub(super) fn load_eval_fixtures_from_path(path: &Path) -> Result<Vec<LoadedEvalFixture>> {
-    let content = std::fs::read_to_string(path)?;
-
-    if let Ok(pack) = load_fixture_file::<CommunityFixturePack>(path, &content) {
-        return expand_community_fixture_pack(path, pack);
-    }
-
-    let fixture = load_eval_fixture_from_content(path, &content)?;
-    Ok(vec![LoadedEvalFixture {
-        fixture_path: path.to_path_buf(),
-        fixture,
-        suite_name: None,
-        suite_thresholds: None,
-        difficulty: None,
-    }])
-}
-
-fn load_eval_fixture_from_content(path: &Path, content: &str) -> Result<EvalFixture> {
-    let fixture = load_fixture_file::<EvalFixture>(path, content)?;
-    validate_eval_fixture(&fixture)?;
-    Ok(fixture)
-}
-
-fn load_fixture_file<T>(path: &Path, content: &str) -> Result<T>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase());
-    match extension.as_deref() {
-        Some("json") => Ok(serde_json::from_str(content)?),
-        _ => match serde_yaml::from_str(content) {
-            Ok(parsed) => Ok(parsed),
-            Err(_) => Ok(serde_json::from_str(content)?),
-        },
-    }
-}
-
-fn expand_community_fixture_pack(
-    path: &Path,
-    pack: CommunityFixturePack,
-) -> Result<Vec<LoadedEvalFixture>> {
-    let pack_name = pack.name;
-    let thresholds = pack.thresholds;
-    pack.fixtures
-        .into_iter()
-        .map(|fixture| {
-            let difficulty = fixture.difficulty.clone();
-            let eval_fixture = EvalFixture {
-                name: Some(format!("{}/{}", pack_name, fixture.name)),
-                diff: Some(fixture.diff_content),
-                diff_file: None,
-                repo_path: None,
-                expect: EvalExpectations {
-                    must_find: fixture
-                        .expected_findings
-                        .into_iter()
-                        .map(|finding| EvalPattern {
-                            file: finding.file_pattern,
-                            line: finding.line_hint,
-                            contains: finding.contains,
-                            severity: finding.severity,
-                            category: finding.category,
-                            rule_id: finding.rule_id.clone(),
-                            require_rule_id: finding.rule_id.is_some(),
-                            ..Default::default()
-                        })
-                        .collect(),
-                    must_not_find: fixture
-                        .negative_findings
-                        .into_iter()
-                        .map(|finding| EvalPattern {
-                            file: finding.file_pattern,
-                            contains: finding.contains,
-                            ..Default::default()
-                        })
-                        .collect(),
-                    min_total: None,
-                    max_total: None,
-                },
-            };
-            validate_eval_fixture(&eval_fixture)?;
-
-            Ok(LoadedEvalFixture {
-                fixture_path: path.to_path_buf(),
-                fixture: eval_fixture,
-                suite_name: Some(pack_name.clone()),
-                suite_thresholds: thresholds.clone(),
-                difficulty: Some(difficulty),
-            })
-        })
-        .collect::<Result<Vec<_>>>()
-}
-
-fn validate_eval_fixture(fixture: &EvalFixture) -> Result<()> {
-    for pattern in fixture
-        .expect
-        .must_find
-        .iter()
-        .chain(fixture.expect.must_not_find.iter())
-    {
-        if let Some(pattern_text) = pattern.matches_regex.as_deref().map(str::trim) {
-            if !pattern_text.is_empty() {
-                Regex::new(pattern_text).map_err(|error| {
-                    anyhow::anyhow!(
-                        "Invalid regex '{}' in fixture '{}': {}",
-                        pattern_text,
-                        fixture.name.as_deref().unwrap_or("<unnamed>"),
-                        error
-                    )
-                })?;
-            }
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn load_eval_report(path: &Path) -> Result<EvalReport> {
-    let content = std::fs::read_to_string(path)?;
-    let report: EvalReport = serde_json::from_str(&content)?;
-    Ok(report)
-}
+#[cfg(test)]
+use loading::load_eval_fixtures_from_path;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{collect_eval_fixtures, load_eval_fixtures_from_path};
     use crate::core::eval_benchmarks::{
-        BenchmarkFixture, BenchmarkThresholds, Difficulty, ExpectedFinding, NegativeFinding,
+        BenchmarkFixture, BenchmarkThresholds, CommunityFixturePack, Difficulty, ExpectedFinding,
+        NegativeFinding,
     };
     use std::collections::HashMap;
     use tempfile::tempdir;
