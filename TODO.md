@@ -88,7 +88,7 @@
 - [x] `src/commands/misc/feedback/command.rs`: separate file loading/ID normalization from store persistence.
 - [x] `src/commands/misc/feedback/apply.rs`: split acceptance/rejection counters from store mutation helpers.
 - [x] `src/commands/misc/discussion/command.rs`: separate the interactive loop from single-shot execution.
-- [ ] `src/commands/misc/discussion/selection.rs`: split file loading/ID repair from selection rules.
+- [x] `src/commands/misc/discussion/selection.rs`: split file loading/ID repair from selection rules.
 - [ ] `src/commands/misc/changelog.rs`: evaluate splitting changelog collection from output formatting.
 - [x] `src/commands/eval/command.rs`: separate CLI option prep, fixture execution, and report lifecycle.
 - [x] `src/commands/feedback_eval/command.rs`: separate input loading from report/output orchestration.
