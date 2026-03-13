@@ -682,6 +682,7 @@ pub async fn submit_feedback(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     // Capture comment data for convention store before mutating
+    let semantic_comment = comment.clone();
     let comment_content = comment.content.clone();
     let comment_category = comment.category.to_string();
     let file_patterns = crate::review::derive_file_patterns(&comment.file_path);
@@ -705,10 +706,16 @@ pub async fn submit_feedback(
 
     // Record enhanced feedback pattern stats
     {
-        let config = state.config.read().await;
+        let config = state.config.read().await.clone();
         let mut feedback_store = crate::review::load_feedback_store(&config);
         feedback_store.record_feedback_patterns(&comment_category, &file_patterns, is_accepted);
         let _ = crate::review::save_feedback_store(&config.feedback_path, &feedback_store);
+        let _ = crate::review::record_semantic_feedback_example(
+            &config,
+            &semantic_comment,
+            is_accepted,
+        )
+        .await;
     }
 
     // Record in convention store for learned patterns

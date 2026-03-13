@@ -92,10 +92,10 @@ pub async fn review_command(
             .await?;
 
         // Run pre-analyzers to get additional context
-        let analyzer_chunks = plugin_manager
+        let pre_analysis = plugin_manager
             .run_pre_analyzers(diff, &repo_path_str)
             .await?;
-        context_chunks.extend(analyzer_chunks);
+        context_chunks.extend(pre_analysis.context_chunks);
 
         // Extract symbols from diff and fetch their definitions
         let symbols = crate::review::extract_symbols_from_diff(diff);

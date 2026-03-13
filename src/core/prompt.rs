@@ -69,15 +69,19 @@ fn shared_review_principles() -> &'static str {
 fn shared_output_contract(category_label: &str, no_issues_message: &str) -> String {
     format!(
         r#"Response contract:
-- Format every finding as:
-  Line [number]{{ [rule:<id>] optional}}: [{category_label}] - [specific problem]. [Impact]. [Smallest safe fix].
-- For concrete local fixes, add this block immediately after the finding:
-  <<<ORIGINAL
-  <code copied from the diff>
-  ===
-  <improved code>
-  >>>SUGGESTED
-- If no relevant issues are found, respond with: {no_issues_message}"#
+ - Preferred format: return a JSON array only. Each finding object must use this schema:
+   {{"line": 42, "category": "{category_label}", "issue": "specific problem", "impact": "why it matters", "fix": "smallest safe fix", "rule_id": "optional.rule.id", "severity": "warning", "confidence": 0.91, "fix_effort": "low", "tags": ["optional-tag"], "original_code": "optional", "suggested_code": "optional"}}
+ - Only include `original_code` and `suggested_code` when you can quote a precise local edit from the diff.
+ - If no relevant issues are found, return `[]`.
+ - Fallback only if strict JSON is impossible:
+   Line [number]{{ [rule:<id>] optional}}: [{category_label}] - [specific problem]. [Impact]. [Smallest safe fix].
+ - For concrete local fixes in fallback mode, add this block immediately after the finding:
+   <<<ORIGINAL
+   <code copied from the diff>
+   ===
+   <improved code>
+   >>>SUGGESTED
+ - If fallback mode finds no relevant issues, respond with: {no_issues_message}"#
     )
 }
 
@@ -469,6 +473,16 @@ mod tests {
         assert!(!config
             .user_prompt_template
             .contains("bugs, security vulnerabilities, or performance issues"));
+    }
+
+    #[test]
+    fn default_prompt_prefers_json_output_contract() {
+        let config = PromptConfig::default();
+        assert!(config
+            .system_prompt
+            .contains("Preferred format: return a JSON array only"));
+        assert!(config.system_prompt.contains("\"line\": 42"));
+        assert!(config.system_prompt.contains("return `[]`"));
     }
 
     #[test]

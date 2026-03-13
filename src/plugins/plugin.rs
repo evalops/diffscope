@@ -1,6 +1,6 @@
 use crate::config::PluginConfig;
-use crate::core::{Comment, LLMContextChunk, UnifiedDiff};
-use crate::plugins::{PostProcessor, PreAnalyzer};
+use crate::core::{Comment, UnifiedDiff};
+use crate::plugins::{PostProcessor, PreAnalysis, PreAnalyzer};
 use anyhow::Result;
 use std::sync::Arc;
 
@@ -51,19 +51,19 @@ impl PluginManager {
         &self,
         diff: &UnifiedDiff,
         repo_path: &str,
-    ) -> Result<Vec<LLMContextChunk>> {
-        let mut all_chunks = Vec::new();
+    ) -> Result<PreAnalysis> {
+        let mut analysis = PreAnalysis::default();
 
         for analyzer in &self.pre_analyzers {
             match analyzer.run(diff, repo_path).await {
-                Ok(chunks) => all_chunks.extend(chunks),
+                Ok(result) => analysis.extend(result),
                 Err(e) => {
                     tracing::warn!("Pre-analyzer {} failed: {}", analyzer.id(), e);
                 }
             }
         }
 
-        Ok(all_chunks)
+        Ok(analysis)
     }
 
     pub async fn run_post_processors(

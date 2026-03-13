@@ -162,6 +162,18 @@ pub trait LLMAdapter: Send + Sync {
     async fn complete(&self, request: LLMRequest) -> Result<LLMResponse>;
     fn model_name(&self) -> &str;
 
+    /// Embed one or more texts for semantic retrieval and feedback learning.
+    async fn embed(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        Err(anyhow::anyhow!(
+            "Embeddings are not supported by adapter for model {}",
+            self.model_name()
+        ))
+    }
+
+    fn supports_embeddings(&self) -> bool {
+        false
+    }
+
     /// Multi-turn chat with tool use support.
     /// Default impl flattens to a single `complete()` call (no tool support).
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {

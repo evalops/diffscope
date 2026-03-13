@@ -76,7 +76,7 @@ use super::context_helpers::{
     inject_custom_context, inject_pattern_repository_context, rank_and_trim_context_chunks,
     resolve_pattern_repositories,
 };
-use super::feedback::load_feedback_store;
+use super::feedback::{derive_file_patterns, load_feedback_store};
 use super::filters::apply_review_filters;
 use super::rule_helpers::{apply_rule_overrides, inject_rule_context, load_review_rules};
 
@@ -171,6 +171,15 @@ async fn review_diff_content_raw_inner(
     let diffs = core::DiffParser::parse_unified_diff(diff_content)?;
     info!("Parsed {} file diffs", diffs.len());
 
+    let source_files: HashMap<PathBuf, String> = diffs
+        .iter()
+        .filter_map(|diff| {
+            std::fs::read_to_string(repo_path.join(&diff.file_path))
+                .ok()
+                .map(|content| (diff.file_path.clone(), content))
+        })
+        .collect();
+
     // Pre-count reviewable files for progress tracking
     let files_total = diffs.len();
     let mut files_completed: usize = 0;
@@ -216,7 +225,7 @@ async fn review_diff_content_raw_inner(
     // Build enhanced review context with real data from the repository
     let mut enhanced_ctx = core::build_enhanced_context(
         &diffs,
-        &HashMap::new(),
+        &source_files,
         git_log_output.as_deref(),
         None,
         convention_json.as_deref(),
@@ -281,6 +290,56 @@ async fn review_diff_content_raw_inner(
             adapter.clone()
         }
     };
+
+    let embedding_adapter: Option<Arc<dyn adapters::llm::LLMAdapter>> =
+        if config.semantic_rag || config.semantic_feedback {
+            let embedding_config = config.to_model_config_for_role(config::ModelRole::Embedding);
+            if embedding_config.model_name == model_config.model_name {
+                Some(adapter.clone())
+            } else {
+                match adapters::llm::create_adapter(&embedding_config) {
+                    Ok(adapter) => Some(Arc::from(adapter)),
+                    Err(e) => {
+                        warn!(
+                            "Embedding adapter initialization failed for '{}': {}",
+                            embedding_config.model_name, e
+                        );
+                        None
+                    }
+                }
+            }
+        } else {
+            None
+        };
+
+    let semantic_index = if config.semantic_rag {
+        let index_path = core::default_index_path(repo_path);
+        match core::refresh_semantic_index(
+            repo_path,
+            &index_path,
+            embedding_adapter.as_deref(),
+            |path| config.should_exclude(path),
+            config.semantic_rag_max_files,
+        )
+        .await
+        {
+            Ok(index) => Some(index),
+            Err(e) => {
+                warn!("Semantic index refresh failed: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let semantic_feedback_store = if config.semantic_feedback {
+        let path = core::default_semantic_feedback_path(&config.feedback_path);
+        Some(core::load_semantic_feedback_store(&path))
+    } else {
+        None
+    };
+
     let base_prompt_config = core::prompt::PromptConfig {
         max_context_chars: config.max_context_chars,
         max_diff_chars: config.max_diff_chars,
@@ -299,6 +358,7 @@ async fn review_diff_content_raw_inner(
         active_rules: Vec<crate::core::ReviewRule>,
         path_config: Option<config::PathConfig>,
         file_path: std::path::PathBuf,
+        deterministic_comments: Vec<core::Comment>,
         /// When running specialized multi-pass review, identifies which pass this job belongs to.
         pass_kind: Option<core::SpecializedPassKind>,
     }
@@ -323,15 +383,40 @@ async fn review_diff_content_raw_inner(
             continue;
         }
 
+        let pre_analysis = plugin_manager
+            .run_pre_analyzers(diff, &repo_path_str)
+            .await?;
+        let deterministic_comments = synthesize_analyzer_comments(pre_analysis.findings.clone())?;
+
         // Triage: skip files that don't need expensive LLM review
         let triage_result = triage::triage_diff(diff);
         if triage_result.should_skip() {
-            info!(
-                "Skipping {} (triage: {})",
-                diff.file_path.display(),
-                triage_result.reason()
-            );
-            files_skipped += 1;
+            if deterministic_comments.is_empty() {
+                info!(
+                    "Skipping {} (triage: {})",
+                    diff.file_path.display(),
+                    triage_result.reason()
+                );
+                files_skipped += 1;
+            } else {
+                info!(
+                    "Skipping expensive LLM review for {} (triage: {}), keeping {} analyzer finding(s)",
+                    diff.file_path.display(),
+                    triage_result.reason(),
+                    deterministic_comments.len()
+                );
+                all_comments.extend(deterministic_comments);
+                files_completed += 1;
+                if let Some(ref cb) = on_progress {
+                    cb(ProgressUpdate {
+                        current_file: diff.file_path.display().to_string(),
+                        files_total,
+                        files_completed,
+                        files_skipped,
+                        comments_so_far: all_comments.clone(),
+                    });
+                }
+            }
             continue;
         }
 
@@ -357,11 +442,8 @@ async fn review_diff_content_raw_inner(
             )
             .await?;
 
-        // Run pre-analyzers to get additional context
-        let analyzer_chunks = plugin_manager
-            .run_pre_analyzers(diff, &repo_path_str)
-            .await?;
-        context_chunks.extend(analyzer_chunks);
+        // Run deterministic pre-analyzers before prompting the LLM.
+        context_chunks.extend(pre_analysis.context_chunks.clone());
 
         // Extract symbols from diff and fetch their definitions
         let symbols = extract_symbols_from_diff(diff);
@@ -389,6 +471,21 @@ async fn review_diff_content_raw_inner(
         if let Some(ref index) = symbol_index {
             let caller_chunks = gather_related_file_context(index, &diff.file_path, repo_path);
             context_chunks.extend(caller_chunks);
+        }
+
+        if let Some(index) = semantic_index.as_ref() {
+            let semantic_chunks = core::semantic_context_for_diff(
+                index,
+                diff,
+                source_files
+                    .get(&diff.file_path)
+                    .map(|content| content.as_str()),
+                embedding_adapter.as_deref(),
+                config.semantic_rag_top_k,
+                config.semantic_rag_min_similarity,
+            )
+            .await;
+            context_chunks.extend(semantic_chunks);
         }
 
         // Get path-specific configuration
@@ -503,11 +600,18 @@ async fn review_diff_content_raw_inner(
                 active_rules,
                 path_config,
                 file_path: diff.file_path.clone(),
+                deterministic_comments: deterministic_comments.clone(),
                 pass_kind: None,
             });
         } else {
             // Multi-pass specialized mode: create one job per pass per file
             for pass_kind in &specialized_passes {
+                let deterministic_comments_for_job =
+                    if specialized_passes.first() == Some(pass_kind) {
+                        deterministic_comments.clone()
+                    } else {
+                        Vec::new()
+                    };
                 let mut local_prompt_config = base_prompt_config.clone();
                 local_prompt_config.system_prompt = pass_kind.system_prompt();
 
@@ -548,6 +652,7 @@ async fn review_diff_content_raw_inner(
                     active_rules: active_rules.clone(),
                     path_config: path_config.clone(),
                     file_path: diff.file_path.clone(),
+                    deterministic_comments: deterministic_comments_for_job,
                     pass_kind: Some(*pass_kind),
                 });
             }
@@ -647,6 +752,7 @@ async fn review_diff_content_raw_inner(
                     job.active_rules,
                     job.path_config,
                     job.file_path,
+                    job.deterministic_comments,
                     job.pass_kind,
                     response,
                     latency_ms,
@@ -660,7 +766,7 @@ async fn review_diff_content_raw_inner(
 
     // Phase 3: Process results in file order
     let mut indexed_results = results;
-    indexed_results.sort_by_key(|(idx, _, _, _, _, _, _, _)| *idx);
+    indexed_results.sort_by_key(|(idx, _, _, _, _, _, _, _, _)| *idx);
 
     let mut total_prompt_tokens: usize = 0;
     let mut total_completion_tokens: usize = 0;
@@ -676,6 +782,7 @@ async fn review_diff_content_raw_inner(
         active_rules,
         path_config,
         file_path,
+        deterministic_comments,
         pass_kind,
         response,
         latency_ms,
@@ -687,7 +794,15 @@ async fn review_diff_content_raw_inner(
         match response {
             Err(e) => {
                 warn!("LLM request failed for {}: {}", file_path.display(), e);
-                continue;
+                file_metrics.push(FileMetric {
+                    file_path: file_path.clone(),
+                    latency_ms,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    comment_count: deterministic_comments.len(),
+                });
+                all_comments.extend(deterministic_comments);
             }
             Ok(response) => {
                 // Extract usage metrics from the response
@@ -725,14 +840,17 @@ async fn review_diff_content_raw_inner(
                         );
                     }
                     // Still record file metric even for validation failures
+                    let analyzer_comment_count = deterministic_comments.len();
                     file_metrics.push(FileMetric {
                         file_path: file_path.clone(),
                         latency_ms,
                         prompt_tokens: resp_prompt_tokens,
                         completion_tokens: resp_completion_tokens,
                         total_tokens: resp_total_tokens,
-                        comment_count: 0,
+                        comment_count: analyzer_comment_count,
                     });
+
+                    all_comments.extend(deterministic_comments);
                     continue;
                 }
 
@@ -766,7 +884,8 @@ async fn review_diff_content_raw_inner(
                     }
                     let comments = apply_rule_overrides(comments, &active_rules);
 
-                    let comments = filter_comments_for_diff(diff, comments);
+                    let mut comments = filter_comments_for_diff(diff, comments);
+                    comments.extend(deterministic_comments);
                     let comment_count = comments.len();
 
                     // Track comments_by_pass
@@ -800,14 +919,16 @@ async fn review_diff_content_raw_inner(
                     all_comments.extend(comments);
                 } else {
                     // Parse failed; still record file metric
+                    let analyzer_comment_count = deterministic_comments.len();
                     file_metrics.push(FileMetric {
                         file_path: file_path.clone(),
                         latency_ms,
                         prompt_tokens: resp_prompt_tokens,
                         completion_tokens: resp_completion_tokens,
                         total_tokens: resp_total_tokens,
-                        comment_count: 0,
+                        comment_count: analyzer_comment_count,
                     });
+                    all_comments.extend(deterministic_comments);
                 }
             }
         }
@@ -844,17 +965,22 @@ async fn review_diff_content_raw_inner(
         .run_post_processors(all_comments, &repo_path_str)
         .await?;
 
+    let (analyzer_comments, llm_comments): (Vec<_>, Vec<_>) = processed_comments
+        .into_iter()
+        .partition(is_analyzer_comment);
+
     // Verification pass: ask the LLM to validate findings against actual code.
     // Skip when disabled, no comments, or too many (cost control).
-    let processed_comments = if config.verification_pass
-        && !processed_comments.is_empty()
-        && processed_comments.len() <= config.verification_max_comments
+    let verified_llm_comments = if config.verification_pass
+        && !llm_comments.is_empty()
+        && llm_comments.len() <= config.verification_max_comments
     {
-        let comment_count_before = processed_comments.len();
-        let fallback_comments = processed_comments.clone();
+        let comment_count_before = llm_comments.len();
+        let fallback_comments = llm_comments.clone();
         match super::verification::verify_comments(
-            processed_comments,
-            diff_content,
+            llm_comments,
+            &diffs,
+            repo_path,
             verification_adapter.as_ref(),
             config.verification_min_score,
         )
@@ -873,6 +999,21 @@ async fn review_diff_content_raw_inner(
                 fallback_comments
             }
         }
+    } else {
+        llm_comments
+    };
+
+    let mut processed_comments = analyzer_comments;
+    processed_comments.extend(verified_llm_comments);
+
+    let processed_comments = if config.semantic_feedback {
+        apply_semantic_feedback_adjustment(
+            processed_comments,
+            semantic_feedback_store.as_ref(),
+            embedding_adapter.as_deref(),
+            &config,
+        )
+        .await
     } else {
         processed_comments
     };
@@ -1026,6 +1167,103 @@ pub fn filter_comments_for_diff(
     }
 
     filtered
+}
+
+fn synthesize_analyzer_comments(
+    findings: Vec<plugins::AnalyzerFinding>,
+) -> Result<Vec<core::Comment>> {
+    if findings.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let raw_comments = findings
+        .into_iter()
+        .map(|finding| finding.into_raw_comment())
+        .collect::<Vec<_>>();
+    core::CommentSynthesizer::synthesize(raw_comments)
+}
+
+fn is_analyzer_comment(comment: &core::Comment) -> bool {
+    comment.tags.iter().any(|tag| tag.starts_with("source:"))
+}
+
+async fn apply_semantic_feedback_adjustment(
+    comments: Vec<core::Comment>,
+    store: Option<&core::SemanticFeedbackStore>,
+    embedding_adapter: Option<&dyn adapters::llm::LLMAdapter>,
+    config: &config::Config,
+) -> Vec<core::Comment> {
+    let Some(store) = store else {
+        return comments;
+    };
+    if store.examples.len() < config.semantic_feedback_min_examples {
+        return comments;
+    }
+
+    let embedding_texts = comments
+        .iter()
+        .map(|comment| {
+            core::build_feedback_embedding_text(&comment.content, comment.category.as_str())
+        })
+        .collect::<Vec<_>>();
+    let embeddings = core::embed_texts_with_fallback(embedding_adapter, &embedding_texts).await;
+
+    comments
+        .into_iter()
+        .zip(embeddings)
+        .map(|(mut comment, embedding)| {
+            if is_analyzer_comment(&comment) {
+                return comment;
+            }
+
+            let file_patterns = derive_file_patterns(&comment.file_path);
+            let matches = core::find_similar_feedback_examples(
+                store,
+                &embedding,
+                comment.category.as_str(),
+                &file_patterns,
+                config.semantic_feedback_similarity,
+                config.semantic_feedback_max_neighbors,
+            );
+            let accepted = matches
+                .iter()
+                .filter(|(example, _)| example.accepted)
+                .count();
+            let rejected = matches
+                .iter()
+                .filter(|(example, _)| !example.accepted)
+                .count();
+            let observations = accepted + rejected;
+
+            if observations < config.semantic_feedback_min_examples {
+                return comment;
+            }
+
+            if rejected > accepted {
+                let delta = ((rejected - accepted) as f32 * 0.15).min(0.45);
+                comment.confidence = (comment.confidence - delta).clamp(0.0, 1.0);
+                if !comment
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "semantic-feedback:rejected")
+                {
+                    comment.tags.push("semantic-feedback:rejected".to_string());
+                }
+            } else if accepted > rejected {
+                let delta = ((accepted - rejected) as f32 * 0.10).min(0.25);
+                comment.confidence = (comment.confidence + delta).clamp(0.0, 1.0);
+                if !comment
+                    .tags
+                    .iter()
+                    .any(|tag| tag == "semantic-feedback:accepted")
+                {
+                    comment.tags.push("semantic-feedback:accepted".to_string());
+                }
+            }
+
+            comment
+        })
+        .collect()
 }
 
 pub fn is_line_in_diff(diff: &core::UnifiedDiff, line_number: usize) -> bool {
@@ -1244,9 +1482,15 @@ fn chunk_diff_for_context(diff_content: &str, max_chars: usize) -> Vec<String> {
 
 /// Validate LLM response quality for common local model issues.
 fn validate_llm_response(response: &str) -> Result<(), String> {
+    let trimmed = response.trim();
+
     // Empty response
-    if response.trim().is_empty() {
+    if trimmed.is_empty() {
         return Err("Empty response from model".to_string());
+    }
+
+    if serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
+        return Ok(());
     }
 
     // Response too short to contain valid review
@@ -1888,6 +2132,12 @@ mod tests {
     fn validate_response_accepts_valid_response() {
         let response = "Here is my review of the code changes:\n- Line 5: potential null reference";
         assert!(validate_llm_response(response).is_ok());
+    }
+
+    #[test]
+    fn validate_response_accepts_structured_json() {
+        assert!(validate_llm_response("[]").is_ok());
+        assert!(validate_llm_response("[{\"line\":10,\"issue\":\"problem\"}]").is_ok());
     }
 
     #[test]

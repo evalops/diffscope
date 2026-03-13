@@ -12,7 +12,8 @@ pub use context_helpers::{
     resolve_pattern_repositories,
 };
 pub use feedback::{
-    derive_file_patterns, load_feedback_store, load_feedback_store_from_path, save_feedback_store,
+    derive_file_patterns, load_feedback_store, load_feedback_store_from_path,
+    record_semantic_feedback_example, save_feedback_store,
 };
 pub use filters::apply_review_filters;
 pub use pipeline::{

@@ -9,32 +9,32 @@ pub fn parse_llm_response(
     content: &str,
     file_path: &Path,
 ) -> Result<Vec<core::comment::RawComment>> {
-    // Strategy 1: Primary parser (existing regex + code suggestion blocks)
+    // Strategy 1: Structured JSON output (preferred contract)
+    let comments = parse_json_format(content, file_path);
+    if !comments.is_empty() {
+        return Ok(comments);
+    }
+
+    // Strategy 2: Primary parser (existing regex + code suggestion blocks)
     let comments = parse_primary(content, file_path)?;
     if !comments.is_empty() {
         return Ok(comments);
     }
 
-    // Strategy 2: Numbered list format (e.g. "1. **src/lib.rs:42** - Issue text")
+    // Strategy 3: Numbered list format (e.g. "1. **src/lib.rs:42** - Issue text")
     let comments = parse_numbered_list(content, file_path);
     if !comments.is_empty() {
         return Ok(comments);
     }
 
-    // Strategy 3: Markdown bullet format (e.g. "- Line 42: Issue text")
+    // Strategy 4: Markdown bullet format (e.g. "- Line 42: Issue text")
     let comments = parse_markdown_bullets(content, file_path);
     if !comments.is_empty() {
         return Ok(comments);
     }
 
-    // Strategy 4: file:line format (e.g. "src/lib.rs:42 - Issue text")
+    // Strategy 5: file:line format (e.g. "src/lib.rs:42 - Issue text")
     let comments = parse_file_line_format(content, file_path);
-    if !comments.is_empty() {
-        return Ok(comments);
-    }
-
-    // Strategy 5: JSON extraction
-    let comments = parse_json_format(content, file_path);
     if !comments.is_empty() {
         return Ok(comments);
     }
@@ -235,38 +235,27 @@ fn parse_file_line_format(content: &str, file_path: &Path) -> Vec<core::comment:
     comments
 }
 
-/// Strategy 5: JSON extraction.
-/// Tries to find and parse JSON arrays from the response content.
-/// Handles JSON in code blocks or bare JSON arrays.
+/// Strategy 1: Structured JSON extraction.
+/// Tries to find and parse JSON arrays/objects from the response content.
+/// Handles JSON in code blocks, bare arrays, and wrapped result objects.
 fn parse_json_format(content: &str, file_path: &Path) -> Vec<core::comment::RawComment> {
-    let json_str = extract_json_from_code_block(content).or_else(|| find_json_array(content));
+    let json_str = extract_json_from_code_block(content)
+        .or_else(|| find_json_array(content))
+        .or_else(|| find_json_object(content));
 
     if let Some(json_str) = json_str {
-        if let Ok(items) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
-            return items
-                .iter()
-                .filter_map(|item| {
-                    let line_value = item
-                        .get("line")
-                        .or_else(|| item.get("line_number"))
-                        .or_else(|| item.get("lineNumber"));
-                    let line = line_value.and_then(|v| {
-                        v.as_u64()
-                            .map(|n| n as usize)
-                            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<usize>().ok()))
-                    })?;
-                    let text = item
-                        .get("issue")
-                        .or_else(|| item.get("description"))
-                        .or_else(|| item.get("message"))
-                        .or_else(|| item.get("content"))
-                        .or_else(|| item.get("text"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Issue found")
-                        .to_string();
-                    Some(make_raw_comment(file_path, line, text))
-                })
-                .collect();
+        for candidate in repair_json_candidates(&json_str) {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&candidate) else {
+                continue;
+            };
+            let items = extract_structured_items(value);
+            let comments = items
+                .into_iter()
+                .filter_map(|item| structured_value_to_comment(file_path, &item))
+                .collect::<Vec<_>>();
+            if !comments.is_empty() {
+                return comments;
+            }
         }
     }
     Vec::new()
@@ -279,7 +268,7 @@ fn extract_json_from_code_block(content: &str) -> Option<String> {
 
     for caps in CODE_BLOCK.captures_iter(content) {
         let block = caps.get(1).unwrap().as_str().trim();
-        if block.starts_with('[') {
+        if block.starts_with('[') || block.starts_with('{') {
             return Some(block.to_string());
         }
     }
@@ -292,8 +281,15 @@ fn extract_json_from_code_block(content: &str) -> Option<String> {
 /// then validates with serde. This correctly handles multiple separate
 /// arrays and nested brackets inside JSON strings.
 fn find_json_array(content: &str) -> Option<String> {
-    // Try each '[' as a potential array start
-    for (start, _) in content.char_indices().filter(|&(_, ch)| ch == '[') {
+    find_balanced_json(content, '[', ']')
+}
+
+fn find_json_object(content: &str) -> Option<String> {
+    find_balanced_json(content, '{', '}')
+}
+
+fn find_balanced_json(content: &str, open: char, close: char) -> Option<String> {
+    for (start, _) in content.char_indices().filter(|&(_, ch)| ch == open) {
         let mut depth = 0i32;
         let mut in_string = false;
         let mut escape_next = false;
@@ -312,23 +308,255 @@ fn find_json_array(content: &str) -> Option<String> {
                 continue;
             }
             if !in_string {
-                if ch == '[' {
+                if ch == open {
                     depth += 1;
-                } else if ch == ']' {
+                } else if ch == close {
                     depth -= 1;
                     if depth == 0 {
                         let end = start + offset;
                         let candidate = &content[start..=end];
-                        if serde_json::from_str::<Vec<serde_json::Value>>(candidate).is_ok() {
+                        if serde_json::from_str::<serde_json::Value>(candidate).is_ok() {
                             return Some(candidate.to_string());
                         }
-                        break; // this '[' didn't lead to valid JSON, try next
+                        break;
                     }
                 }
             }
         }
     }
     None
+}
+
+fn repair_json_candidates(candidate: &str) -> Vec<String> {
+    static TRAILING_COMMAS: Lazy<Regex> = Lazy::new(|| Regex::new(r",\s*([}\]])").unwrap());
+
+    let mut candidates = vec![candidate.trim().to_string()];
+    let without_trailing_commas = TRAILING_COMMAS
+        .replace_all(candidate.trim(), "$1")
+        .to_string();
+    if without_trailing_commas != candidate.trim() {
+        candidates.push(without_trailing_commas);
+    }
+    candidates
+}
+
+fn extract_structured_items(value: serde_json::Value) -> Vec<serde_json::Value> {
+    if let Some(items) = value.as_array() {
+        return items.clone();
+    }
+
+    for key in ["findings", "comments", "issues", "results"] {
+        if let Some(items) = value.get(key).and_then(|value| value.as_array()) {
+            return items.clone();
+        }
+    }
+
+    Vec::new()
+}
+
+fn structured_value_to_comment(
+    file_path: &Path,
+    item: &serde_json::Value,
+) -> Option<core::comment::RawComment> {
+    let line = json_line_number(item)?;
+    let content = json_issue_text(item);
+    if content.trim().is_empty() {
+        return None;
+    }
+
+    let suggestion = item
+        .get("suggestion")
+        .or_else(|| item.get("fix"))
+        .or_else(|| item.get("recommendation"))
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let tags = item
+        .get("tags")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str().map(|value| value.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Some(core::comment::RawComment {
+        file_path: file_path.to_path_buf(),
+        line_number: line,
+        content,
+        rule_id: item
+            .get("rule_id")
+            .or_else(|| item.get("ruleId"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string()),
+        suggestion,
+        severity: item
+            .get("severity")
+            .and_then(|value| value.as_str())
+            .and_then(parse_severity_label),
+        category: item
+            .get("category")
+            .and_then(|value| value.as_str())
+            .and_then(parse_category_label),
+        confidence: item.get("confidence").and_then(json_confidence),
+        fix_effort: item
+            .get("fix_effort")
+            .or_else(|| item.get("fixEffort"))
+            .and_then(|value| value.as_str())
+            .and_then(parse_fix_effort_label),
+        tags,
+        code_suggestion: build_code_suggestion(item),
+    })
+}
+
+fn json_line_number(item: &serde_json::Value) -> Option<usize> {
+    let direct = item
+        .get("line")
+        .or_else(|| item.get("line_number"))
+        .or_else(|| item.get("lineNumber"))
+        .or_else(|| item.get("start_line"))
+        .or_else(|| item.get("startLine"));
+    if let Some(line) = direct.and_then(parse_usize_value) {
+        return Some(line);
+    }
+
+    item.get("location")
+        .and_then(|location| {
+            location
+                .get("line")
+                .or_else(|| location.get("start_line"))
+                .or_else(|| location.get("startLine"))
+        })
+        .and_then(parse_usize_value)
+}
+
+fn json_issue_text(item: &serde_json::Value) -> String {
+    let issue = item
+        .get("issue")
+        .or_else(|| item.get("description"))
+        .or_else(|| item.get("message"))
+        .or_else(|| item.get("content"))
+        .or_else(|| item.get("text"))
+        .or_else(|| item.get("title"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("Issue found")
+        .trim()
+        .to_string();
+    let impact = item
+        .get("impact")
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+
+    match impact {
+        Some(impact) if !issue.contains(impact) => format!("{} Impact: {}", issue, impact),
+        _ => issue,
+    }
+}
+
+fn parse_usize_value(value: &serde_json::Value) -> Option<usize> {
+    value.as_u64().map(|value| value as usize).or_else(|| {
+        value
+            .as_str()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+    })
+}
+
+fn json_confidence(value: &serde_json::Value) -> Option<f32> {
+    if let Some(number) = value.as_f64() {
+        let confidence = number as f32;
+        return Some(if confidence > 1.0 {
+            (confidence / 100.0).clamp(0.0, 1.0)
+        } else {
+            confidence.clamp(0.0, 1.0)
+        });
+    }
+    value
+        .as_str()
+        .and_then(|value| value.parse::<f32>().ok())
+        .map(|confidence| {
+            if confidence > 1.0 {
+                (confidence / 100.0).clamp(0.0, 1.0)
+            } else {
+                confidence.clamp(0.0, 1.0)
+            }
+        })
+}
+
+fn parse_severity_label(label: &str) -> Option<core::comment::Severity> {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "error" | "critical" => Some(core::comment::Severity::Error),
+        "warning" | "warn" | "medium" => Some(core::comment::Severity::Warning),
+        "info" | "low" => Some(core::comment::Severity::Info),
+        "suggestion" | "nit" => Some(core::comment::Severity::Suggestion),
+        _ => None,
+    }
+}
+
+fn parse_category_label(label: &str) -> Option<core::comment::Category> {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "bug" | "correctness" => Some(core::comment::Category::Bug),
+        "security" => Some(core::comment::Category::Security),
+        "performance" => Some(core::comment::Category::Performance),
+        "style" => Some(core::comment::Category::Style),
+        "documentation" | "docs" => Some(core::comment::Category::Documentation),
+        "bestpractice" | "best_practice" | "best-practice" | "best practice" => {
+            Some(core::comment::Category::BestPractice)
+        }
+        "maintainability" => Some(core::comment::Category::Maintainability),
+        "testing" | "test" => Some(core::comment::Category::Testing),
+        "architecture" => Some(core::comment::Category::Architecture),
+        _ => None,
+    }
+}
+
+fn parse_fix_effort_label(label: &str) -> Option<core::comment::FixEffort> {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "low" | "small" => Some(core::comment::FixEffort::Low),
+        "medium" | "moderate" => Some(core::comment::FixEffort::Medium),
+        "high" | "large" => Some(core::comment::FixEffort::High),
+        _ => None,
+    }
+}
+
+fn build_code_suggestion(item: &serde_json::Value) -> Option<core::comment::CodeSuggestion> {
+    let code_suggestion = item
+        .get("code_suggestion")
+        .or_else(|| item.get("codeSuggestion"));
+    let original_code = code_suggestion
+        .and_then(|value| {
+            value
+                .get("original_code")
+                .or_else(|| value.get("originalCode"))
+        })
+        .and_then(|value| value.as_str())
+        .or_else(|| item.get("original_code").and_then(|value| value.as_str()))?
+        .to_string();
+    let suggested_code = code_suggestion
+        .and_then(|value| {
+            value
+                .get("suggested_code")
+                .or_else(|| value.get("suggestedCode"))
+        })
+        .and_then(|value| value.as_str())
+        .or_else(|| item.get("suggested_code").and_then(|value| value.as_str()))?
+        .to_string();
+    let explanation = code_suggestion
+        .and_then(|value| value.get("explanation"))
+        .and_then(|value| value.as_str())
+        .or_else(|| item.get("fix").and_then(|value| value.as_str()))
+        .unwrap_or("Suggested code change")
+        .to_string();
+
+    Some(core::comment::CodeSuggestion {
+        diff: build_suggestion_diff(&original_code, &suggested_code),
+        original_code,
+        suggested_code,
+        explanation,
+    })
 }
 
 /// Helper to construct a RawComment with default fields.
@@ -425,6 +653,66 @@ mod tests {
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].line_number, 10);
         assert!(comments[0].content.contains("This is a basic issue"));
+    }
+
+    #[test]
+    fn parse_llm_response_prefers_structured_json_array() {
+        let input = r#"[
+  {
+    "line": 14,
+    "category": "security",
+    "issue": "SQL query interpolates user input",
+    "impact": "Attackers can inject arbitrary SQL",
+    "fix": "Use bound parameters",
+    "rule_id": "sec.sql.injection",
+    "severity": "warning",
+    "confidence": 0.92,
+    "fix_effort": "low",
+    "tags": ["security", "sql"],
+    "original_code": "db.query(sql)",
+    "suggested_code": "db.query(sql, [user_id])"
+  }
+]"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 14);
+        assert_eq!(comments[0].rule_id.as_deref(), Some("sec.sql.injection"));
+        assert_eq!(comments[0].severity, Some(core::comment::Severity::Warning));
+        assert!(comments[0]
+            .content
+            .contains("Attackers can inject arbitrary SQL"));
+        assert!(comments[0].code_suggestion.is_some());
+    }
+
+    #[test]
+    fn parse_llm_response_handles_json_object_wrapper_and_trailing_commas() {
+        let input = r#"```json
+{
+  "findings": [
+    {
+      "location": { "line": 7 },
+      "description": "Missing authorization check",
+      "fix": "Validate ownership before returning the record",
+      "category": "security",
+      "severity": "error",
+    },
+  ]
+}
+```"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 7);
+        assert_eq!(comments[0].severity, Some(core::comment::Severity::Error));
+        assert_eq!(
+            comments[0].category,
+            Some(core::comment::Category::Security)
+        );
+        assert_eq!(
+            comments[0].suggestion.as_deref(),
+            Some("Validate ownership before returning the record")
+        );
     }
 
     #[test]

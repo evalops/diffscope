@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use crate::adapters;
 use crate::config;
+use crate::core;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct FeedbackTypeStats {
@@ -203,6 +205,32 @@ pub fn save_feedback_store(path: &Path, store: &FeedbackStore) -> Result<()> {
     let content = serde_json::to_string_pretty(store)?;
     std::fs::write(path, content)?;
     Ok(())
+}
+
+pub async fn record_semantic_feedback_example(
+    config: &config::Config,
+    comment: &core::Comment,
+    accepted: bool,
+) -> Result<()> {
+    let semantic_path = core::default_semantic_feedback_path(&config.feedback_path);
+    let mut store = core::load_semantic_feedback_store(&semantic_path);
+    let embedding_text =
+        core::build_feedback_embedding_text(&comment.content, comment.category.as_str());
+    let model_config = config.to_model_config_for_role(config::ModelRole::Embedding);
+    let adapter = adapters::llm::create_adapter(&model_config).ok();
+    let embeddings = core::embed_texts_with_fallback(adapter.as_deref(), &[embedding_text]).await;
+    let embedding = embeddings.into_iter().next().unwrap_or_default();
+
+    store.add_example(core::SemanticFeedbackExample {
+        content: comment.content.clone(),
+        category: comment.category.as_str().to_string(),
+        file_patterns: derive_file_patterns(&comment.file_path),
+        accepted,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        embedding,
+    });
+
+    core::save_semantic_feedback_store(&semantic_path, &store)
 }
 
 #[cfg(test)]

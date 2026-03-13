@@ -1,5 +1,6 @@
+use crate::core::comment::{Category, Severity};
 use crate::core::{ContextType, LLMContextChunk, UnifiedDiff};
-use crate::plugins::PreAnalyzer;
+use crate::plugins::{AnalyzerFinding, PreAnalysis, PreAnalyzer};
 use anyhow::Result;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
@@ -389,10 +390,10 @@ impl PreAnalyzer for SupplyChainAnalyzer {
         "supply-chain"
     }
 
-    async fn run(&self, diff: &UnifiedDiff, _repo_path: &str) -> Result<Vec<LLMContextChunk>> {
+    async fn run(&self, diff: &UnifiedDiff, _repo_path: &str) -> Result<PreAnalysis> {
         let kind = match ManifestKind::from_path(&diff.file_path) {
             Some(k) => k,
-            None => return Ok(Vec::new()),
+            None => return Ok(PreAnalysis::default()),
         };
 
         // Collect added lines with their line numbers
@@ -405,13 +406,13 @@ impl PreAnalyzer for SupplyChainAnalyzer {
             .collect();
 
         if added_lines.is_empty() {
-            return Ok(Vec::new());
+            return Ok(PreAnalysis::default());
         }
 
         let findings = Self::analyze_added_lines(kind, &added_lines);
 
         if findings.is_empty() {
-            return Ok(Vec::new());
+            return Ok(PreAnalysis::default());
         }
 
         let mut report = format!(
@@ -430,12 +431,35 @@ impl PreAnalyzer for SupplyChainAnalyzer {
             findings.len()
         ));
 
-        Ok(vec![LLMContextChunk {
-            file_path: diff.file_path.clone(),
-            content: report,
-            context_type: ContextType::Documentation,
-            line_range: None,
-        }])
+        Ok(PreAnalysis {
+            context_chunks: vec![LLMContextChunk {
+                file_path: diff.file_path.clone(),
+                content: report,
+                context_type: ContextType::Documentation,
+                line_range: None,
+            }],
+            findings: findings
+                .into_iter()
+                .map(|finding| AnalyzerFinding {
+                    file_path: diff.file_path.clone(),
+                    line_number: finding.line_number,
+                    content: finding.description,
+                    rule_id: Some(finding.rule_id.to_string()),
+                    suggestion: None,
+                    severity: match finding.severity {
+                        "error" => Severity::Error,
+                        "warning" => Severity::Warning,
+                        "suggestion" => Severity::Suggestion,
+                        _ => Severity::Info,
+                    },
+                    category: Category::Security,
+                    confidence: 0.98,
+                    source: "supply-chain".to_string(),
+                    tags: vec!["supply-chain".to_string()],
+                    metadata: Default::default(),
+                })
+                .collect(),
+        })
     }
 }
 
@@ -641,8 +665,9 @@ mod tests {
     async fn test_non_manifest_returns_empty() {
         let diff = make_manifest_diff("src/main.rs", vec!["fn main() {}"]);
         let analyzer = SupplyChainAnalyzer::new();
-        let chunks = analyzer.run(&diff, "/tmp/repo").await.unwrap();
-        assert!(chunks.is_empty());
+        let analysis = analyzer.run(&diff, "/tmp/repo").await.unwrap();
+        assert!(analysis.context_chunks.is_empty());
+        assert!(analysis.findings.is_empty());
     }
 
     #[tokio::test]
@@ -655,9 +680,9 @@ mod tests {
             ],
         );
         let analyzer = SupplyChainAnalyzer::new();
-        let chunks = analyzer.run(&diff, "/tmp/repo").await.unwrap();
+        let analysis = analyzer.run(&diff, "/tmp/repo").await.unwrap();
         assert!(
-            chunks.is_empty(),
+            analysis.context_chunks.is_empty() && analysis.findings.is_empty(),
             "Clean manifest should produce no findings"
         );
     }
@@ -669,8 +694,9 @@ mod tests {
             vec![r#"sketchy = { git = "https://github.com/evil/crate" }"#],
         );
         let analyzer = SupplyChainAnalyzer::new();
-        let chunks = analyzer.run(&diff, "/tmp/repo").await.unwrap();
-        assert!(!chunks.is_empty());
-        assert!(chunks[0].content.contains("supply-chain"));
+        let analysis = analyzer.run(&diff, "/tmp/repo").await.unwrap();
+        assert!(!analysis.context_chunks.is_empty());
+        assert!(!analysis.findings.is_empty());
+        assert!(analysis.context_chunks[0].content.contains("supply-chain"));
     }
 }

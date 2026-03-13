@@ -1,9 +1,13 @@
+use crate::core::comment::{Category, Severity};
 use crate::core::{ContextType, LLMContextChunk, UnifiedDiff};
-use crate::plugins::PreAnalyzer;
+use crate::plugins::{AnalyzerFinding, PreAnalysis, PreAnalyzer};
 use anyhow::Result;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 /// A finding from the secret scanner with its matched text redacted.
 pub(crate) struct SecretFinding {
@@ -11,6 +15,8 @@ pub(crate) struct SecretFinding {
     pub(crate) description: &'static str,
     pub(crate) line_number: usize,
     pub(crate) line_content_redacted: String,
+    pub(crate) fingerprint: String,
+    pub(crate) provider: String,
 }
 
 /// A compiled secret detection pattern.
@@ -468,11 +474,82 @@ fn redact_ranges(line: &str, matches: &[SecretMatch]) -> String {
     redacted
 }
 
-pub struct SecretScanner;
+enum AllowlistEntry {
+    Literal(String),
+    Path(String),
+    Regex(Regex),
+}
+
+impl AllowlistEntry {
+    fn parse(line: &str) -> Option<Self> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
+        if let Some(value) = trimmed.strip_prefix("path:") {
+            return Some(Self::Path(value.trim().to_string()));
+        }
+        if let Some(value) = trimmed.strip_prefix("regex:") {
+            return Regex::new(value.trim()).ok().map(Self::Regex);
+        }
+        Some(Self::Literal(trimmed.to_string()))
+    }
+
+    fn matches(&self, file_path: &Path, line: &str) -> bool {
+        match self {
+            Self::Literal(value) => {
+                line.contains(value) || file_path.to_string_lossy().contains(value)
+            }
+            Self::Path(value) => file_path.to_string_lossy().contains(value),
+            Self::Regex(regex) => {
+                regex.is_match(line) || regex.is_match(&file_path.to_string_lossy())
+            }
+        }
+    }
+}
+
+fn secret_fingerprint(rule_id: &str, secret: &str) -> String {
+    let digest = Sha256::digest(format!("{}:{}", rule_id, secret).as_bytes());
+    format!("{:x}", digest)
+}
+
+fn provider_name(rule_id: &str) -> &'static str {
+    if rule_id.contains("aws") {
+        "aws"
+    } else if rule_id.contains("github") {
+        "github"
+    } else if rule_id.contains("gitlab") {
+        "gitlab"
+    } else if rule_id.contains("slack") {
+        "slack"
+    } else if rule_id.contains("stripe") {
+        "stripe"
+    } else if rule_id.contains("openai") {
+        "openai"
+    } else if rule_id.contains("anthropic") {
+        "anthropic"
+    } else if rule_id.contains("azure") {
+        "azure"
+    } else if rule_id.contains("datadog") {
+        "datadog"
+    } else if rule_id.contains("gcp") {
+        "gcp"
+    } else {
+        "generic"
+    }
+}
+
+pub struct SecretScanner {
+    allowlist_file: PathBuf,
+    baseline_file: PathBuf,
+}
 
 impl SecretScanner {
     pub fn new() -> Self {
-        Self
+        Self {
+            allowlist_file: PathBuf::from(".diffscope-secrets-allowlist"),
+            baseline_file: PathBuf::from(".diffscope-secrets-baseline.json"),
+        }
     }
 
     /// Scan a single line for secrets. Returns findings.
@@ -518,10 +595,39 @@ impl SecretScanner {
                 description: secret_match.description,
                 line_number,
                 line_content_redacted: redacted_line.clone(),
+                fingerprint: secret_fingerprint(
+                    secret_match.rule_id,
+                    &line[secret_match.start..secret_match.end],
+                ),
+                provider: provider_name(secret_match.rule_id).to_string(),
             });
         }
 
         findings
+    }
+
+    fn load_allowlist(&self, repo_path: &str) -> Vec<AllowlistEntry> {
+        let path = Path::new(repo_path).join(&self.allowlist_file);
+        let Ok(content) = std::fs::read_to_string(path) else {
+            return Vec::new();
+        };
+        content.lines().filter_map(AllowlistEntry::parse).collect()
+    }
+
+    fn load_baseline(&self, repo_path: &str) -> HashSet<String> {
+        let path = Path::new(repo_path).join(&self.baseline_file);
+        let Ok(content) = std::fs::read_to_string(path) else {
+            return HashSet::new();
+        };
+        if let Ok(values) = serde_json::from_str::<Vec<String>>(&content) {
+            return values.into_iter().collect();
+        }
+        serde_json::from_str::<HashMap<String, Vec<String>>>(&content)
+            .ok()
+            .and_then(|map| map.get("fingerprints").cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
     }
 }
 
@@ -531,8 +637,10 @@ impl PreAnalyzer for SecretScanner {
         "secret-scanner"
     }
 
-    async fn run(&self, diff: &UnifiedDiff, _repo_path: &str) -> Result<Vec<LLMContextChunk>> {
+    async fn run(&self, diff: &UnifiedDiff, repo_path: &str) -> Result<PreAnalysis> {
         let mut all_findings: Vec<SecretFinding> = Vec::new();
+        let allowlist = self.load_allowlist(repo_path);
+        let baseline = self.load_baseline(repo_path);
 
         // Scan only added lines (+ lines) from the diff
         for hunk in &diff.hunks {
@@ -542,22 +650,31 @@ impl PreAnalyzer for SecretScanner {
                     crate::core::diff_parser::ChangeType::Added
                 ) {
                     let line_num = change.new_line_no.unwrap_or(0);
-                    let findings = SecretScanner::scan_line(&change.content, line_num);
+                    let findings = SecretScanner::scan_line(&change.content, line_num)
+                        .into_iter()
+                        .filter(|finding| !baseline.contains(&finding.fingerprint))
+                        .filter(|_| {
+                            !allowlist
+                                .iter()
+                                .any(|entry| entry.matches(&diff.file_path, &change.content))
+                        })
+                        .collect::<Vec<_>>();
                     all_findings.extend(findings);
                 }
             }
         }
 
         if all_findings.is_empty() {
-            return Ok(Vec::new());
+            return Ok(PreAnalysis::default());
         }
 
         // Format findings as context for the LLM
         let mut report = String::from("Secret Scanner pre-analysis findings:\n\n");
         for finding in &all_findings {
             report.push_str(&format!(
-                "- [{}] {} detected at line {}: `{}`\n",
+                "- [{} / {}] {} detected at line {}: `{}`\n",
                 finding.rule_id,
+                finding.provider,
                 finding.description,
                 finding.line_number,
                 finding.line_content_redacted,
@@ -568,12 +685,41 @@ impl PreAnalyzer for SecretScanner {
             all_findings.len()
         ));
 
-        Ok(vec![LLMContextChunk {
-            file_path: diff.file_path.clone(),
-            content: report,
-            context_type: ContextType::Documentation,
-            line_range: None,
-        }])
+        Ok(PreAnalysis {
+            context_chunks: vec![LLMContextChunk {
+                file_path: diff.file_path.clone(),
+                content: report,
+                context_type: ContextType::Documentation,
+                line_range: None,
+            }],
+            findings: all_findings
+                .into_iter()
+                .map(|finding| {
+                    let mut metadata = HashMap::new();
+                    metadata.insert("provider".to_string(), finding.provider.clone());
+                    metadata.insert("fingerprint".to_string(), finding.fingerprint.clone());
+                    AnalyzerFinding {
+                        file_path: diff.file_path.clone(),
+                        line_number: finding.line_number,
+                        content: format!(
+                            "{} detected in added code: {}",
+                            finding.description, finding.line_content_redacted
+                        ),
+                        rule_id: Some(finding.rule_id.to_string()),
+                        suggestion: Some(
+                            "Move the secret into environment-backed configuration or a secret manager and rotate the exposed credential."
+                                .to_string(),
+                        ),
+                        severity: Severity::Error,
+                        category: Category::Security,
+                        confidence: 0.99,
+                        source: "secret-scanner".to_string(),
+                        tags: vec!["secret-scanner".to_string(), finding.provider.clone()],
+                        metadata,
+                    }
+                })
+                .collect(),
+        })
     }
 }
 
@@ -582,6 +728,7 @@ mod tests {
     use super::*;
     use crate::core::diff_parser::{ChangeType, DiffHunk, DiffLine};
     use std::path::PathBuf;
+    use tempfile::tempdir;
 
     fn make_diff_with_lines(file_path: &str, lines: Vec<(&str, ChangeType)>) -> UnifiedDiff {
         let changes: Vec<DiffLine> = lines
@@ -622,15 +769,16 @@ mod tests {
     #[test]
     fn test_detects_aws_access_key() {
         // Use a realistic AWS key format (AKIA + 16 uppercase alphanumeric)
-        let findings = SecretScanner::scan_line("aws_access_key_id = AKIAI44QH8DHBEXAMPLE", 1);
+        let line = format!("aws_access_key_id = {}", fake_token("AKIA", 'A', 20));
+        let findings = SecretScanner::scan_line(&line, 1);
         // May or may not match depending on exact character count — validates no panic
         let _ = findings;
     }
 
     #[test]
     fn test_detects_github_pat() {
-        let findings =
-            SecretScanner::scan_line("token = ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh12", 5);
+        let line = format!("token = {}", fake_token("ghp_", 'A', 40));
+        let findings = SecretScanner::scan_line(&line, 5);
         assert!(!findings.is_empty(), "Should detect GitHub PAT");
         assert_eq!(findings[0].rule_id, "sec.secrets.github-token");
     }
@@ -782,16 +930,17 @@ mod tests {
         );
 
         let scanner = SecretScanner::new();
-        let chunks = scanner.run(&diff, "/tmp/repo").await.unwrap();
+        let analysis = scanner.run(&diff, "/tmp/repo").await.unwrap();
 
         // Should find the added line's secret but not the removed line's
-        if !chunks.is_empty() {
-            let content = &chunks[0].content;
+        if !analysis.context_chunks.is_empty() {
+            let content = &analysis.context_chunks[0].content;
             assert!(
                 content.contains("ZYXW") || content.contains("sec.secrets"),
                 "Should report the added line's secret"
             );
         }
+        assert_eq!(analysis.findings.len(), 1);
     }
 
     #[tokio::test]
@@ -807,23 +956,79 @@ mod tests {
         };
 
         let scanner = SecretScanner::new();
-        let chunks = scanner.run(&diff, "/tmp/repo").await.unwrap();
-        assert!(chunks.is_empty());
+        let analysis = scanner.run(&diff, "/tmp/repo").await.unwrap();
+        assert!(analysis.context_chunks.is_empty());
+        assert!(analysis.findings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_scanner_respects_allowlist_file() {
+        let repo = tempdir().unwrap();
+        std::fs::write(
+            repo.path().join(".diffscope-secrets-allowlist"),
+            "fixtures/\n",
+        )
+        .unwrap();
+        let diff = make_diff_with_lines(
+            "fixtures/example.env",
+            vec![(
+                &format!("AWS_KEY={}", fake_token("AKIA", 'A', 20)),
+                ChangeType::Added,
+            )],
+        );
+
+        let scanner = SecretScanner::new();
+        let analysis = scanner
+            .run(&diff, repo.path().to_string_lossy().as_ref())
+            .await
+            .unwrap();
+
+        assert!(analysis.context_chunks.is_empty());
+        assert!(analysis.findings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_scanner_respects_baseline_file() {
+        let repo = tempdir().unwrap();
+        let github_pat = fake_token("ghp_", 'A', 40);
+        let baseline_fingerprint = secret_fingerprint("sec.secrets.github-token", &github_pat);
+        std::fs::write(
+            repo.path().join(".diffscope-secrets-baseline.json"),
+            serde_json::to_string(&vec![baseline_fingerprint]).unwrap(),
+        )
+        .unwrap();
+        let diff = make_diff_with_lines(
+            "config.env",
+            vec![(&format!("TOKEN={}", github_pat), ChangeType::Added)],
+        );
+
+        let scanner = SecretScanner::new();
+        let analysis = scanner
+            .run(&diff, repo.path().to_string_lossy().as_ref())
+            .await
+            .unwrap();
+
+        assert!(analysis.context_chunks.is_empty());
+        assert!(analysis.findings.is_empty());
     }
 
     #[test]
     fn test_detects_slack_webhook() {
-        let findings = SecretScanner::scan_line(
-            // Use a clearly-fake URL that won't trigger GitHub push protection
-            "WEBHOOK=https://hooks.slack.com/services/TAAAAAAAAA/BAAAAAAAAA/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            1,
+        let webhook = format!(
+            "https://hooks.slack.com/services/{}/{}/{}",
+            "TAAAAAAAAA",
+            "BAAAAAAAAA",
+            "a".repeat(45)
         );
+        let line = format!("WEBHOOK={}", webhook);
+        let findings = SecretScanner::scan_line(&line, 1);
         assert!(!findings.is_empty(), "Should detect Slack webhook URL");
     }
 
     #[test]
     fn test_detects_stripe_live_key() {
-        let findings = SecretScanner::scan_line("stripe_key = sk_live_1234567890abcdefghij", 1);
+        let line = format!("stripe_key = {}", fake_token("sk_live_", 'a', 28));
+        let findings = SecretScanner::scan_line(&line, 1);
         assert!(!findings.is_empty(), "Should detect Stripe live key");
         assert_eq!(findings[0].rule_id, "sec.secrets.stripe-key");
     }

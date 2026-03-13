@@ -166,7 +166,7 @@ pub async fn lsp_check_command(path: PathBuf, config: config::Config) -> Result<
 }
 
 pub async fn feedback_command(
-    config: config::Config,
+    mut config: config::Config,
     accept: Option<PathBuf>,
     reject: Option<PathBuf>,
     feedback_path: Option<PathBuf>,
@@ -180,6 +180,7 @@ pub async fn feedback_command(
     };
 
     let feedback_path = feedback_path.unwrap_or_else(|| config.feedback_path.clone());
+    config.feedback_path = feedback_path.clone();
     let content = tokio::fs::read_to_string(&input_path).await?;
     let mut comments: Vec<core::Comment> = serde_json::from_str(&content)?;
 
@@ -209,6 +210,11 @@ pub async fn feedback_command(
         action
     );
 
+    let is_accepted = action == "accept";
+    for comment in &comments {
+        let _ = review::record_semantic_feedback_example(&config, comment, is_accepted).await;
+    }
+
     // Also record in the convention store for learned suppression/boost patterns
     let convention_path = resolve_convention_store_path_for_feedback(&config);
     if let Some(ref cpath) = convention_path {
@@ -218,7 +224,6 @@ pub async fn feedback_command(
             .and_then(|j| ConventionStore::from_json(j).ok())
             .unwrap_or_default();
         let now = chrono::Utc::now().to_rfc3339();
-        let is_accepted = action == "accept";
         for comment in &comments {
             let file_patterns = review::derive_file_patterns(&comment.file_path);
             cstore.record_feedback(

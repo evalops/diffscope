@@ -33,6 +33,12 @@ struct OpenAIResponsesRequest {
     max_output_tokens: usize,
 }
 
+#[derive(Serialize)]
+struct OpenAIEmbeddingRequest {
+    model: String,
+    input: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize)]
 struct Message {
     role: String,
@@ -86,6 +92,17 @@ struct OpenAIResponsesUsage {
     input_tokens: usize,
     output_tokens: usize,
     total_tokens: usize,
+}
+
+#[derive(Deserialize)]
+struct OpenAIEmbeddingResponse {
+    data: Vec<OpenAIEmbeddingData>,
+}
+
+#[derive(Deserialize)]
+struct OpenAIEmbeddingData {
+    embedding: Vec<f32>,
+    index: usize,
 }
 
 // === Chat API types (for tool use / function calling) ===
@@ -214,6 +231,41 @@ impl LLMAdapter for OpenAIAdapter {
 
     fn model_name(&self) -> &str {
         &self.config.model_name
+    }
+
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let request = OpenAIEmbeddingRequest {
+            model: self.config.model_name.clone(),
+            input: texts.to_vec(),
+        };
+
+        let url = format!("{}/embeddings", self.base_url);
+        let response = common::send_with_retry_config("OpenAI", &self.retry_config, &mut || {
+            self.client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&request)
+        })
+        .await
+        .context("Failed to send embedding request to OpenAI")?;
+
+        let embedding_response: OpenAIEmbeddingResponse = response
+            .json()
+            .await
+            .context("Failed to parse OpenAI embedding response")?;
+
+        let mut data = embedding_response.data;
+        data.sort_by_key(|item| item.index);
+        Ok(data.into_iter().map(|item| item.embedding).collect())
+    }
+
+    fn supports_embeddings(&self) -> bool {
+        true
     }
 
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {

@@ -314,6 +314,32 @@ pub struct Config {
     /// Minimum number of feedback observations before adjusting confidence (default 5).
     #[serde(default = "default_feedback_min_observations")]
     pub feedback_min_observations: usize,
+
+    /// Enable semantic repository retrieval for related code context.
+    #[serde(default = "default_false")]
+    pub semantic_rag: bool,
+
+    #[serde(default = "default_semantic_rag_max_files")]
+    pub semantic_rag_max_files: usize,
+
+    #[serde(default = "default_semantic_rag_top_k")]
+    pub semantic_rag_top_k: usize,
+
+    #[serde(default = "default_semantic_rag_min_similarity")]
+    pub semantic_rag_min_similarity: f32,
+
+    /// Enable embedding-backed feedback memory on top of aggregate stats.
+    #[serde(default)]
+    pub semantic_feedback: bool,
+
+    #[serde(default = "default_semantic_feedback_similarity")]
+    pub semantic_feedback_similarity: f32,
+
+    #[serde(default = "default_semantic_feedback_min_examples")]
+    pub semantic_feedback_min_examples: usize,
+
+    #[serde(default = "default_semantic_feedback_max_neighbors")]
+    pub semantic_feedback_max_neighbors: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -482,6 +508,14 @@ impl Default for Config {
             verification_max_comments: default_verification_max_comments(),
             enhanced_feedback: false,
             feedback_min_observations: default_feedback_min_observations(),
+            semantic_rag: false,
+            semantic_rag_max_files: default_semantic_rag_max_files(),
+            semantic_rag_top_k: default_semantic_rag_top_k(),
+            semantic_rag_min_similarity: default_semantic_rag_min_similarity(),
+            semantic_feedback: false,
+            semantic_feedback_similarity: default_semantic_feedback_similarity(),
+            semantic_feedback_min_examples: default_semantic_feedback_min_examples(),
+            semantic_feedback_max_neighbors: default_semantic_feedback_max_neighbors(),
         }
     }
 }
@@ -914,6 +948,28 @@ impl Config {
         if self.feedback_suppression_threshold == 0 {
             self.feedback_suppression_threshold = default_feedback_suppression_threshold();
         }
+        if self.semantic_rag_max_files == 0 {
+            self.semantic_rag_max_files = default_semantic_rag_max_files();
+        }
+        if self.semantic_rag_top_k == 0 {
+            self.semantic_rag_top_k = default_semantic_rag_top_k();
+        }
+        if !self.semantic_rag_min_similarity.is_finite() {
+            self.semantic_rag_min_similarity = default_semantic_rag_min_similarity();
+        } else {
+            self.semantic_rag_min_similarity = self.semantic_rag_min_similarity.clamp(0.0, 1.0);
+        }
+        if !self.semantic_feedback_similarity.is_finite() {
+            self.semantic_feedback_similarity = default_semantic_feedback_similarity();
+        } else {
+            self.semantic_feedback_similarity = self.semantic_feedback_similarity.clamp(0.0, 1.0);
+        }
+        if self.semantic_feedback_min_examples == 0 {
+            self.semantic_feedback_min_examples = default_semantic_feedback_min_examples();
+        }
+        if self.semantic_feedback_max_neighbors == 0 {
+            self.semantic_feedback_max_neighbors = default_semantic_feedback_max_neighbors();
+        }
     }
 
     pub fn get_path_config(&self, file_path: &Path) -> Option<&PathConfig> {
@@ -1298,6 +1354,30 @@ fn default_verification_max_comments() -> usize {
 
 fn default_feedback_min_observations() -> usize {
     5
+}
+
+fn default_semantic_rag_max_files() -> usize {
+    500
+}
+
+fn default_semantic_rag_top_k() -> usize {
+    5
+}
+
+fn default_semantic_rag_min_similarity() -> f32 {
+    0.25
+}
+
+fn default_semantic_feedback_similarity() -> f32 {
+    0.82
+}
+
+fn default_semantic_feedback_min_examples() -> usize {
+    3
+}
+
+fn default_semantic_feedback_max_neighbors() -> usize {
+    8
 }
 
 fn normalize_comment_types(values: &[String]) -> Vec<String> {
