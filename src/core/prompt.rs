@@ -607,4 +607,24 @@ mod tests {
         let unique: std::collections::HashSet<&&str> = tags.iter().collect();
         assert_eq!(unique.len(), tags.len());
     }
+
+    #[test]
+    fn specialized_prompts_are_distinct() {
+        let security = build_security_prompt();
+        let correctness = build_correctness_prompt();
+        let style = build_style_prompt();
+        assert!(security.contains("security"));
+        assert!(correctness.contains("correctness"));
+        assert!(style.contains("style"));
+        assert_ne!(security, correctness);
+        assert_ne!(security, style);
+        assert_ne!(correctness, style);
+    }
+
+    #[test]
+    fn specialized_pass_kind_tags() {
+        assert_eq!(SpecializedPassKind::Security.tag(), "security-pass");
+        assert_eq!(SpecializedPassKind::Correctness.tag(), "correctness-pass");
+        assert_eq!(SpecializedPassKind::Style.tag(), "style-pass");
+    }
 }

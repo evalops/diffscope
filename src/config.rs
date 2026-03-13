@@ -1509,6 +1509,12 @@ mod tests {
     }
 
     #[test]
+    fn multi_pass_specialized_config_default_false() {
+        let config = Config::default();
+        assert!(!config.multi_pass_specialized);
+    }
+
+    #[test]
     fn normalize_rejects_base_url_not_a_url() {
         let mut config = Config {
             base_url: Some("not a url at all".to_string()),
