@@ -14,4 +14,5 @@ pub struct EvalRunOptions {
     pub fixture_name_filters: Vec<String>,
     pub max_fixtures: Option<usize>,
     pub label: Option<String>,
+    pub trend_file: Option<PathBuf>,
 }

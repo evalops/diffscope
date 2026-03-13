@@ -7,6 +7,7 @@ use super::super::{EvalReport, EvalRunOptions};
 pub(super) struct PreparedEvalOptions {
     pub(super) baseline: Option<EvalReport>,
     pub(super) threshold_options: EvalThresholdOptions,
+    pub(super) trend_path: Option<std::path::PathBuf>,
 }
 
 pub(super) fn prepare_eval_options(options: &EvalRunOptions) -> Result<PreparedEvalOptions> {
@@ -27,5 +28,6 @@ pub(super) fn prepare_eval_options(options: &EvalRunOptions) -> Result<PreparedE
             min_rule_f1: min_rule_thresholds,
             max_rule_f1_drop: max_rule_drop_thresholds,
         },
+        trend_path: options.trend_file.clone(),
     })
 }

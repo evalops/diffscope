@@ -29,6 +29,9 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
                 "strict"
             }
         );
+        if let Some(trend_file) = report.run.trend_file.as_deref() {
+            println!("Trend file: {}", trend_file);
+        }
     }
 
     println!(
@@ -109,6 +112,15 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
                 metric.recall * 100.0
             );
         }
+    }
+
+    if let Some(benchmark_summary) = report.benchmark_summary.as_ref() {
+        println!(
+            "Benchmark summary: fixtures={} micro F1={:.0}% weighted={:.0}%",
+            benchmark_summary.fixture_count,
+            benchmark_summary.micro_f1 * 100.0,
+            benchmark_summary.weighted_score * 100.0
+        );
     }
 
     for suite in &report.suite_results {

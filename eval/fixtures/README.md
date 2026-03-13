@@ -20,6 +20,7 @@ diffscope eval \
   --suite review-depth-core \
   --max-fixtures 3 \
   --label smoke \
+  --trend-file eval/trends/review-depth-core.json \
   --output eval-report.json
 ```
 
@@ -35,10 +36,12 @@ diffscope \
   --fixtures eval/fixtures \
   --suite review-depth-core \
   --max-fixtures 3 \
-  --label openrouter-smoke
+  --label openrouter-smoke \
+  --trend-file eval/trends/openrouter-smoke.json
 ```
 
 Notes:
 - Fixtures call the configured model and API provider; they are not deterministic unit tests.
 - Treat this set as a baseline and tighten `must_find`/`must_not_find` thresholds over time.
 - Benchmark-pack fixtures now preserve category/language/source metadata in the JSON report so live runs can be sliced by dimension.
+- Use `--trend-file` with `--label` to append comparable live-run checkpoints into a reusable `QualityTrend` JSON history.

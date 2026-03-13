@@ -349,6 +349,9 @@ enum Commands {
 
         #[arg(long, help = "Optional label attached to the eval report")]
         label: Option<String>,
+
+        #[arg(long, help = "Append benchmark summary to this QualityTrend JSON file")]
+        trend_file: Option<PathBuf>,
     },
     #[command(about = "Evaluate accepted/rejected human feedback from stored review data")]
     FeedbackEval {
@@ -558,6 +561,7 @@ async fn main() -> Result<()> {
             fixture_name,
             max_fixtures,
             label,
+            trend_file,
         } => {
             let eval_options = EvalRunOptions {
                 baseline_report: baseline,
@@ -572,6 +576,7 @@ async fn main() -> Result<()> {
                 fixture_name_filters: fixture_name,
                 max_fixtures,
                 label,
+                trend_file,
             };
             commands::eval_command(config, fixtures, output, eval_options).await?;
         }

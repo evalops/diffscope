@@ -11,7 +11,6 @@
 ## Improvement Queue
 
 - [ ] `src/commands/eval/`
-  - Persist labeled eval runs into `QualityTrend` JSON so live provider sweeps can be trended over time.
   - Add suite/category/language baseline comparisons instead of only whole-run threshold gates.
   - Expand `review-depth-core` with authz, supply-chain, and async-correctness benchmark packs.
 - [ ] `src/commands/feedback_eval/`

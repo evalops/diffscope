@@ -13,6 +13,29 @@ pub(in super::super) struct EvalBenchmarkBreakdowns {
     pub(in super::super) by_difficulty: HashMap<String, BenchmarkAggregateMetrics>,
 }
 
+pub(in super::super) fn build_overall_benchmark_summary(
+    results: &[EvalFixtureResult],
+) -> Option<BenchmarkAggregateMetrics> {
+    let benchmark_results = collect_weighted_benchmark_results(results);
+    if benchmark_results.is_empty() {
+        return None;
+    }
+
+    let fixture_results = benchmark_results
+        .iter()
+        .map(|(result, _)| *result)
+        .collect::<Vec<_>>();
+    let weights = benchmark_results
+        .iter()
+        .map(|(_, weight)| *weight)
+        .collect::<Vec<_>>();
+
+    Some(BenchmarkAggregateMetrics::compute(
+        &fixture_results,
+        Some(&weights),
+    ))
+}
+
 pub(in super::super) fn build_suite_results(results: &[EvalFixtureResult]) -> Vec<EvalSuiteResult> {
     let mut grouped: HashMap<String, Vec<&EvalFixtureResult>> = HashMap::new();
     for result in results {
@@ -169,6 +192,24 @@ fn difficulty_label(difficulty: &Difficulty) -> &'static str {
     }
 }
 
+fn collect_weighted_benchmark_results(
+    results: &[EvalFixtureResult],
+) -> Vec<(&crate::core::eval_benchmarks::FixtureResult, f32)> {
+    results
+        .iter()
+        .filter_map(|result| {
+            result.benchmark_metrics.as_ref().map(|metrics| {
+                let weight = result
+                    .difficulty
+                    .as_ref()
+                    .map(Difficulty::weight)
+                    .unwrap_or(1.0);
+                (metrics, weight)
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,5 +330,48 @@ mod tests {
                 .map(|metrics| metrics.fixture_count),
             Some(1)
         );
+    }
+
+    #[test]
+    fn test_build_overall_benchmark_summary_aggregates_fixture_metrics() {
+        let results = vec![
+            EvalFixtureResult {
+                fixture: "suite/a".to_string(),
+                suite: Some("suite".to_string()),
+                passed: true,
+                total_comments: 1,
+                required_matches: 1,
+                required_total: 1,
+                benchmark_metrics: Some(FixtureResult::compute("suite/a", 1, 0, 1, 0, 0)),
+                suite_thresholds: None,
+                difficulty: Some(Difficulty::Easy),
+                metadata: None,
+                rule_metrics: vec![],
+                rule_summary: None,
+                warnings: vec![],
+                failures: vec![],
+            },
+            EvalFixtureResult {
+                fixture: "suite/b".to_string(),
+                suite: Some("suite".to_string()),
+                passed: false,
+                total_comments: 1,
+                required_matches: 0,
+                required_total: 1,
+                benchmark_metrics: Some(FixtureResult::compute("suite/b", 1, 0, 0, 0, 1)),
+                suite_thresholds: None,
+                difficulty: Some(Difficulty::Hard),
+                metadata: None,
+                rule_metrics: vec![],
+                rule_summary: None,
+                warnings: vec![],
+                failures: vec!["missing".to_string()],
+            },
+        ];
+
+        let summary = build_overall_benchmark_summary(&results).unwrap();
+
+        assert_eq!(summary.fixture_count, 2);
+        assert!(summary.micro_f1 < 1.0);
     }
 }

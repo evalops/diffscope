@@ -47,6 +47,8 @@ pub(in super::super) struct EvalRunMetadata {
     pub(in super::super) filters: EvalRunFilters,
     #[serde(default)]
     pub(in super::super) verification_fail_open: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) trend_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +151,8 @@ pub(in super::super) struct EvalReport {
     pub(in super::super) rule_metrics: Vec<EvalRuleMetrics>,
     #[serde(default)]
     pub(in super::super) rule_summary: Option<EvalRuleScoreSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) benchmark_summary: Option<BenchmarkAggregateMetrics>,
     #[serde(default)]
     pub(in super::super) suite_results: Vec<EvalSuiteResult>,
     #[serde(default)]

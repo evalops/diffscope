@@ -205,6 +205,7 @@ mod tests {
                 fixture_name_filters: vec!["shell".to_string()],
                 max_fixtures: None,
                 label: None,
+                trend_file: None,
             },
         );
 
@@ -237,6 +238,7 @@ mod tests {
                 fixture_name_filters: vec![],
                 max_fixtures: Some(1),
                 label: None,
+                trend_file: None,
             },
         );
 

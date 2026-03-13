@@ -64,6 +64,10 @@ fn build_eval_run_metadata(
             max_fixtures: options.max_fixtures,
         },
         verification_fail_open: config.verification_fail_open,
+        trend_file: options
+            .trend_file
+            .as_ref()
+            .map(|path| path.display().to_string()),
     }
 }
 

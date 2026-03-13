@@ -1,6 +1,6 @@
 use super::super::metrics::{
-    aggregate_rule_metrics, build_benchmark_breakdowns, build_suite_results,
-    collect_suite_threshold_failures, summarize_rule_metrics,
+    aggregate_rule_metrics, build_benchmark_breakdowns, build_overall_benchmark_summary,
+    build_suite_results, collect_suite_threshold_failures, summarize_rule_metrics,
 };
 use super::super::thresholds::{evaluate_eval_thresholds, EvalThresholdOptions};
 use super::super::{EvalFixtureResult, EvalReport, EvalRunMetadata};
@@ -25,6 +25,7 @@ pub(in super::super) fn build_eval_report(
         .collect::<Vec<_>>();
     let rule_metrics = aggregate_rule_metrics(&results);
     let rule_summary = summarize_rule_metrics(&rule_metrics);
+    let benchmark_summary = build_overall_benchmark_summary(&results);
     let suite_results = build_suite_results(&results);
     let breakdowns = build_benchmark_breakdowns(&results);
 
@@ -35,6 +36,7 @@ pub(in super::super) fn build_eval_report(
         fixtures_failed,
         rule_metrics,
         rule_summary,
+        benchmark_summary,
         suite_results,
         benchmark_by_category: breakdowns.by_category,
         benchmark_by_language: breakdowns.by_language,
