@@ -37,7 +37,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: dtolnay/rust-toolchain@1.88.0
         if: ${{ steps.secret-check.outputs.configured == 'true' }}
       - uses: Swatinem/rust-cache@v2
         if: ${{ steps.secret-check.outputs.configured == 'true' }}
