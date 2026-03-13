@@ -29,16 +29,16 @@ A composable code review engine for automated diff analysis.
 
 #### Linux/macOS
 ```bash
-curl -sSL https://raw.githubusercontent.com/haasonsaas/diffscope/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/evalops/diffscope/main/install.sh | sh
 ```
 
 #### Windows (PowerShell)
 ```powershell
-iwr -useb https://raw.githubusercontent.com/haasonsaas/diffscope/main/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/evalops/diffscope/main/install.ps1 | iex
 ```
 
 #### Manual Download
-Download the latest binary for your platform from the [releases page](https://github.com/haasonsaas/diffscope/releases/latest):
+Download the latest binary for your platform from the [releases page](https://github.com/evalops/diffscope/releases/latest):
 - Linux: `diffscope-x86_64-unknown-linux-musl`
 - macOS Intel: `diffscope-x86_64-apple-darwin`
 - macOS Apple Silicon: `diffscope-aarch64-apple-darwin`
@@ -48,7 +48,7 @@ Download the latest binary for your platform from the [releases page](https://gi
 
 #### Homebrew (macOS/Linux)
 ```bash
-brew tap haasonsaas/diffscope
+brew tap evalops/diffscope
 brew install diffscope
 ```
 
@@ -60,13 +60,13 @@ cargo install diffscope
 ### Docker
 ```bash
 # Pull the latest image
-docker pull ghcr.io/haasonsaas/diffscope:latest
+docker pull ghcr.io/evalops/diffscope:latest
 
 # Run with current directory mounted
-docker run --rm -v $(pwd):/workspace ghcr.io/haasonsaas/diffscope:latest review --diff /workspace/pr.diff
+docker run --rm -v $(pwd):/workspace ghcr.io/evalops/diffscope:latest review --diff /workspace/pr.diff
 
 # Create an alias for convenience
-alias diffscope='docker run --rm -v $(pwd):/workspace ghcr.io/haasonsaas/diffscope:latest'
+alias diffscope='docker run --rm -v $(pwd):/workspace ghcr.io/evalops/diffscope:latest'
 ```
 
 ## Usage
@@ -358,7 +358,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: haasonsaas/diffscope@v1
+      - uses: evalops/diffscope@v1
         with:
           model: gpt-4o
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -1019,4 +1019,4 @@ All binaries are automatically built and uploaded with each release.
 
 ## Support
 
-- GitHub Issues: [github.com/Haasonsaas/diffscope/issues](https://github.com/Haasonsaas/diffscope/issues)
+- GitHub Issues: [github.com/evalops/diffscope/issues](https://github.com/evalops/diffscope/issues)

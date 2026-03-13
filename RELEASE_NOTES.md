@@ -63,8 +63,8 @@ cp .diffscope.yml.example .diffscope.yml
 
 ## 👥 Contributors
 
-- Jonathan Haas (@Haasonsaas)
+- Jonathan Haas
 
 ## 📝 Full Changelog
 
-For detailed changes, see the [full changelog](https://github.com/Haasonsaas/diffscope/compare/v0.4.4...v0.5.0).
+For detailed changes, see the [full changelog](https://github.com/evalops/diffscope/compare/v0.4.4...v0.5.0).
