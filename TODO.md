@@ -10,19 +10,15 @@
 
 ## Immediate Queue
 
-- [ ] `src/review/context_helpers/pattern_repositories.rs`
-  - Split local path resolution from git-source resolution.
-  - Split git URL safety validation from clone/pull cache management.
-  - Isolate checkout cache hashing/path construction and shell-backed update helpers.
-
-## Review Backlog
-
 - [ ] `src/review/filters.rs`
   - Split comment-type classification and comment-type filtering.
   - Split vague-comment detection heuristics from vague-comment filtering.
   - Split explicit/adaptive feedback suppression decisions from filter application.
   - Split feedback-confidence lookup fallback order from confidence mutation.
   - Keep `apply_review_filters()` as a thin composition root.
+
+## Review Backlog
+
 - [ ] `src/review/feedback.rs`
   - Split feedback stats/data models from file-pattern derivation.
   - Split JSON persistence and atomic-write helpers from store mutation helpers.
