@@ -1,126 +1,19 @@
-use std::cmp::Reverse;
-use std::collections::HashSet;
+#[path = "ranking/dedupe.rs"]
+mod dedupe;
+#[path = "ranking/run.rs"]
+mod run;
+#[path = "ranking/scoring.rs"]
+mod scoring;
+#[path = "ranking/selection.rs"]
+mod selection;
 
-use crate::core;
-
-pub fn rank_and_trim_context_chunks(
-    diff: &core::UnifiedDiff,
-    chunks: Vec<core::LLMContextChunk>,
-    max_chunks: usize,
-    max_chars: usize,
-) -> Vec<core::LLMContextChunk> {
-    if chunks.is_empty() {
-        return chunks;
-    }
-
-    let mut deduped = Vec::new();
-    let mut seen = HashSet::new();
-    for chunk in chunks {
-        let key = format!(
-            "{}|{:?}|{:?}|{:?}|{}",
-            chunk.file_path.display(),
-            chunk.context_type,
-            chunk.line_range,
-            chunk.provenance.as_ref().map(ToString::to_string),
-            chunk.content
-        );
-        if seen.insert(key) {
-            deduped.push(chunk);
-        }
-    }
-
-    let changed_ranges: Vec<(usize, usize)> = diff
-        .hunks
-        .iter()
-        .filter(|hunk| hunk.new_lines > 0)
-        .map(|hunk| {
-            let start = hunk.new_start.max(1);
-            let end = hunk.new_start.saturating_add(hunk.new_lines - 1).max(start);
-            (start, end)
-        })
-        .collect();
-
-    let mut scored: Vec<(i32, usize, core::LLMContextChunk)> = deduped
-        .into_iter()
-        .map(|chunk| {
-            let mut score = match chunk.context_type {
-                core::ContextType::FileContent => 130,
-                core::ContextType::Definition => 100,
-                core::ContextType::Reference => 80,
-                core::ContextType::Documentation => 60,
-            };
-
-            if chunk.file_path == diff.file_path {
-                score += 90;
-            }
-
-            if let Some(range) = chunk.line_range {
-                if changed_ranges
-                    .iter()
-                    .any(|candidate| ranges_overlap(*candidate, range))
-                {
-                    score += 70;
-                } else if chunk.file_path == diff.file_path {
-                    score += 20;
-                }
-            }
-
-            if chunk.content.len() > 4000 {
-                score -= 10;
-            }
-
-            if let Some(provenance) = chunk.provenance.as_ref() {
-                score += provenance.ranking_bonus();
-            }
-
-            (score, chunk.content.len(), chunk)
-        })
-        .collect();
-
-    scored.sort_by_key(|(score, len, _)| (Reverse(*score), *len));
-
-    let max_chunks = if max_chunks == 0 {
-        usize::MAX
-    } else {
-        max_chunks
-    };
-    let max_chars = if max_chars == 0 {
-        usize::MAX
-    } else {
-        max_chars
-    };
-
-    let mut kept = Vec::new();
-    let mut used_chars = 0usize;
-
-    for (_, _, chunk) in scored {
-        if kept.len() >= max_chunks {
-            break;
-        }
-
-        let chunk_len = chunk.content.len();
-        if used_chars.saturating_add(chunk_len) > max_chars {
-            continue;
-        }
-
-        used_chars = used_chars.saturating_add(chunk_len);
-        kept.push(chunk);
-    }
-
-    if kept.is_empty() {
-        return Vec::new();
-    }
-
-    kept
-}
-
-fn ranges_overlap(left: (usize, usize), right: (usize, usize)) -> bool {
-    left.0 <= right.1 && right.0 <= left.1
-}
+pub use run::rank_and_trim_context_chunks;
 
 #[cfg(test)]
 mod tests {
+    use super::scoring::ranges_overlap;
     use super::*;
+    use crate::core;
     use crate::core::diff_parser::DiffHunk;
     use std::path::PathBuf;
 

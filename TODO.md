@@ -10,10 +10,6 @@
 
 ## Immediate Queue
 
-- [ ] `src/review/context_helpers/ranking.rs`
-  - Split chunk dedupe key generation from the dedupe pass.
-  - Split changed-range extraction and overlap helpers from chunk scoring.
-  - Split ranking heuristics from budget trimming / final selection.
 - [ ] `src/review/context_helpers/pattern_repositories.rs`
   - Split local path resolution from git-source resolution.
   - Split git URL safety validation from clone/pull cache management.
