@@ -1,122 +1,27 @@
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+#[path = "comment/identity.rs"]
+mod identity;
+#[path = "comment/ordering.rs"]
+mod ordering;
+#[path = "comment/suggestions.rs"]
+mod suggestions;
+#[path = "comment/summary.rs"]
+mod summary;
+#[path = "comment/types.rs"]
+mod types;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Comment {
-    #[serde(default)]
-    pub id: String,
-    pub file_path: PathBuf,
-    pub line_number: usize,
-    pub content: String,
-    #[serde(default)]
-    pub rule_id: Option<String>,
-    pub severity: Severity,
-    pub category: Category,
-    pub suggestion: Option<String>,
-    pub confidence: f32,
-    pub code_suggestion: Option<CodeSuggestion>,
-    pub tags: Vec<String>,
-    pub fix_effort: FixEffort,
-    #[serde(default)]
-    pub feedback: Option<String>,
-}
+use ordering::{
+    deduplicate_comments as deduplicate_comment_list, sort_by_priority as sort_comments_by_priority,
+};
+#[cfg(test)]
+use std::path::PathBuf;
+use suggestions::generate_code_suggestion;
+use summary::generate_summary as build_review_summary;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodeSuggestion {
-    pub original_code: String,
-    pub suggested_code: String,
-    pub explanation: String,
-    pub diff: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReviewSummary {
-    pub total_comments: usize,
-    pub by_severity: HashMap<String, usize>,
-    pub by_category: HashMap<String, usize>,
-    pub critical_issues: usize,
-    pub files_reviewed: usize,
-    pub overall_score: f32,
-    pub recommendations: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum Severity {
-    Error,
-    Warning,
-    Info,
-    Suggestion,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum Category {
-    Bug,
-    Security,
-    Performance,
-    Style,
-    Documentation,
-    BestPractice,
-    Maintainability,
-    Testing,
-    Architecture,
-}
-
-impl std::fmt::Display for Severity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Severity::Error => write!(f, "Error"),
-            Severity::Warning => write!(f, "Warning"),
-            Severity::Info => write!(f, "Info"),
-            Severity::Suggestion => write!(f, "Suggestion"),
-        }
-    }
-}
-
-impl Severity {
-    #[allow(dead_code)]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-            Severity::Info => "info",
-            Severity::Suggestion => "suggestion",
-        }
-    }
-}
-
-impl std::fmt::Display for Category {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Category::Bug => write!(f, "Bug"),
-            Category::Security => write!(f, "Security"),
-            Category::Performance => write!(f, "Performance"),
-            Category::Style => write!(f, "Style"),
-            Category::Documentation => write!(f, "Documentation"),
-            Category::BestPractice => write!(f, "BestPractice"),
-            Category::Maintainability => write!(f, "Maintainability"),
-            Category::Testing => write!(f, "Testing"),
-            Category::Architecture => write!(f, "Architecture"),
-        }
-    }
-}
-
-impl Category {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Category::Bug => "bug",
-            Category::Security => "security",
-            Category::Performance => "performance",
-            Category::Style => "style",
-            Category::Documentation => "documentation",
-            Category::BestPractice => "bestpractice",
-            Category::Maintainability => "maintainability",
-            Category::Testing => "testing",
-            Category::Architecture => "architecture",
-        }
-    }
-}
+pub use identity::compute_comment_id;
+pub use types::{
+    Category, CodeSuggestion, Comment, FixEffort, RawComment, ReviewSummary, Severity,
+};
 
 fn is_ascii_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
@@ -327,13 +232,6 @@ fn has_architecture_signal(lower: &str) -> bool {
     lower.contains("design") || lower.contains("architecture") || contains_word(lower, "pattern")
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum FixEffort {
-    Low,    // < 5 minutes
-    Medium, // 5-30 minutes
-    High,   // > 30 minutes
-}
-
 pub struct CommentSynthesizer;
 
 impl CommentSynthesizer {
@@ -351,37 +249,7 @@ impl CommentSynthesizer {
     }
 
     pub fn generate_summary(comments: &[Comment]) -> ReviewSummary {
-        let mut by_severity = HashMap::new();
-        let mut by_category = HashMap::new();
-        let mut files = std::collections::HashSet::new();
-        let mut critical_issues = 0;
-
-        for comment in comments {
-            let severity_str = comment.severity.to_string();
-            *by_severity.entry(severity_str).or_insert(0) += 1;
-
-            let category_str = comment.category.to_string();
-            *by_category.entry(category_str).or_insert(0) += 1;
-
-            files.insert(comment.file_path.clone());
-
-            if matches!(comment.severity, Severity::Error) {
-                critical_issues += 1;
-            }
-        }
-
-        let overall_score = Self::calculate_overall_score(comments);
-        let recommendations = Self::generate_recommendations(comments);
-
-        ReviewSummary {
-            total_comments: comments.len(),
-            by_severity,
-            by_category,
-            critical_issues,
-            files_reviewed: files.len(),
-            overall_score,
-            recommendations,
-        }
+        build_review_summary(comments)
     }
 
     fn process_raw_comment(raw: RawComment) -> Result<Comment> {
@@ -407,8 +275,8 @@ impl CommentSynthesizer {
             .fix_effort
             .clone()
             .unwrap_or_else(|| Self::determine_fix_effort(&lower, &category));
-        let code_suggestion = Self::generate_code_suggestion(&raw);
-        let id = Self::generate_comment_id(&raw.file_path, &raw.content, &category);
+        let code_suggestion = generate_code_suggestion(&raw);
+        let id = compute_comment_id(&raw.file_path, &raw.content, &category);
 
         Ok(Comment {
             id,
@@ -425,10 +293,6 @@ impl CommentSynthesizer {
             fix_effort,
             feedback: None,
         })
-    }
-
-    fn generate_comment_id(file_path: &Path, content: &str, category: &Category) -> String {
-        compute_comment_id(file_path, content, category)
     }
 
     /// `lower` must already be lowercased.
@@ -978,185 +842,13 @@ impl CommentSynthesizer {
         FixEffort::Medium
     }
 
-    fn generate_code_suggestion(raw: &RawComment) -> Option<CodeSuggestion> {
-        // Prefer the structured code suggestion parsed from the LLM response
-        if let Some(cs) = &raw.code_suggestion {
-            return Some(cs.clone());
-        }
-
-        // Fallback: generate a basic suggestion from the textual suggestion field
-        if let Some(suggestion) = &raw.suggestion {
-            if contains_action_word(suggestion) {
-                return Some(CodeSuggestion {
-                    original_code: "// Original code would be extracted from context".to_string(),
-                    suggested_code: suggestion.clone(),
-                    explanation: "Improved implementation following best practices".to_string(),
-                    diff: format!("- original\n+ {}", suggestion),
-                });
-            }
-        }
-        None
-    }
-
-    fn calculate_overall_score(comments: &[Comment]) -> f32 {
-        if comments.is_empty() {
-            return 10.0;
-        }
-
-        let mut score: f32 = 10.0;
-        for comment in comments {
-            let penalty = match comment.severity {
-                Severity::Error => 2.0,
-                Severity::Warning => 1.0,
-                Severity::Info => 0.3,
-                Severity::Suggestion => 0.1,
-            };
-            score -= penalty;
-        }
-
-        score.clamp(0.0, 10.0)
-    }
-
-    fn generate_recommendations(comments: &[Comment]) -> Vec<String> {
-        let mut recommendations = Vec::new();
-        let mut security_count = 0;
-        let mut performance_count = 0;
-        let mut style_count = 0;
-
-        for comment in comments {
-            match comment.category {
-                Category::Security => security_count += 1,
-                Category::Performance => performance_count += 1,
-                Category::Style => style_count += 1,
-                _ => {}
-            }
-        }
-
-        if security_count > 0 {
-            recommendations.push(format!(
-                "Address {} security issue(s) immediately",
-                security_count
-            ));
-        }
-        if performance_count > 2 {
-            recommendations.push(
-                "Consider a performance audit - multiple optimization opportunities found"
-                    .to_string(),
-            );
-        }
-        if style_count > 5 {
-            recommendations
-                .push("Consider setting up automated linting to catch style issues".to_string());
-        }
-
-        recommendations
-    }
-
     fn deduplicate_comments(comments: &mut Vec<Comment>) {
-        let severity_rank = |s: &Severity| match s {
-            Severity::Error => 0,
-            Severity::Warning => 1,
-            Severity::Info => 2,
-            Severity::Suggestion => 3,
-        };
-
-        // Sort by file/line/content, then by severity (highest first)
-        comments.sort_by(|a, b| {
-            a.file_path
-                .cmp(&b.file_path)
-                .then(a.line_number.cmp(&b.line_number))
-                .then(a.content.cmp(&b.content))
-                .then(severity_rank(&a.severity).cmp(&severity_rank(&b.severity)))
-        });
-        // dedup_by keeps the first element (b) of consecutive duplicates,
-        // which is the highest severity due to our sort order
-        comments.dedup_by(|a, b| {
-            a.file_path == b.file_path && a.line_number == b.line_number && a.content == b.content
-        });
+        deduplicate_comment_list(comments);
     }
 
     fn sort_by_priority(comments: &mut [Comment]) {
-        comments.sort_by(|a, b| {
-            let severity_rank = |s: &Severity| match s {
-                Severity::Error => 0,
-                Severity::Warning => 1,
-                Severity::Info => 2,
-                Severity::Suggestion => 3,
-            };
-            let category_rank = |c: &Category| match c {
-                Category::Security => 0,
-                Category::Bug => 1,
-                Category::Performance => 2,
-                Category::BestPractice => 3,
-                Category::Style => 4,
-                Category::Documentation => 5,
-                Category::Maintainability => 6,
-                Category::Testing => 7,
-                Category::Architecture => 8,
-            };
-            severity_rank(&a.severity)
-                .cmp(&severity_rank(&b.severity))
-                .then_with(|| category_rank(&a.category).cmp(&category_rank(&b.category)))
-                .then_with(|| a.file_path.cmp(&b.file_path))
-                .then_with(|| a.line_number.cmp(&b.line_number))
-        });
+        sort_comments_by_priority(comments);
     }
-}
-
-pub fn compute_comment_id(file_path: &Path, content: &str, category: &Category) -> String {
-    let normalized = normalize_content(content);
-    let key = format!("{}|{}|{}", file_path.display(), category, normalized);
-    let hash = fnv1a64(key.as_bytes());
-    format!("cmt_{:016x}", hash)
-}
-
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for &byte in bytes {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
-}
-
-fn normalize_content(content: &str) -> String {
-    let mut normalized = String::new();
-    let mut last_space = false;
-
-    for ch in content.chars() {
-        let ch = if ch.is_ascii_digit() {
-            '#'
-        } else {
-            ch.to_ascii_lowercase()
-        };
-
-        if ch.is_whitespace() {
-            if !last_space {
-                normalized.push(' ');
-                last_space = true;
-            }
-        } else {
-            normalized.push(ch);
-            last_space = false;
-        }
-    }
-
-    normalized.trim().to_string()
-}
-
-#[derive(Debug)]
-pub struct RawComment {
-    pub file_path: PathBuf,
-    pub line_number: usize,
-    pub content: String,
-    pub rule_id: Option<String>,
-    pub suggestion: Option<String>,
-    pub severity: Option<Severity>,
-    pub category: Option<Category>,
-    pub confidence: Option<f32>,
-    pub fix_effort: Option<FixEffort>,
-    pub tags: Vec<String>,
-    pub code_suggestion: Option<CodeSuggestion>,
 }
 
 #[cfg(test)]

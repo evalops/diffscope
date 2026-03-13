@@ -11,10 +11,7 @@
 ## Core Backlog
 
 - [ ] `src/core/comment.rs`
-  - Split model types (`Comment`, `CodeSuggestion`, `ReviewSummary`, enums) from synthesizer logic.
   - Split category/severity/tag heuristics from confidence/fix-effort heuristics.
-  - Split summary generation from dedupe/sort helpers.
-  - Split ID hashing/normalization and code-suggestion helpers from the synthesizer pipeline.
 - [ ] `src/core/semantic.rs`
   - Split semantic index/store model types and embedding metadata compatibility.
   - Split JSON/file persistence helpers from path derivation helpers.
