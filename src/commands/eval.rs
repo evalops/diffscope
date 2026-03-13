@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config;
 use crate::core;
+use crate::core::eval_benchmarks::CommunityFixturePack;
 use crate::review::{normalize_rule_id, review_diff_content_raw};
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -158,8 +159,8 @@ pub async fn eval_command(
     output_path: Option<PathBuf>,
     options: EvalRunOptions,
 ) -> Result<()> {
-    let fixture_paths = collect_fixture_paths(&fixtures_dir)?;
-    if fixture_paths.is_empty() {
+    let fixtures = collect_eval_fixtures(&fixtures_dir)?;
+    if fixtures.is_empty() {
         anyhow::bail!(
             "No fixture files found in {} (expected .json/.yml/.yaml)",
             fixtures_dir.display()
@@ -167,8 +168,7 @@ pub async fn eval_command(
     }
 
     let mut results = Vec::new();
-    for fixture_path in fixture_paths {
-        let fixture = load_eval_fixture(&fixture_path)?;
+    for (fixture_path, fixture) in fixtures {
         let result = run_eval_fixture(&config, &fixture_path, fixture).await?;
         results.push(result);
     }
@@ -333,19 +333,84 @@ fn collect_fixture_paths(fixtures_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-fn load_eval_fixture(path: &Path) -> Result<EvalFixture> {
+fn collect_eval_fixtures(fixtures_dir: &Path) -> Result<Vec<(PathBuf, EvalFixture)>> {
+    let mut fixtures = Vec::new();
+    for path in collect_fixture_paths(fixtures_dir)? {
+        for fixture in load_eval_fixtures_from_path(&path)? {
+            fixtures.push((path.clone(), fixture));
+        }
+    }
+    Ok(fixtures)
+}
+
+fn load_eval_fixtures_from_path(path: &Path) -> Result<Vec<EvalFixture>> {
     let content = std::fs::read_to_string(path)?;
+
+    if let Ok(pack) = load_fixture_file::<CommunityFixturePack>(path, &content) {
+        return Ok(expand_community_fixture_pack(pack));
+    }
+
+    Ok(vec![load_eval_fixture_from_content(path, &content)?])
+}
+
+fn load_eval_fixture_from_content(path: &Path, content: &str) -> Result<EvalFixture> {
+    load_fixture_file::<EvalFixture>(path, content)
+}
+
+fn load_fixture_file<T>(path: &Path, content: &str) -> Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
         .map(|value| value.to_ascii_lowercase());
     match extension.as_deref() {
-        Some("json") => Ok(serde_json::from_str(&content)?),
-        _ => match serde_yaml::from_str(&content) {
+        Some("json") => Ok(serde_json::from_str(content)?),
+        _ => match serde_yaml::from_str(content) {
             Ok(parsed) => Ok(parsed),
-            Err(_) => Ok(serde_json::from_str(&content)?),
+            Err(_) => Ok(serde_json::from_str(content)?),
         },
     }
+}
+
+fn expand_community_fixture_pack(pack: CommunityFixturePack) -> Vec<EvalFixture> {
+    let pack_name = pack.name;
+    pack.fixtures
+        .into_iter()
+        .map(|fixture| EvalFixture {
+            name: Some(format!("{}/{}", pack_name, fixture.name)),
+            diff: Some(fixture.diff_content),
+            diff_file: None,
+            repo_path: None,
+            expect: EvalExpectations {
+                must_find: fixture
+                    .expected_findings
+                    .into_iter()
+                    .map(|finding| EvalPattern {
+                        file: finding.file_pattern,
+                        line: finding.line_hint,
+                        contains: finding.contains,
+                        severity: finding.severity,
+                        category: finding.category,
+                        rule_id: finding.rule_id.clone(),
+                        require_rule_id: finding.rule_id.is_some(),
+                    })
+                    .collect(),
+                must_not_find: fixture
+                    .negative_findings
+                    .into_iter()
+                    .map(|finding| EvalPattern {
+                        file: finding.file_pattern,
+                        contains: finding.contains,
+                        ..Default::default()
+                    })
+                    .collect(),
+                min_total: None,
+                max_total: None,
+            },
+        })
+        .collect()
 }
 
 fn load_eval_report(path: &Path) -> Result<EvalReport> {
@@ -914,6 +979,10 @@ fn summarize_for_eval(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::eval_benchmarks::{
+        BenchmarkFixture, CommunityFixturePack, Difficulty, ExpectedFinding, NegativeFinding,
+    };
+    use tempfile::tempdir;
 
     #[test]
     fn test_summarize_for_eval_short() {
@@ -948,5 +1017,224 @@ mod tests {
         // truncate(117) = byte 117 = 1 + 38*3 + 2 = inside 39th euro
         let result = summarize_for_eval(&content);
         assert!(result.len() <= 120);
+    }
+
+    #[test]
+    fn test_load_eval_fixtures_from_path_expands_benchmark_pack() {
+        let dir = tempdir().unwrap();
+        let pack_path = dir.path().join("pack.json");
+        let pack = CommunityFixturePack {
+            name: "owasp-top10".to_string(),
+            author: "community".to_string(),
+            version: "1.0.0".to_string(),
+            description: "security regressions".to_string(),
+            languages: vec!["python".to_string()],
+            categories: vec!["security".to_string()],
+            fixtures: vec![BenchmarkFixture {
+                name: "sql-injection".to_string(),
+                category: "security".to_string(),
+                language: "python".to_string(),
+                difficulty: Difficulty::Easy,
+                diff_content: "diff --git a/app.py b/app.py".to_string(),
+                expected_findings: vec![ExpectedFinding {
+                    description: "detect sql injection".to_string(),
+                    severity: Some("error".to_string()),
+                    category: Some("security".to_string()),
+                    file_pattern: Some("app.py".to_string()),
+                    line_hint: Some(12),
+                    contains: Some("sql injection".to_string()),
+                    rule_id: Some("sec.sql.injection".to_string()),
+                }],
+                negative_findings: vec![NegativeFinding {
+                    description: "no false positive on sanitizer".to_string(),
+                    file_pattern: Some("app.py".to_string()),
+                    contains: Some("sanitized".to_string()),
+                }],
+                description: None,
+                source: None,
+            }],
+        };
+        std::fs::write(&pack_path, serde_json::to_string(&pack).unwrap()).unwrap();
+
+        let fixtures = load_eval_fixtures_from_path(&pack_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        let fixture = &fixtures[0];
+        assert_eq!(fixture.name.as_deref(), Some("owasp-top10/sql-injection"));
+        assert_eq!(
+            fixture.diff.as_deref(),
+            Some("diff --git a/app.py b/app.py")
+        );
+        assert_eq!(fixture.expect.must_find.len(), 1);
+        assert_eq!(fixture.expect.must_not_find.len(), 1);
+        assert!(fixture.expect.must_find[0].require_rule_id);
+        assert_eq!(
+            fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("sec.sql.injection")
+        );
+    }
+
+    #[test]
+    fn test_load_eval_fixtures_from_path_keeps_standard_fixture_shape() {
+        let dir = tempdir().unwrap();
+        let fixture_path = dir.path().join("standard.yml");
+        std::fs::write(
+            &fixture_path,
+            r#"name: standard
+diff: |
+  diff --git a/lib.rs b/lib.rs
+expect:
+  must_find:
+    - contains: injection
+      severity: error
+"#,
+        )
+        .unwrap();
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(fixtures[0].name.as_deref(), Some("standard"));
+        assert_eq!(
+            fixtures[0].expect.must_find[0].contains.as_deref(),
+            Some("injection")
+        );
+    }
+
+    #[test]
+    fn test_collect_eval_fixtures_expands_pack_entries_in_sorted_order() {
+        let dir = tempdir().unwrap();
+        let standard_path = dir.path().join("b-standard.yml");
+        std::fs::write(
+            &standard_path,
+            r#"name: standard
+diff: |
+  diff --git a/lib.rs b/lib.rs
+expect:
+  must_find:
+    - contains: unwrap
+"#,
+        )
+        .unwrap();
+
+        let pack_path = dir.path().join("a-pack.json");
+        let pack = CommunityFixturePack {
+            name: "community".to_string(),
+            author: "tester".to_string(),
+            version: "1.0.0".to_string(),
+            description: "regressions".to_string(),
+            languages: vec!["rust".to_string()],
+            categories: vec!["correctness".to_string()],
+            fixtures: vec![BenchmarkFixture {
+                name: "panic".to_string(),
+                category: "correctness".to_string(),
+                language: "rust".to_string(),
+                difficulty: Difficulty::Medium,
+                diff_content: "diff --git a/lib.rs b/lib.rs".to_string(),
+                expected_findings: vec![],
+                negative_findings: vec![],
+                description: None,
+                source: None,
+            }],
+        };
+        std::fs::write(&pack_path, serde_json::to_string(&pack).unwrap()).unwrap();
+
+        let fixtures = collect_eval_fixtures(dir.path()).unwrap();
+
+        assert_eq!(fixtures.len(), 2);
+        assert_eq!(fixtures[0].1.name.as_deref(), Some("community/panic"));
+        assert_eq!(fixtures[1].1.name.as_deref(), Some("standard"));
+    }
+
+    #[test]
+    fn test_evaluate_eval_thresholds_requires_baseline_for_drop_checks() {
+        let report = EvalReport {
+            fixtures_total: 1,
+            fixtures_passed: 1,
+            fixtures_failed: 0,
+            rule_metrics: vec![],
+            rule_summary: Some(EvalRuleScoreSummary {
+                micro_precision: 1.0,
+                micro_recall: 1.0,
+                micro_f1: 1.0,
+                macro_precision: 1.0,
+                macro_recall: 1.0,
+                macro_f1: 1.0,
+            }),
+            threshold_failures: vec![],
+            results: vec![],
+        };
+        let options = EvalThresholdOptions {
+            max_micro_f1_drop: Some(0.05),
+            min_micro_f1: None,
+            min_macro_f1: None,
+            min_rule_f1: vec![],
+            max_rule_f1_drop: vec![],
+        };
+
+        let failures = evaluate_eval_thresholds(&report, None, &options);
+
+        assert_eq!(
+            failures,
+            vec!["baseline report is required for drop-based thresholds (--baseline)".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_evaluate_eval_thresholds_checks_rule_specific_drop() {
+        let current = EvalReport {
+            fixtures_total: 1,
+            fixtures_passed: 1,
+            fixtures_failed: 0,
+            rule_metrics: vec![EvalRuleMetrics {
+                rule_id: "sec.sql.injection".to_string(),
+                expected: 1,
+                predicted: 1,
+                true_positives: 0,
+                false_positives: 1,
+                false_negatives: 1,
+                precision: 0.0,
+                recall: 0.0,
+                f1: 0.0,
+            }],
+            rule_summary: Some(EvalRuleScoreSummary::default()),
+            threshold_failures: vec![],
+            results: vec![],
+        };
+        let baseline = EvalReport {
+            fixtures_total: 1,
+            fixtures_passed: 1,
+            fixtures_failed: 0,
+            rule_metrics: vec![EvalRuleMetrics {
+                rule_id: "sec.sql.injection".to_string(),
+                expected: 1,
+                predicted: 1,
+                true_positives: 1,
+                false_positives: 0,
+                false_negatives: 0,
+                precision: 1.0,
+                recall: 1.0,
+                f1: 1.0,
+            }],
+            rule_summary: Some(EvalRuleScoreSummary::default()),
+            threshold_failures: vec![],
+            results: vec![],
+        };
+        let options = EvalThresholdOptions {
+            max_micro_f1_drop: None,
+            min_micro_f1: None,
+            min_macro_f1: None,
+            min_rule_f1: vec![],
+            max_rule_f1_drop: vec![EvalRuleThreshold {
+                rule_id: "sec.sql.injection".to_string(),
+                value: 0.2,
+            }],
+        };
+
+        let failures = evaluate_eval_thresholds(&current, Some(&baseline), &options);
+
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("sec.sql.injection"));
+        assert!(failures[0].contains("exceeded max 0.200"));
     }
 }
