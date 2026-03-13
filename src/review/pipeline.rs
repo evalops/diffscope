@@ -12,6 +12,8 @@ mod context;
 mod contracts;
 #[path = "pipeline/execution.rs"]
 mod execution;
+#[path = "pipeline/file_context.rs"]
+mod file_context;
 #[path = "pipeline/guidance.rs"]
 mod guidance;
 #[path = "pipeline/postprocess.rs"]
