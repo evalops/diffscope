@@ -691,6 +691,7 @@ impl PreAnalyzer for SecretScanner {
                 content: report,
                 context_type: ContextType::Documentation,
                 line_range: None,
+                provenance: Some("secret scanner".to_string()),
             }],
             findings: all_findings
                 .into_iter()

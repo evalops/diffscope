@@ -150,6 +150,7 @@ fn parse_eslint_analyses(repo_root: &Path, payload: &str) -> HashMap<PathBuf, Pr
                 content: build_context_chunk("ESLint", &findings),
                 context_type: ContextType::Documentation,
                 line_range: None,
+                provenance: Some("eslint analyzer".to_string()),
             });
             analysis.findings = findings;
             analyses.insert(file_path, analysis);

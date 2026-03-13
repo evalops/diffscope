@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use tracing::info;
 
 use crate::adapters::llm::{LLMAdapter, LLMRequest, StructuredOutputSchema};
-use crate::core::{Comment, UnifiedDiff};
+use crate::core::{Comment, ContextType, LLMContextChunk, UnifiedDiff};
 
 /// Result of verifying a single review comment
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,9 +40,12 @@ const VERIFICATION_SYSTEM_PROMPT: &str = r#"You are a code review verifier. Your
 
 For each finding, assess:
 1. Does the referenced file and line exist in the supplied evidence?
-2. Does the comment accurately describe the code shown in the diff and nearby file context?
-3. Is the suggestion sound, or would it introduce regressions / incorrect advice?
+2. Does the comment accurately describe the code shown in the diff, nearby file context, and any supporting cross-file context?
+3. Is the suggestion sound, including fixes that belong in a related supporting-context file instead of the changed file?
 4. Is the finding a false positive or hallucinated issue?
+5. Cross-file findings are valid when the changed line introduces a call path or tainted data flow into a vulnerable helper shown in supporting context.
+6. Mark `line_correct=true` when the changed line is the introduction point or risky call site, even if the sink or flawed helper implementation is in another file shown in supporting context.
+7. Treat supporting context with graph or semantic provenance as first-class evidence, not as a weak hint.
 If the evidence is missing, ambiguous, or the file/line cannot be confirmed, return a result anyway with accurate=false, line_correct=false, and a low score.
 
 Score each finding 0-10:
@@ -61,6 +64,7 @@ pub async fn verify_comments(
     comments: Vec<Comment>,
     diffs: &[UnifiedDiff],
     source_files: &HashMap<std::path::PathBuf, String>,
+    extra_context: &HashMap<std::path::PathBuf, Vec<LLMContextChunk>>,
     adapter: &dyn LLMAdapter,
     min_score: u8,
 ) -> Result<Vec<Comment>> {
@@ -71,7 +75,7 @@ pub async fn verify_comments(
     let total_count = comments.len();
     let mut verified = Vec::new();
     for batch in comments.chunks(VERIFICATION_BATCH_SIZE) {
-        let prompt = build_verification_prompt(batch, diffs, source_files);
+        let prompt = build_verification_prompt(batch, diffs, source_files, extra_context);
         let request = LLMRequest {
             system_prompt: VERIFICATION_SYSTEM_PROMPT.to_string(),
             user_prompt: prompt,
@@ -143,6 +147,7 @@ fn build_verification_prompt(
     comments: &[Comment],
     diffs: &[UnifiedDiff],
     source_files: &HashMap<std::path::PathBuf, String>,
+    extra_context: &HashMap<std::path::PathBuf, Vec<LLMContextChunk>>,
 ) -> String {
     let diff_map = diffs
         .iter()
@@ -179,11 +184,90 @@ fn build_verification_prompt(
                 prompt.push_str("\n```\n");
             }
         }
+        let supporting_context = supporting_context_for_comment(comment, extra_context);
+        if !supporting_context.is_empty() {
+            prompt.push_str("- Cross-file attachment rule: if this changed line introduces a risky call or tainted input into the helper below, the finding can still be accurate and line-correct even when the vulnerable sink lives in the supporting-context file.\n");
+            prompt.push_str("- Supporting context:\n");
+            for chunk in supporting_context {
+                prompt.push_str("```text\n");
+                prompt.push_str(&format_context_chunk_for_verification(&chunk));
+                prompt.push_str("\n```\n");
+            }
+        }
         prompt.push('\n');
     }
 
     prompt.push_str("Return JSON only. Do not add commentary outside the JSON array.\n");
     prompt
+}
+
+fn supporting_context_for_comment(
+    comment: &Comment,
+    extra_context: &HashMap<std::path::PathBuf, Vec<LLMContextChunk>>,
+) -> Vec<LLMContextChunk> {
+    let mut chunks = extra_context
+        .get(&comment.file_path)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|chunk| {
+            !(chunk.file_path == comment.file_path
+                && chunk.context_type == ContextType::FileContent)
+        })
+        .collect::<Vec<_>>();
+
+    chunks.sort_by_key(|chunk| std::cmp::Reverse(score_supporting_context(chunk, comment)));
+    chunks.truncate(3);
+    chunks
+}
+
+fn score_supporting_context(chunk: &LLMContextChunk, comment: &Comment) -> i32 {
+    let mut score = match chunk.context_type {
+        ContextType::Definition => 90,
+        ContextType::Reference => 70,
+        ContextType::Documentation => 45,
+        ContextType::FileContent => 20,
+    };
+
+    if chunk.file_path != comment.file_path {
+        score += 15;
+    }
+
+    if let Some(range) = chunk.line_range {
+        if comment.line_number >= range.0 && comment.line_number <= range.1 {
+            score += 10;
+        }
+    }
+
+    if let Some(provenance) = chunk.provenance.as_deref() {
+        let lower = provenance.to_ascii_lowercase();
+        if lower.contains("symbol graph path:") {
+            score += 80;
+        } else if lower.contains("semantic retrieval") {
+            score += 30;
+        }
+    }
+
+    score
+}
+
+fn format_context_chunk_for_verification(chunk: &LLMContextChunk) -> String {
+    let mut header = format!(
+        "{:?} - {}{}",
+        chunk.context_type,
+        chunk.file_path.display(),
+        chunk
+            .line_range
+            .map(|(start, end)| format!(":{}-{}", start, end))
+            .unwrap_or_default()
+    );
+
+    if let Some(provenance) = chunk.provenance.as_deref() {
+        header.push_str(" | ");
+        header.push_str(provenance);
+    }
+
+    format!("{}\n{}", header, chunk.content)
 }
 
 fn verification_response_schema() -> StructuredOutputSchema {
@@ -502,7 +586,10 @@ mod tests {
         }
     }
 
-    fn build_prompt_for_tests(comments: &[Comment]) -> String {
+    fn build_prompt_for_tests_with_context(
+        comments: &[Comment],
+        related_context: HashMap<PathBuf, Vec<crate::core::LLMContextChunk>>,
+    ) -> String {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("src/lib.rs");
         std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
@@ -530,7 +617,11 @@ mod tests {
 
         let source_files = HashMap::from([(PathBuf::from("src/lib.rs"), file_content)]);
 
-        build_verification_prompt(comments, &diffs, &source_files)
+        build_verification_prompt(comments, &diffs, &source_files, &related_context)
+    }
+
+    fn build_prompt_for_tests(comments: &[Comment]) -> String {
+        build_prompt_for_tests_with_context(comments, HashMap::new())
     }
 
     #[test]
@@ -595,6 +686,42 @@ mod tests {
         assert!(prompt.contains("Suggestion: Use prepared statements instead"));
     }
 
+    #[test]
+    fn test_build_verification_prompt_includes_related_context() {
+        let comments = vec![make_comment("c1", "issue", 10)];
+        let prompt = build_prompt_for_tests_with_context(
+            &comments,
+            HashMap::from([(
+                PathBuf::from("src/lib.rs"),
+                vec![crate::core::LLMContextChunk {
+                    file_path: PathBuf::from("src/auth.rs"),
+                    content: "pub fn validate_token(token: &str) -> bool { token.len() > 10 }"
+                        .to_string(),
+                    context_type: crate::core::ContextType::Definition,
+                    line_range: Some((1, 3)),
+                    provenance: Some(
+                        "symbol graph path: calls (hops=1, relevance=0.50)".to_string(),
+                    ),
+                }],
+            )]),
+        );
+
+        assert!(prompt.contains("Supporting context"));
+        assert!(prompt.contains("Cross-file attachment rule"));
+        assert!(prompt.contains("src/auth.rs"));
+        assert!(prompt.contains("symbol graph path: calls"));
+    }
+
+    #[test]
+    fn test_verification_system_prompt_allows_cross_file_findings() {
+        assert!(VERIFICATION_SYSTEM_PROMPT.contains("Cross-file findings are valid"));
+        assert!(VERIFICATION_SYSTEM_PROMPT.contains("Mark `line_correct=true`"));
+        assert!(VERIFICATION_SYSTEM_PROMPT
+            .contains("supporting context with graph or semantic provenance"));
+        assert!(VERIFICATION_SYSTEM_PROMPT.contains("supporting cross-file context"));
+        assert!(VERIFICATION_SYSTEM_PROMPT.contains("related supporting-context file"));
+    }
+
     #[tokio::test]
     async fn test_verify_comments_drops_missing_results() {
         let comments = vec![make_comment("c1", "SQL injection", 10)];
@@ -610,9 +737,16 @@ mod tests {
             responses: Mutex::new(vec!["[]".to_string()]),
         };
 
-        let verified = verify_comments(comments, &diffs, &source_files, &adapter, 6)
-            .await
-            .unwrap();
+        let verified = verify_comments(
+            comments,
+            &diffs,
+            &source_files,
+            &HashMap::new(),
+            &adapter,
+            6,
+        )
+        .await
+        .unwrap();
 
         assert!(verified.is_empty());
     }
@@ -640,9 +774,16 @@ mod tests {
             ]),
         };
 
-        let verified = verify_comments(comments, &diffs, &source_files, &adapter, 6)
-            .await
-            .unwrap();
+        let verified = verify_comments(
+            comments,
+            &diffs,
+            &source_files,
+            &HashMap::new(),
+            &adapter,
+            6,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(verified.len(), 6);
         assert_eq!(

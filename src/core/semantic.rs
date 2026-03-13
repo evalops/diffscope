@@ -452,6 +452,10 @@ pub async fn semantic_context_for_diff(
             content,
             context_type: ContextType::Reference,
             line_range: Some(semantic_match.chunk.line_range),
+            provenance: Some(format!(
+                "semantic retrieval (similarity={:.2}, symbol={})",
+                semantic_match.similarity, semantic_match.chunk.symbol_name
+            )),
         });
         if chunks.len() >= limit {
             break;

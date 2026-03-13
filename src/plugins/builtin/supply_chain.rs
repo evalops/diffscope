@@ -437,6 +437,7 @@ impl PreAnalyzer for SupplyChainAnalyzer {
                 content: report,
                 context_type: ContextType::Documentation,
                 line_range: None,
+                provenance: Some("supply-chain analyzer".to_string()),
             }],
             findings: findings
                 .into_iter()

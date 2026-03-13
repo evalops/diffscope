@@ -1,0 +1,27 @@
+name: repo regression - cross file sql helper usage
+repo_path: graph_call_chain_repo
+diff: |
+  diff --git a/routes.py b/routes.py
+  index 1111111..2222222 100644
+  --- a/routes.py
+  +++ b/routes.py
+  @@ -2,4 +2,5 @@ from auth import lookup_user
+   
+   
+   def get_profile(request, db):
+  -    return {"ok": True}
+  +    user = lookup_user(request.args["name"], db)
+  +    return {"user": user}
+expect:
+  must_find:
+    - file: routes.py
+      contains_any:
+        - sql injection
+        - unsafe sql
+        - interpolates user-controlled
+      tags_any:
+        - sql-injection
+  must_not_find:
+    - contains: style
+  min_total: 1
+  max_total: 12

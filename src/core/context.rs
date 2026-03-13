@@ -13,6 +13,8 @@ pub struct LLMContextChunk {
     pub content: String,
     pub context_type: ContextType,
     pub line_range: Option<(usize, usize)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -74,6 +76,7 @@ impl ContextFetcher {
                         content: chunk_content,
                         context_type: ContextType::FileContent,
                         line_range: Some((expanded_start, expanded_end)),
+                        provenance: None,
                     });
                 }
             }
@@ -137,6 +140,7 @@ impl ContextFetcher {
                 content: snippet,
                 context_type: ContextType::Reference,
                 line_range: None,
+                provenance: None,
             });
         }
 
@@ -185,6 +189,7 @@ impl ContextFetcher {
                                 content: definition_content,
                                 context_type: ContextType::Definition,
                                 line_range: Some((start_line + 1, end_line)),
+                                provenance: None,
                             });
                         }
                     }
@@ -222,9 +227,30 @@ impl ContextFetcher {
                         content: snippet,
                         context_type: ContextType::Definition,
                         line_range: Some(location.line_range),
+                        provenance: location.provenance.clone(),
                     });
                 }
             }
+        }
+
+        for location in index.graph_related_locations(
+            file_path,
+            symbols,
+            graph_hops,
+            max_locations,
+            graph_max_files,
+        ) {
+            if &location.file_path == file_path {
+                continue;
+            }
+            let snippet = truncate_with_notice(location.snippet, MAX_CONTEXT_CHARS);
+            chunks.push(LLMContextChunk {
+                file_path: location.file_path,
+                content: snippet,
+                context_type: ContextType::Definition,
+                line_range: Some(location.line_range),
+                provenance: location.provenance,
+            });
         }
 
         for location in index.multi_hop_locations(
@@ -243,6 +269,7 @@ impl ContextFetcher {
                 content: snippet,
                 context_type: ContextType::Reference,
                 line_range: Some(location.line_range),
+                provenance: location.provenance,
             });
         }
 
@@ -372,5 +399,56 @@ mod tests {
         // Should expand to include the function signature (line 3)
         let chunk = &chunks[0];
         assert!(chunk.content.contains("pub fn process"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_related_definitions_with_index_uses_symbol_graph_neighbors() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+
+        std::fs::write(
+            src_dir.join("auth.rs"),
+            "pub fn validate_token(token: &str) -> bool {\n    token.len() > 10\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            src_dir.join("handler.rs"),
+            "use crate::auth::validate_token;\n\npub fn handle_request(token: &str) -> bool {\n    validate_token(token)\n}\n",
+        )
+        .unwrap();
+
+        let index = SymbolIndex::build(dir.path(), 20, 200_000, 10, |_| false).unwrap();
+        let fetcher = ContextFetcher::new(dir.path().to_path_buf());
+
+        let chunks = fetcher
+            .fetch_related_definitions_with_index(
+                &PathBuf::from("src/handler.rs"),
+                &["handle_request".to_string()],
+                &index,
+                10,
+                2,
+                5,
+            )
+            .await
+            .unwrap();
+
+        let graph_chunk = chunks
+            .iter()
+            .find(|chunk| chunk.file_path == std::path::Path::new("src/auth.rs"))
+            .expect("expected graph-related auth context");
+
+        assert_eq!(graph_chunk.context_type, ContextType::Definition);
+        assert!(graph_chunk.content.contains("validate_token"));
+        assert!(graph_chunk
+            .provenance
+            .as_deref()
+            .unwrap_or_default()
+            .contains("symbol graph"));
+        assert!(graph_chunk
+            .provenance
+            .as_deref()
+            .unwrap_or_default()
+            .contains("calls"));
     }
 }

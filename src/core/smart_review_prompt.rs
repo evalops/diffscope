@@ -116,8 +116,16 @@ TAGS: [comma-separated relevant tags]
             prompt.push_str("## Context Information\n\n");
             for chunk in context_chunks {
                 let (start_line, end_line) = chunk.line_range.unwrap_or((1, 1));
-                let description =
-                    format!("{} - {:?}", chunk.file_path.display(), chunk.context_type);
+                let description = format!(
+                    "{} - {:?}{}",
+                    chunk.file_path.display(),
+                    chunk.context_type,
+                    chunk
+                        .provenance
+                        .as_ref()
+                        .map(|value| format!(" | {}", value))
+                        .unwrap_or_default()
+                );
                 let block = format!(
                     "**{}** (lines {}-{}):\n```\n{}\n```\n\n",
                     description,

@@ -10,11 +10,14 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+use crate::core::symbol_graph::{RankedSymbol, SymbolGraph};
+
 #[derive(Debug, Clone)]
 pub struct SymbolLocation {
     pub file_path: PathBuf,
     pub line_range: (usize, usize),
     pub snippet: String,
+    pub provenance: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -23,6 +26,7 @@ pub struct SymbolIndex {
     dependency_graph: HashMap<PathBuf, HashSet<PathBuf>>,
     reverse_dependency_graph: HashMap<PathBuf, HashSet<PathBuf>>,
     file_summaries: HashMap<PathBuf, FileSummary>,
+    symbol_graph: Option<SymbolGraph>,
     files_indexed: usize,
 }
 
@@ -159,6 +163,8 @@ impl SymbolIndex {
             return Ok(index);
         }
 
+        let mut graph_sources = HashMap::new();
+
         let walker = WalkBuilder::new(repo_root)
             .hidden(true)
             .ignore(true)
@@ -215,6 +221,7 @@ impl SymbolIndex {
             let lines: Vec<&str> = content.lines().collect();
             index.register_file_summary(&relative, &lines);
             index.register_dependency_hints(repo_root, &relative, &lines);
+            graph_sources.insert(relative.clone(), content.to_string());
             let file_added =
                 add_symbols_from_lines(&mut index, &relative, &lines, patterns, max_locations);
 
@@ -223,6 +230,8 @@ impl SymbolIndex {
                 index.files_indexed += 1;
             }
         }
+
+        index.build_graph_from_sources(&graph_sources);
 
         Ok(index)
     }
@@ -243,6 +252,8 @@ impl SymbolIndex {
         if max_files == 0 {
             return Ok(index);
         }
+
+        let mut graph_sources = HashMap::new();
 
         let walker = WalkBuilder::new(repo_root)
             .hidden(true)
@@ -299,6 +310,7 @@ impl SymbolIndex {
                                 Ok(content) => content,
                                 Err(_) => continue,
                             };
+                            graph_sources.insert(relative.clone(), content.clone());
                             if let Ok(file_added) = client.index_file(
                                 &mut index,
                                 relative,
@@ -357,6 +369,7 @@ impl SymbolIndex {
             let lines: Vec<&str> = content.lines().collect();
             index.register_file_summary(&relative, &lines);
             index.register_dependency_hints(repo_root, &relative, &lines);
+            graph_sources.insert(relative.clone(), content.to_string());
             let file_added =
                 add_symbols_from_lines(&mut index, &relative, &lines, patterns, max_locations);
             if file_added {
@@ -364,11 +377,90 @@ impl SymbolIndex {
             }
         }
 
+        index.build_graph_from_sources(&graph_sources);
+
         Ok(index)
     }
 
     pub fn lookup(&self, symbol: &str) -> Option<&Vec<SymbolLocation>> {
         self.symbols.get(symbol)
+    }
+
+    pub fn graph_related_locations(
+        &self,
+        current_file: &Path,
+        symbols: &[String],
+        max_hops: usize,
+        max_locations: usize,
+        max_files: usize,
+    ) -> Vec<SymbolLocation> {
+        let Some(graph) = &self.symbol_graph else {
+            return Vec::new();
+        };
+        if symbols.is_empty() || max_locations == 0 || max_files == 0 || max_hops == 0 {
+            return Vec::new();
+        }
+
+        let ranked = graph.related_symbols(
+            symbols,
+            max_hops,
+            max_locations.saturating_mul(max_files).max(max_locations),
+        );
+
+        let mut results = Vec::new();
+        let mut seen_locations = HashSet::new();
+        let mut seen_files = HashSet::new();
+
+        for ranked_symbol in ranked {
+            if ranked_symbol.file_path == current_file {
+                continue;
+            }
+            if seen_files.len() >= max_files && !seen_files.contains(&ranked_symbol.file_path) {
+                continue;
+            }
+
+            let Some(mut location) = self.lookup_ranked_symbol_location(&ranked_symbol) else {
+                continue;
+            };
+
+            let location_key = format!(
+                "{}:{}:{}",
+                location.file_path.display(),
+                location.line_range.0,
+                location.line_range.1
+            );
+            if !seen_locations.insert(location_key) {
+                continue;
+            }
+
+            location.provenance = Some(format!(
+                "symbol graph path: {} (hops={}, relevance={:.2})",
+                ranked_symbol
+                    .relation_path
+                    .iter()
+                    .map(|relation| relation.as_label())
+                    .collect::<Vec<_>>()
+                    .join(" -> "),
+                ranked_symbol.hops,
+                ranked_symbol.relevance_score
+            ));
+            location.snippet = format!(
+                "[Graph: {}, hops={}, relevance={:.2}]\n{}",
+                ranked_symbol
+                    .relation_path
+                    .iter()
+                    .map(|relation| relation.as_label())
+                    .collect::<Vec<_>>()
+                    .join(" -> "),
+                ranked_symbol.hops,
+                ranked_symbol.relevance_score,
+                location.snippet
+            );
+            seen_files.insert(location.file_path.clone());
+            results.push(location);
+        }
+
+        results
     }
 
     pub fn multi_hop_locations(
@@ -441,6 +533,7 @@ impl SymbolIndex {
                     file_path: file,
                     line_range: (1, summary.line_count.max(1)),
                     snippet: format!("[Dependency graph context]\n{}", summary.snippet),
+                    provenance: Some("dependency graph neighborhood".to_string()),
                 });
             }
         }
@@ -510,6 +603,38 @@ impl SymbolIndex {
             neighbors.extend(reverse.iter().cloned());
         }
         neighbors
+    }
+
+    fn build_graph_from_sources(&mut self, sources: &HashMap<PathBuf, String>) {
+        if sources.is_empty() {
+            self.symbol_graph = None;
+            return;
+        }
+
+        let graph = SymbolGraph::build_from_source(sources);
+        if graph.node_count() == 0 {
+            self.symbol_graph = None;
+        } else {
+            self.symbol_graph = Some(graph);
+        }
+    }
+
+    fn lookup_ranked_symbol_location(&self, ranked: &RankedSymbol) -> Option<SymbolLocation> {
+        self.lookup(&ranked.name).and_then(|locations| {
+            locations
+                .iter()
+                .filter(|location| location.file_path == ranked.file_path)
+                .min_by_key(|location| {
+                    let start = location.line_range.0;
+                    let end = location.line_range.1;
+                    if ranked.line < start {
+                        start - ranked.line
+                    } else {
+                        ranked.line.saturating_sub(end)
+                    }
+                })
+                .cloned()
+        })
     }
 }
 
@@ -920,6 +1045,7 @@ fn add_symbols_from_lines(
                         file_path: relative.to_path_buf(),
                         line_range: (start + 1, end + 1),
                         snippet,
+                        provenance: None,
                     });
                     file_added = true;
                 }
@@ -1043,6 +1169,7 @@ impl LspClient {
                 file_path: relative.to_path_buf(),
                 line_range: (start, end),
                 snippet,
+                provenance: None,
             });
             file_added = true;
         }

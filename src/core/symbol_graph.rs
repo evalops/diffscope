@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::core::symbol_index::SymbolLocation;
@@ -23,6 +23,18 @@ pub enum SymbolRelation {
 }
 
 impl SymbolRelation {
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            SymbolRelation::Calls => "calls",
+            SymbolRelation::CalledBy => "called-by",
+            SymbolRelation::Inherits => "inherits",
+            SymbolRelation::Implements => "implements",
+            SymbolRelation::Uses => "uses",
+            SymbolRelation::UsedBy => "used-by",
+            SymbolRelation::ColocatedWith => "colocated-with",
+        }
+    }
+
     /// Returns the inverse relation for bidirectional graph edges.
     pub fn inverse(&self) -> Self {
         match self {
@@ -209,16 +221,45 @@ impl SymbolGraph {
         max_hops: usize,
         max_results: usize,
     ) -> Vec<RankedSymbol> {
-        let mut visited: HashSet<String> = HashSet::new();
-        let mut queue: VecDeque<(String, usize, f32)> = VecDeque::new();
-        let mut results: Vec<RankedSymbol> = Vec::new();
-
-        for seed in seed_symbols {
-            visited.insert(seed.clone());
-            queue.push_back((seed.clone(), 0, 0.0));
+        if seed_symbols.is_empty() || max_results == 0 || max_hops == 0 {
+            return Vec::new();
         }
 
-        while let Some((current, depth, accumulated_cost)) = queue.pop_front() {
+        #[derive(Debug, Clone)]
+        struct RankedState {
+            cost: f32,
+            file_path: PathBuf,
+            line: usize,
+            relation_path: Vec<SymbolRelation>,
+            hops: usize,
+        }
+
+        let seed_set: HashSet<String> = seed_symbols.iter().cloned().collect();
+        let mut best_states: HashMap<String, RankedState> = HashMap::new();
+        let mut frontier: Vec<(String, usize, f32, Vec<SymbolRelation>)> = Vec::new();
+
+        for seed in seed_symbols {
+            best_states.insert(
+                seed.clone(),
+                RankedState {
+                    cost: 0.0,
+                    file_path: PathBuf::new(),
+                    line: 0,
+                    relation_path: Vec::new(),
+                    hops: 0,
+                },
+            );
+            frontier.push((seed.clone(), 0, 0.0, Vec::new()));
+        }
+
+        while !frontier.is_empty() {
+            frontier.sort_by(|left, right| {
+                left.2
+                    .partial_cmp(&right.2)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| left.1.cmp(&right.1))
+            });
+            let (current, depth, accumulated_cost, relation_path) = frontier.remove(0);
             if depth >= max_hops {
                 continue;
             }
@@ -226,25 +267,52 @@ impl SymbolGraph {
             if let Some(nodes) = self.nodes.get(&current) {
                 for node in nodes {
                     for edge in &node.edges {
-                        if visited.insert(edge.target.clone()) {
-                            let cost = accumulated_cost
-                                + edge.relation.relevance_weight() * (depth as f32 + 1.0);
-                            results.push(RankedSymbol {
-                                name: edge.target.clone(),
-                                file_path: edge.target_file.clone(),
-                                line: edge.target_line,
-                                relevance_score: 1.0 / (1.0 + cost),
-                                relation_path: vec![edge.relation.clone()],
-                                hops: depth + 1,
-                            });
-                            if depth + 1 < max_hops {
-                                queue.push_back((edge.target.clone(), depth + 1, cost));
-                            }
+                        let next_hops = depth + 1;
+                        if next_hops > max_hops {
+                            continue;
+                        }
+
+                        let next_cost =
+                            accumulated_cost + edge.relation.relevance_weight() * next_hops as f32;
+                        let mut next_path = relation_path.clone();
+                        next_path.push(edge.relation.clone());
+
+                        let should_update = best_states.get(&edge.target).is_none_or(|existing| {
+                            next_cost + f32::EPSILON < existing.cost
+                                || ((next_cost - existing.cost).abs() <= f32::EPSILON
+                                    && next_hops < existing.hops)
+                        });
+
+                        if should_update {
+                            best_states.insert(
+                                edge.target.clone(),
+                                RankedState {
+                                    cost: next_cost,
+                                    file_path: edge.target_file.clone(),
+                                    line: edge.target_line,
+                                    relation_path: next_path.clone(),
+                                    hops: next_hops,
+                                },
+                            );
+                            frontier.push((edge.target.clone(), next_hops, next_cost, next_path));
                         }
                     }
                 }
             }
         }
+
+        let mut results: Vec<RankedSymbol> = best_states
+            .into_iter()
+            .filter(|(name, state)| !seed_set.contains(name) && !state.relation_path.is_empty())
+            .map(|(name, state)| RankedSymbol {
+                name,
+                file_path: state.file_path,
+                line: state.line,
+                relevance_score: 1.0 / (1.0 + state.cost),
+                relation_path: state.relation_path,
+                hops: state.hops,
+            })
+            .collect();
 
         results.sort_by(|a, b| {
             b.relevance_score
@@ -262,15 +330,18 @@ impl SymbolGraph {
             if let Some(nodes) = self.nodes.get(&rs.name) {
                 for node in nodes {
                     if node.file_path == rs.file_path {
+                        let relation_path = relation_path_summary(&rs.relation_path);
                         locations.push(SymbolLocation {
                             file_path: node.file_path.clone(),
                             line_range: node.line_range,
                             snippet: format!(
-                                "[Graph: {:?}, relevance={:.2}]\n{}",
-                                rs.relation_path.first().unwrap_or(&SymbolRelation::Uses),
-                                rs.relevance_score,
-                                node.name
+                                "[Graph: {}, hops={}, relevance={:.2}]\n{}",
+                                relation_path, rs.hops, rs.relevance_score, node.name
                             ),
+                            provenance: Some(format!(
+                                "symbol graph path: {} (hops={}, relevance={:.2})",
+                                relation_path, rs.hops, rs.relevance_score
+                            )),
                         });
                     }
                 }
@@ -305,6 +376,17 @@ pub struct RankedSymbol {
     pub relevance_score: f32,
     pub relation_path: Vec<SymbolRelation>,
     pub hops: usize,
+}
+
+fn relation_path_summary(path: &[SymbolRelation]) -> String {
+    if path.is_empty() {
+        return "seed".to_string();
+    }
+
+    path.iter()
+        .map(SymbolRelation::as_label)
+        .collect::<Vec<_>>()
+        .join(" -> ")
 }
 
 use once_cell::sync::Lazy;
@@ -633,6 +715,42 @@ impl Authenticator for AdminAuth {
             "Expected colocated symbols, got: {:?}",
             names
         );
+    }
+
+    #[test]
+    fn test_related_symbols_retains_multi_hop_relation_path() {
+        let mut graph = SymbolGraph::new();
+        for (name, file) in [
+            ("entrypoint", "src/entry.rs"),
+            ("validate_token", "src/auth.rs"),
+            ("Role", "src/models.rs"),
+        ] {
+            graph.add_node(SymbolNode {
+                name: name.to_string(),
+                file_path: PathBuf::from(file),
+                line_range: (1, 5),
+                kind: if name == "Role" {
+                    SymbolKind::Struct
+                } else {
+                    SymbolKind::Function
+                },
+                edges: Vec::new(),
+            });
+        }
+
+        graph.add_edge("entrypoint", "validate_token", SymbolRelation::Calls);
+        graph.add_edge("validate_token", "Role", SymbolRelation::Uses);
+
+        let related = graph.related_symbols(&["entrypoint".to_string()], 3, 10);
+        let role = related
+            .iter()
+            .find(|symbol| symbol.name == "Role")
+            .expect("expected multi-hop result for Role");
+
+        assert_eq!(role.hops, 2);
+        assert_eq!(role.relation_path.len(), 2);
+        assert_eq!(role.relation_path[0], SymbolRelation::Calls);
+        assert_eq!(role.relation_path[1], SymbolRelation::Uses);
     }
 
     #[test]

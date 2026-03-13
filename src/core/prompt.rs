@@ -441,12 +441,17 @@ impl PromptBuilder {
 
         for chunk in chunks {
             let block = format!(
-                "\n[{:?} - {}{}]\n{}\n",
+                "\n[{:?} - {}{}{}]\n{}\n",
                 chunk.context_type,
                 chunk.file_path.display(),
                 chunk
                     .line_range
                     .map(|(s, e)| format!(":{}-{}", s, e))
+                    .unwrap_or_default(),
+                chunk
+                    .provenance
+                    .as_ref()
+                    .map(|value| format!(" | {}", value))
                     .unwrap_or_default(),
                 chunk.content
             );

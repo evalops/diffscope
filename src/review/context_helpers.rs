@@ -149,6 +149,7 @@ pub async fn inject_custom_context(
                 context_type: core::ContextType::Documentation,
                 file_path: diff.file_path.clone(),
                 line_range: None,
+                provenance: Some("custom context notes".to_string()),
             });
         }
 
@@ -198,10 +199,12 @@ pub async fn inject_pattern_repository_context(
             context_type: core::ContextType::Documentation,
             file_path: diff.file_path.clone(),
             line_range: None,
+            provenance: Some(format!("pattern repository source: {}", repo.source)),
         });
 
         for chunk in &mut chunks {
             chunk.content = format!("[Pattern repository: {}]\n{}", repo.source, chunk.content);
+            chunk.provenance = Some(format!("pattern repository: {}", repo.source));
         }
         context_chunks.extend(chunks);
     }
@@ -223,10 +226,11 @@ pub fn rank_and_trim_context_chunks(
     let mut seen = HashSet::new();
     for chunk in chunks {
         let key = format!(
-            "{}|{:?}|{:?}|{}",
+            "{}|{:?}|{:?}|{:?}|{}",
             chunk.file_path.display(),
             chunk.context_type,
             chunk.line_range,
+            chunk.provenance,
             chunk.content
         );
         if seen.insert(key) {
@@ -283,6 +287,24 @@ pub fn rank_and_trim_context_chunks(
 
             if chunk.content.len() > 4000 {
                 score -= 10;
+            }
+
+            if let Some(provenance) = chunk.provenance.as_deref() {
+                let provenance_lower = provenance.to_ascii_lowercase();
+                if provenance_lower.contains("symbol graph path:") {
+                    score += 50;
+                    if provenance_lower.contains("hops=1") {
+                        score += 15;
+                    }
+                    if provenance_lower.contains("calls") || provenance_lower.contains("called-by")
+                    {
+                        score += 10;
+                    }
+                } else if provenance_lower.contains("semantic retrieval") {
+                    score += 25;
+                } else if provenance_lower.contains("pattern repository") {
+                    score += 10;
+                }
             }
 
             (score, chunk.content.len(), chunk)
@@ -380,6 +402,7 @@ mod tests {
             context_type: core::ContextType::Documentation,
             file_path: PathBuf::from("test.rs"),
             line_range: None,
+            provenance: None,
         };
         let chunks = vec![chunk.clone(), chunk];
         let result = rank_and_trim_context_chunks(&diff, chunks, 10, 100000);
@@ -403,6 +426,7 @@ mod tests {
                 context_type: core::ContextType::Documentation,
                 file_path: PathBuf::from("test.rs"),
                 line_range: None,
+                provenance: None,
             })
             .collect();
         let result = rank_and_trim_context_chunks(&diff, chunks, 2, 100000);
@@ -426,6 +450,7 @@ mod tests {
                 context_type: core::ContextType::Documentation,
                 file_path: PathBuf::from("test.rs"),
                 line_range: None,
+                provenance: None,
             })
             .collect();
         // Each chunk is ~30 chars, setting max to 60 should keep at most 2
@@ -450,12 +475,14 @@ mod tests {
                 context_type: core::ContextType::Documentation,
                 file_path: PathBuf::from("other.rs"),
                 line_range: None,
+                provenance: None,
             },
             core::LLMContextChunk {
                 content: "target file content".to_string(),
                 context_type: core::ContextType::Documentation,
                 file_path: PathBuf::from("target.rs"),
                 line_range: None,
+                provenance: None,
             },
         ];
         let result = rank_and_trim_context_chunks(&diff, chunks, 1, 100000);
@@ -480,17 +507,52 @@ mod tests {
                 context_type: core::ContextType::Reference,
                 file_path: PathBuf::from("other.rs"),
                 line_range: None,
+                provenance: None,
             },
             core::LLMContextChunk {
                 content: "Active review rules. Check these rules.".to_string(),
                 context_type: core::ContextType::Documentation,
                 file_path: PathBuf::from("test.rs"),
                 line_range: None,
+                provenance: None,
             },
         ];
         let result = rank_and_trim_context_chunks(&diff, chunks, 1, 100000);
         assert_eq!(result.len(), 1);
         assert!(result[0].content.starts_with("Active review rules."));
+    }
+
+    #[test]
+    fn rank_and_trim_prioritizes_graph_provenance() {
+        let diff = core::UnifiedDiff {
+            old_content: None,
+            new_content: None,
+            file_path: PathBuf::from("target.rs"),
+            is_new: false,
+            is_deleted: false,
+            is_binary: false,
+            hunks: vec![],
+        };
+        let chunks = vec![
+            core::LLMContextChunk {
+                content: "plain reference".to_string(),
+                context_type: core::ContextType::Reference,
+                file_path: PathBuf::from("auth.rs"),
+                line_range: Some((10, 20)),
+                provenance: None,
+            },
+            core::LLMContextChunk {
+                content: "graph reference".to_string(),
+                context_type: core::ContextType::Reference,
+                file_path: PathBuf::from("auth.rs"),
+                line_range: Some((10, 20)),
+                provenance: Some("symbol graph path: calls (hops=1, relevance=0.50)".to_string()),
+            },
+        ];
+
+        let result = rank_and_trim_context_chunks(&diff, chunks, 1, 100000);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].content, "graph reference");
     }
 
     // === URL validation tests ===
@@ -594,6 +656,7 @@ mod tests {
             context_type: core::ContextType::Reference,
             file_path: PathBuf::from("other.rs"),
             line_range: Some((9000, 9100)),
+            provenance: None,
         };
 
         let nearby_chunk = core::LLMContextChunk {
@@ -601,6 +664,7 @@ mod tests {
             context_type: core::ContextType::Reference,
             file_path: PathBuf::from("other.rs"),
             line_range: Some((8, 12)),
+            provenance: None,
         };
 
         // With the bug, both chunks would get +70 from overlapping

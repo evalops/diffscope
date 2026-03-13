@@ -292,6 +292,7 @@ pub fn inject_rule_context(
         context_type: core::ContextType::Documentation,
         file_path: diff.file_path.clone(),
         line_range: None,
+        provenance: Some("active review rules".to_string()),
     });
 }
 

@@ -336,6 +336,7 @@ async fn review_diff_content_raw_inner(
         ..Default::default()
     };
     let mut all_comments = Vec::new();
+    let mut verification_context: HashMap<PathBuf, Vec<core::LLMContextChunk>> = HashMap::new();
 
     let repo_path_str = repo_path.to_string_lossy().to_string();
     let context_fetcher = core::ContextFetcher::new(repo_path.to_path_buf());
@@ -498,6 +499,7 @@ async fn review_diff_content_raw_inner(
                     context_type: core::ContextType::Documentation,
                     file_path: diff.file_path.clone(),
                     line_range: None,
+                    provenance: Some("path-specific focus areas".to_string()),
                 };
                 context_chunks.push(focus_chunk);
             }
@@ -526,6 +528,7 @@ async fn review_diff_content_raw_inner(
             config.context_max_chunks,
             config.context_budget_chars,
         );
+        verification_context.insert(diff.file_path.clone(), context_chunks.clone());
 
         // Determine which specialized passes to run, if any.
         let specialized_passes: Vec<core::SpecializedPassKind> = if config.multi_pass_specialized {
@@ -985,6 +988,7 @@ async fn review_diff_content_raw_inner(
             llm_comments,
             &diffs,
             &source_files,
+            &verification_context,
             verification_adapter.as_ref(),
             config.verification_min_score,
         )
@@ -1765,6 +1769,7 @@ fn gather_related_file_context(
                 content: format!("[Caller/dependent file]\n{}", truncated),
                 context_type: core::ContextType::Reference,
                 line_range: None,
+                provenance: Some("reverse dependency summary".to_string()),
             });
         }
     }
@@ -1782,6 +1787,7 @@ fn gather_related_file_context(
                     content: format!("[Test file]\n{}", snippet),
                     context_type: core::ContextType::Reference,
                     line_range: None,
+                    provenance: Some("related test file".to_string()),
                 });
             }
         }
