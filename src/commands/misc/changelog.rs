@@ -1,8 +1,14 @@
+#[path = "changelog/generate.rs"]
+mod generate;
+#[path = "changelog/output.rs"]
+mod output;
+
 use anyhow::Result;
 use std::path::PathBuf;
 use tracing::info;
 
-use crate::core;
+use generate::generate_changelog_output;
+use output::emit_changelog_output;
 
 pub async fn changelog_command(
     from: Option<String>,
@@ -11,24 +17,6 @@ pub async fn changelog_command(
     output_path: Option<PathBuf>,
 ) -> Result<()> {
     info!("Generating changelog/release notes");
-
-    let generator = core::ChangelogGenerator::new(".")?;
-
-    let output = if let Some(version) = release {
-        info!("Generating release notes for version {}", version);
-        generator.generate_release_notes(&version, from.as_deref())?
-    } else {
-        let to_ref = to.as_deref().unwrap_or("HEAD");
-        info!("Generating changelog from {:?} to {}", from, to_ref);
-        generator.generate_changelog(from.as_deref(), to_ref)?
-    };
-
-    if let Some(path) = output_path {
-        tokio::fs::write(path, output).await?;
-        info!("Changelog written to file");
-    } else {
-        println!("{}", output);
-    }
-
-    Ok(())
+    let output = generate_changelog_output(from.as_deref(), to.as_deref(), release.as_deref())?;
+    emit_changelog_output(output_path.as_deref(), &output).await
 }
