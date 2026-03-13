@@ -1,4 +1,12 @@
+#[path = "dedup/matching.rs"]
+mod matching;
+#[path = "dedup/merge.rs"]
+mod merge;
+
 use crate::core;
+
+use matching::find_dominated_comment_index;
+use merge::merge_specialized_comment;
 
 pub(super) fn deduplicate_specialized_comments(
     mut comments: Vec<core::Comment>,
@@ -15,22 +23,8 @@ pub(super) fn deduplicate_specialized_comments(
 
     let mut deduped: Vec<core::Comment> = Vec::with_capacity(comments.len());
     for comment in comments {
-        let dominated = deduped.iter_mut().find(|existing| {
-            existing.file_path == comment.file_path
-                && existing.line_number == comment.line_number
-                && core::multi_pass::content_similarity(&existing.content, &comment.content) > 0.6
-        });
-        if let Some(existing) = dominated {
-            if comment.confidence > existing.confidence {
-                existing.content = comment.content;
-                existing.confidence = comment.confidence;
-                existing.severity = comment.severity;
-            }
-            for tag in &comment.tags {
-                if !existing.tags.contains(tag) {
-                    existing.tags.push(tag.clone());
-                }
-            }
+        if let Some(index) = find_dominated_comment_index(&deduped, &comment) {
+            merge_specialized_comment(&mut deduped[index], comment);
         } else {
             deduped.push(comment);
         }

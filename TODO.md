@@ -105,7 +105,7 @@
 - [x] `src/review/pipeline/services.rs`: separate service wiring from optional feature initialization.
 - [x] `src/review/pipeline/file_context/sources.rs`: split repo sources, symbol sources, and supplemental context sources.
 - [x] `src/review/pipeline/comments.rs`: separate comment assembly, filtering, and metadata stamping.
-- [ ] `src/review/pipeline/postprocess/dedup.rs`: split duplicate detection, scoring, and merge/rewrite behavior.
+- [x] `src/review/pipeline/postprocess/dedup.rs`: split duplicate detection, scoring, and merge/rewrite behavior.
 - [ ] `src/review/pipeline/postprocess/feedback.rs`: separate store lookups from suppression/annotation decisions.
 - [ ] `src/review/pipeline/execution/dispatcher.rs`: carve request scheduling, concurrency control, and result collection.
 - [ ] `src/review/pipeline.rs`: keep trimming top-level orchestration as helpers mature.
