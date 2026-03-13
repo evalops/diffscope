@@ -1,11 +1,15 @@
 use anyhow::Result;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::config;
 use crate::core;
-use crate::core::eval_benchmarks::CommunityFixturePack;
+use crate::core::eval_benchmarks::{
+    evaluate_against_thresholds, AggregateMetrics as BenchmarkAggregateMetrics, BenchmarkResult,
+    BenchmarkThresholds, CommunityFixturePack, Difficulty, FixtureResult as BenchmarkFixtureResult,
+};
 use crate::review::{normalize_rule_id, review_diff_content_raw};
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -20,6 +24,15 @@ struct EvalFixture {
     repo_path: Option<PathBuf>,
     #[serde(default)]
     expect: EvalExpectations,
+}
+
+#[derive(Debug, Clone)]
+struct LoadedEvalFixture {
+    fixture_path: PathBuf,
+    fixture: EvalFixture,
+    suite_name: Option<String>,
+    suite_thresholds: Option<BenchmarkThresholds>,
+    difficulty: Option<Difficulty>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -43,9 +56,21 @@ struct EvalPattern {
     #[serde(default)]
     contains: Option<String>,
     #[serde(default)]
+    contains_any: Vec<String>,
+    #[serde(default)]
+    matches_regex: Option<String>,
+    #[serde(default)]
     severity: Option<String>,
     #[serde(default)]
     category: Option<String>,
+    #[serde(default)]
+    tags_any: Vec<String>,
+    #[serde(default)]
+    confidence_at_least: Option<f32>,
+    #[serde(default)]
+    confidence_at_most: Option<f32>,
+    #[serde(default)]
+    fix_effort: Option<String>,
     #[serde(default)]
     rule_id: Option<String>,
     #[serde(default)]
@@ -94,6 +119,8 @@ struct EvalRuleScoreSummary {
 struct EvalFixtureResult {
     #[serde(default)]
     fixture: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    suite: Option<String>,
     #[serde(default)]
     passed: bool,
     #[serde(default)]
@@ -102,12 +129,34 @@ struct EvalFixtureResult {
     required_matches: usize,
     #[serde(default)]
     required_total: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    benchmark_metrics: Option<BenchmarkFixtureResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    suite_thresholds: Option<BenchmarkThresholds>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    difficulty: Option<Difficulty>,
     #[serde(default)]
     rule_metrics: Vec<EvalRuleMetrics>,
     #[serde(default)]
     rule_summary: Option<EvalRuleScoreSummary>,
     #[serde(default)]
     failures: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EvalSuiteResult {
+    #[serde(default)]
+    suite: String,
+    #[serde(default)]
+    fixture_count: usize,
+    #[serde(default)]
+    aggregate: BenchmarkAggregateMetrics,
+    #[serde(default)]
+    thresholds_enforced: bool,
+    #[serde(default)]
+    threshold_pass: bool,
+    #[serde(default)]
+    threshold_failures: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +171,8 @@ struct EvalReport {
     rule_metrics: Vec<EvalRuleMetrics>,
     #[serde(default)]
     rule_summary: Option<EvalRuleScoreSummary>,
+    #[serde(default)]
+    suite_results: Vec<EvalSuiteResult>,
     #[serde(default)]
     threshold_failures: Vec<String>,
     #[serde(default)]
@@ -168,8 +219,8 @@ pub async fn eval_command(
     }
 
     let mut results = Vec::new();
-    for (fixture_path, fixture) in fixtures {
-        let result = run_eval_fixture(&config, &fixture_path, fixture).await?;
+    for fixture in fixtures {
+        let result = run_eval_fixture(&config, fixture).await?;
         results.push(result);
     }
 
@@ -178,6 +229,7 @@ pub async fn eval_command(
     let fixtures_failed = fixtures_total.saturating_sub(fixtures_passed);
     let rule_metrics = aggregate_rule_metrics(&results);
     let rule_summary = summarize_rule_metrics(&rule_metrics);
+    let suite_results = build_suite_results(&results);
     let baseline = match options.baseline_report.as_deref() {
         Some(path) => Some(load_eval_report(path)?),
         None => None,
@@ -199,11 +251,13 @@ pub async fn eval_command(
         fixtures_failed,
         rule_metrics,
         rule_summary,
+        suite_results,
         threshold_failures: Vec::new(),
         results,
     };
-    let threshold_failures =
+    let mut threshold_failures =
         evaluate_eval_thresholds(&report, baseline.as_ref(), &threshold_options);
+    threshold_failures.extend(collect_suite_threshold_failures(&report.suite_results));
     report.threshold_failures = threshold_failures.clone();
 
     println!(
@@ -265,6 +319,24 @@ pub async fn eval_command(
                 metric.precision * 100.0,
                 metric.recall * 100.0
             );
+        }
+    }
+    for suite in &report.suite_results {
+        println!(
+            "Suite {}: fixtures={} micro F1={:.0}% weighted={:.0}%",
+            suite.suite,
+            suite.fixture_count,
+            suite.aggregate.micro_f1 * 100.0,
+            suite.aggregate.weighted_score * 100.0
+        );
+        if suite.thresholds_enforced {
+            if suite.threshold_failures.is_empty() {
+                println!("  suite-thresholds: passed");
+            } else {
+                for failure in &suite.threshold_failures {
+                    println!("  suite-threshold-failure: {}", failure);
+                }
+            }
         }
     }
     for failure in &threshold_failures {
@@ -333,28 +405,40 @@ fn collect_fixture_paths(fixtures_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-fn collect_eval_fixtures(fixtures_dir: &Path) -> Result<Vec<(PathBuf, EvalFixture)>> {
+fn collect_eval_fixtures(fixtures_dir: &Path) -> Result<Vec<LoadedEvalFixture>> {
     let mut fixtures = Vec::new();
     for path in collect_fixture_paths(fixtures_dir)? {
-        for fixture in load_eval_fixtures_from_path(&path)? {
-            fixtures.push((path.clone(), fixture));
-        }
+        fixtures.extend(load_eval_fixtures_from_path(&path)?);
     }
+    fixtures.sort_by(|left, right| {
+        left.fixture_path
+            .cmp(&right.fixture_path)
+            .then_with(|| left.fixture.name.cmp(&right.fixture.name))
+    });
     Ok(fixtures)
 }
 
-fn load_eval_fixtures_from_path(path: &Path) -> Result<Vec<EvalFixture>> {
+fn load_eval_fixtures_from_path(path: &Path) -> Result<Vec<LoadedEvalFixture>> {
     let content = std::fs::read_to_string(path)?;
 
     if let Ok(pack) = load_fixture_file::<CommunityFixturePack>(path, &content) {
-        return Ok(expand_community_fixture_pack(pack));
+        return expand_community_fixture_pack(path, pack);
     }
 
-    Ok(vec![load_eval_fixture_from_content(path, &content)?])
+    let fixture = load_eval_fixture_from_content(path, &content)?;
+    Ok(vec![LoadedEvalFixture {
+        fixture_path: path.to_path_buf(),
+        fixture,
+        suite_name: None,
+        suite_thresholds: None,
+        difficulty: None,
+    }])
 }
 
 fn load_eval_fixture_from_content(path: &Path, content: &str) -> Result<EvalFixture> {
-    load_fixture_file::<EvalFixture>(path, content)
+    let fixture = load_fixture_file::<EvalFixture>(path, content)?;
+    validate_eval_fixture(&fixture)?;
+    Ok(fixture)
 }
 
 fn load_fixture_file<T>(path: &Path, content: &str) -> Result<T>
@@ -374,43 +458,83 @@ where
     }
 }
 
-fn expand_community_fixture_pack(pack: CommunityFixturePack) -> Vec<EvalFixture> {
+fn expand_community_fixture_pack(
+    path: &Path,
+    pack: CommunityFixturePack,
+) -> Result<Vec<LoadedEvalFixture>> {
     let pack_name = pack.name;
+    let thresholds = pack.thresholds;
     pack.fixtures
         .into_iter()
-        .map(|fixture| EvalFixture {
-            name: Some(format!("{}/{}", pack_name, fixture.name)),
-            diff: Some(fixture.diff_content),
-            diff_file: None,
-            repo_path: None,
-            expect: EvalExpectations {
-                must_find: fixture
-                    .expected_findings
-                    .into_iter()
-                    .map(|finding| EvalPattern {
-                        file: finding.file_pattern,
-                        line: finding.line_hint,
-                        contains: finding.contains,
-                        severity: finding.severity,
-                        category: finding.category,
-                        rule_id: finding.rule_id.clone(),
-                        require_rule_id: finding.rule_id.is_some(),
-                    })
-                    .collect(),
-                must_not_find: fixture
-                    .negative_findings
-                    .into_iter()
-                    .map(|finding| EvalPattern {
-                        file: finding.file_pattern,
-                        contains: finding.contains,
-                        ..Default::default()
-                    })
-                    .collect(),
-                min_total: None,
-                max_total: None,
-            },
+        .map(|fixture| {
+            let difficulty = fixture.difficulty.clone();
+            let eval_fixture = EvalFixture {
+                name: Some(format!("{}/{}", pack_name, fixture.name)),
+                diff: Some(fixture.diff_content),
+                diff_file: None,
+                repo_path: None,
+                expect: EvalExpectations {
+                    must_find: fixture
+                        .expected_findings
+                        .into_iter()
+                        .map(|finding| EvalPattern {
+                            file: finding.file_pattern,
+                            line: finding.line_hint,
+                            contains: finding.contains,
+                            severity: finding.severity,
+                            category: finding.category,
+                            rule_id: finding.rule_id.clone(),
+                            require_rule_id: finding.rule_id.is_some(),
+                            ..Default::default()
+                        })
+                        .collect(),
+                    must_not_find: fixture
+                        .negative_findings
+                        .into_iter()
+                        .map(|finding| EvalPattern {
+                            file: finding.file_pattern,
+                            contains: finding.contains,
+                            ..Default::default()
+                        })
+                        .collect(),
+                    min_total: None,
+                    max_total: None,
+                },
+            };
+            validate_eval_fixture(&eval_fixture)?;
+
+            Ok(LoadedEvalFixture {
+                fixture_path: path.to_path_buf(),
+                fixture: eval_fixture,
+                suite_name: Some(pack_name.clone()),
+                suite_thresholds: thresholds.clone(),
+                difficulty: Some(difficulty),
+            })
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()
+}
+
+fn validate_eval_fixture(fixture: &EvalFixture) -> Result<()> {
+    for pattern in fixture
+        .expect
+        .must_find
+        .iter()
+        .chain(fixture.expect.must_not_find.iter())
+    {
+        if let Some(pattern_text) = pattern.matches_regex.as_deref().map(str::trim) {
+            if !pattern_text.is_empty() {
+                Regex::new(pattern_text).map_err(|error| {
+                    anyhow::anyhow!(
+                        "Invalid regex '{}' in fixture '{}': {}",
+                        pattern_text,
+                        fixture.name.as_deref().unwrap_or("<unnamed>"),
+                        error
+                    )
+                })?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn load_eval_report(path: &Path) -> Result<EvalReport> {
@@ -547,11 +671,93 @@ fn build_rule_f1_map(metrics: &[EvalRuleMetrics]) -> HashMap<String, f32> {
     by_rule
 }
 
+fn build_suite_results(results: &[EvalFixtureResult]) -> Vec<EvalSuiteResult> {
+    let mut grouped: HashMap<String, Vec<&EvalFixtureResult>> = HashMap::new();
+    for result in results {
+        if let (Some(suite), Some(_)) = (&result.suite, &result.benchmark_metrics) {
+            grouped.entry(suite.clone()).or_default().push(result);
+        }
+    }
+
+    let mut suites = Vec::new();
+    for (suite_name, suite_results) in grouped {
+        let mut fixture_results = Vec::new();
+        let mut weights = Vec::new();
+        let mut thresholds = None;
+
+        for result in suite_results {
+            if let Some(metrics) = result.benchmark_metrics.as_ref() {
+                fixture_results.push(metrics);
+                weights.push(
+                    result
+                        .difficulty
+                        .as_ref()
+                        .map(Difficulty::weight)
+                        .unwrap_or(1.0),
+                );
+                if thresholds.is_none() {
+                    thresholds = result.suite_thresholds.clone();
+                }
+            }
+        }
+
+        let aggregate = BenchmarkAggregateMetrics::compute(&fixture_results, Some(&weights));
+        let (thresholds_enforced, threshold_pass, threshold_failures) =
+            if let Some(thresholds) = thresholds.as_ref() {
+                let benchmark_result = BenchmarkResult {
+                    suite_name: suite_name.clone(),
+                    fixture_results: fixture_results
+                        .iter()
+                        .map(|result| (*result).clone())
+                        .collect(),
+                    aggregate: aggregate.clone(),
+                    by_category: HashMap::new(),
+                    by_difficulty: HashMap::new(),
+                    threshold_pass: true,
+                    threshold_failures: Vec::new(),
+                    timestamp: String::new(),
+                };
+                let (passed, failures) = evaluate_against_thresholds(&benchmark_result, thresholds);
+                (true, passed, failures)
+            } else {
+                (false, true, Vec::new())
+            };
+
+        suites.push(EvalSuiteResult {
+            suite: suite_name,
+            fixture_count: fixture_results.len(),
+            aggregate,
+            thresholds_enforced,
+            threshold_pass,
+            threshold_failures,
+        });
+    }
+
+    suites.sort_by(|left, right| left.suite.cmp(&right.suite));
+    suites
+}
+
+fn collect_suite_threshold_failures(suites: &[EvalSuiteResult]) -> Vec<String> {
+    let mut failures = Vec::new();
+    for suite in suites {
+        for failure in &suite.threshold_failures {
+            failures.push(format!("suite '{}' {}", suite.suite, failure));
+        }
+    }
+    failures
+}
+
 async fn run_eval_fixture(
     config: &config::Config,
-    fixture_path: &Path,
-    fixture: EvalFixture,
+    loaded_fixture: LoadedEvalFixture,
 ) -> Result<EvalFixtureResult> {
+    let LoadedEvalFixture {
+        fixture_path,
+        fixture,
+        suite_name,
+        suite_thresholds,
+        difficulty,
+    } = loaded_fixture;
     let fixture_name = fixture.name.unwrap_or_else(|| {
         fixture_path
             .file_name()
@@ -598,6 +804,7 @@ async fn run_eval_fixture(
     let mut required_matches = 0usize;
     let required_total = fixture.expect.must_find.len();
     let mut used_comment_indices = HashSet::new();
+    let mut unexpected_comment_indices = HashSet::new();
     let mut matched_pairs = Vec::new();
 
     for (expected_idx, expected) in fixture.expect.must_find.iter().enumerate() {
@@ -619,7 +826,12 @@ async fn run_eval_fixture(
     }
 
     for unexpected in &fixture.expect.must_not_find {
-        if let Some(comment) = comments.iter().find(|comment| unexpected.matches(comment)) {
+        if let Some((comment_idx, comment)) = comments
+            .iter()
+            .enumerate()
+            .find(|(_, comment)| unexpected.matches(comment))
+        {
+            unexpected_comment_indices.insert(comment_idx);
             failures.push(format!(
                 "Unexpected finding matched {}:{} '{}'",
                 comment.file_path.display(),
@@ -649,12 +861,33 @@ async fn run_eval_fixture(
         }
     }
 
+    let benchmark_metrics = suite_name.as_ref().map(|_| {
+        let accounted_for = used_comment_indices
+            .union(&unexpected_comment_indices)
+            .count();
+        let extra_findings = total_comments.saturating_sub(accounted_for);
+        let mut result = BenchmarkFixtureResult::compute(
+            &fixture_name,
+            fixture.expect.must_find.len(),
+            fixture.expect.must_not_find.len(),
+            required_matches,
+            unexpected_comment_indices.len(),
+            extra_findings,
+        );
+        result.details = failures.clone();
+        result
+    });
+
     Ok(EvalFixtureResult {
         fixture: fixture_name,
+        suite: suite_name,
         passed: failures.is_empty(),
         total_comments,
         required_matches,
         required_total,
+        benchmark_metrics,
+        suite_thresholds,
+        difficulty,
         rule_metrics,
         rule_summary,
         failures,
@@ -821,6 +1054,8 @@ impl EvalPattern {
             return false;
         }
 
+        let content_lower = comment.content.to_ascii_lowercase();
+
         if let Some(file) = &self.file {
             let file = file.trim();
             if !file.is_empty() {
@@ -839,7 +1074,49 @@ impl EvalPattern {
 
         if let Some(contains) = &self.contains {
             let needle = contains.trim().to_ascii_lowercase();
-            if !needle.is_empty() && !comment.content.to_ascii_lowercase().contains(&needle) {
+            if !needle.is_empty() && !content_lower.contains(&needle) {
+                return false;
+            }
+        }
+
+        let contains_any: Vec<String> = self
+            .contains_any
+            .iter()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .collect();
+        if !contains_any.is_empty()
+            && !contains_any
+                .iter()
+                .any(|needle| content_lower.contains(needle))
+        {
+            return false;
+        }
+
+        let tags_any: Vec<&str> = self
+            .tags_any
+            .iter()
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect();
+        if !tags_any.is_empty()
+            && !tags_any.iter().any(|expected| {
+                comment
+                    .tags
+                    .iter()
+                    .any(|tag| tag.eq_ignore_ascii_case(expected))
+            })
+        {
+            return false;
+        }
+
+        if let Some(pattern) = self.matches_regex.as_deref().map(str::trim) {
+            if !pattern.is_empty()
+                && !Regex::new(pattern)
+                    .map(|regex| regex.is_match(&comment.content))
+                    .unwrap_or(false)
+            {
                 return false;
             }
         }
@@ -859,6 +1136,27 @@ impl EvalPattern {
                 .category
                 .to_string()
                 .eq_ignore_ascii_case(category.trim())
+            {
+                return false;
+            }
+        }
+
+        if let Some(min_confidence) = self.confidence_at_least {
+            if comment.confidence < min_confidence {
+                return false;
+            }
+        }
+
+        if let Some(max_confidence) = self.confidence_at_most {
+            if comment.confidence > max_confidence {
+                return false;
+            }
+        }
+
+        if let Some(fix_effort) = &self.fix_effort {
+            let expected = fix_effort.trim();
+            if !expected.is_empty()
+                && !format!("{:?}", comment.fix_effort).eq_ignore_ascii_case(expected)
             {
                 return false;
             }
@@ -898,6 +1196,21 @@ impl EvalPattern {
                 parts.push(format!("contains='{}'", contains));
             }
         }
+        let contains_any: Vec<&str> = self
+            .contains_any
+            .iter()
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect();
+        if !contains_any.is_empty() {
+            parts.push(format!("contains_any={}", contains_any.join("|")));
+        }
+        if let Some(pattern) = self.matches_regex.as_deref().map(str::trim) {
+            if !pattern.is_empty() {
+                parts.push(format!("matches_regex='{}'", pattern));
+            }
+        }
         if let Some(severity) = &self.severity {
             let severity = severity.trim();
             if !severity.is_empty() {
@@ -908,6 +1221,28 @@ impl EvalPattern {
             let category = category.trim();
             if !category.is_empty() {
                 parts.push(format!("category={}", category));
+            }
+        }
+        let tags_any: Vec<&str> = self
+            .tags_any
+            .iter()
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect();
+        if !tags_any.is_empty() {
+            parts.push(format!("tags_any={}", tags_any.join("|")));
+        }
+        if let Some(min_confidence) = self.confidence_at_least {
+            parts.push(format!("confidence>={:.2}", min_confidence));
+        }
+        if let Some(max_confidence) = self.confidence_at_most {
+            parts.push(format!("confidence<={:.2}", max_confidence));
+        }
+        if let Some(fix_effort) = &self.fix_effort {
+            let fix_effort = fix_effort.trim();
+            if !fix_effort.is_empty() {
+                parts.push(format!("fix_effort={}", fix_effort));
             }
         }
         if let Some(rule_id) = &self.rule_id {
@@ -938,6 +1273,16 @@ impl EvalPattern {
                 .unwrap_or("")
                 .is_empty()
             && self
+                .contains_any
+                .iter()
+                .all(|value| value.trim().is_empty())
+            && self
+                .matches_regex
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            && self
                 .severity
                 .as_deref()
                 .map(str::trim)
@@ -945,6 +1290,15 @@ impl EvalPattern {
                 .is_empty()
             && self
                 .category
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+            && self.tags_any.iter().all(|value| value.trim().is_empty())
+            && self.confidence_at_least.is_none()
+            && self.confidence_at_most.is_none()
+            && self
+                .fix_effort
                 .as_deref()
                 .map(str::trim)
                 .unwrap_or("")
@@ -979,8 +1333,10 @@ fn summarize_for_eval(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::comment::{Category, FixEffort, Severity};
     use crate::core::eval_benchmarks::{
-        BenchmarkFixture, CommunityFixturePack, Difficulty, ExpectedFinding, NegativeFinding,
+        BenchmarkFixture, BenchmarkThresholds, CommunityFixturePack, Difficulty, ExpectedFinding,
+        FixtureResult, NegativeFinding,
     };
     use tempfile::tempdir;
 
@@ -1030,6 +1386,14 @@ mod tests {
             description: "security regressions".to_string(),
             languages: vec!["python".to_string()],
             categories: vec!["security".to_string()],
+            thresholds: Some(BenchmarkThresholds {
+                min_precision: 0.8,
+                min_recall: 0.7,
+                min_f1: 0.75,
+                max_false_positive_rate: 0.1,
+                min_weighted_score: 0.77,
+            }),
+            metadata: HashMap::new(),
             fixtures: vec![BenchmarkFixture {
                 name: "sql-injection".to_string(),
                 category: "security".to_string(),
@@ -1060,17 +1424,26 @@ mod tests {
 
         assert_eq!(fixtures.len(), 1);
         let fixture = &fixtures[0];
-        assert_eq!(fixture.name.as_deref(), Some("owasp-top10/sql-injection"));
         assert_eq!(
-            fixture.diff.as_deref(),
+            fixture.fixture.name.as_deref(),
+            Some("owasp-top10/sql-injection")
+        );
+        assert_eq!(fixture.suite_name.as_deref(), Some("owasp-top10"));
+        assert_eq!(
+            fixture.fixture.diff.as_deref(),
             Some("diff --git a/app.py b/app.py")
         );
-        assert_eq!(fixture.expect.must_find.len(), 1);
-        assert_eq!(fixture.expect.must_not_find.len(), 1);
-        assert!(fixture.expect.must_find[0].require_rule_id);
+        assert_eq!(fixture.fixture.expect.must_find.len(), 1);
+        assert_eq!(fixture.fixture.expect.must_not_find.len(), 1);
+        assert!(fixture.fixture.expect.must_find[0].require_rule_id);
+        assert_eq!(fixture.difficulty.as_ref(), Some(&Difficulty::Easy));
         assert_eq!(
-            fixture.expect.must_find[0].rule_id.as_deref(),
+            fixture.fixture.expect.must_find[0].rule_id.as_deref(),
             Some("sec.sql.injection")
+        );
+        assert_eq!(
+            fixture.suite_thresholds.as_ref().map(|value| value.min_f1),
+            Some(0.75)
         );
     }
 
@@ -1094,9 +1467,9 @@ expect:
         let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
 
         assert_eq!(fixtures.len(), 1);
-        assert_eq!(fixtures[0].name.as_deref(), Some("standard"));
+        assert_eq!(fixtures[0].fixture.name.as_deref(), Some("standard"));
         assert_eq!(
-            fixtures[0].expect.must_find[0].contains.as_deref(),
+            fixtures[0].fixture.expect.must_find[0].contains.as_deref(),
             Some("injection")
         );
     }
@@ -1125,6 +1498,8 @@ expect:
             description: "regressions".to_string(),
             languages: vec!["rust".to_string()],
             categories: vec!["correctness".to_string()],
+            thresholds: None,
+            metadata: HashMap::new(),
             fixtures: vec![BenchmarkFixture {
                 name: "panic".to_string(),
                 category: "correctness".to_string(),
@@ -1142,8 +1517,8 @@ expect:
         let fixtures = collect_eval_fixtures(dir.path()).unwrap();
 
         assert_eq!(fixtures.len(), 2);
-        assert_eq!(fixtures[0].1.name.as_deref(), Some("community/panic"));
-        assert_eq!(fixtures[1].1.name.as_deref(), Some("standard"));
+        assert_eq!(fixtures[0].fixture.name.as_deref(), Some("community/panic"));
+        assert_eq!(fixtures[1].fixture.name.as_deref(), Some("standard"));
     }
 
     #[test]
@@ -1161,6 +1536,7 @@ expect:
                 macro_recall: 1.0,
                 macro_f1: 1.0,
             }),
+            suite_results: vec![],
             threshold_failures: vec![],
             results: vec![],
         };
@@ -1198,6 +1574,7 @@ expect:
                 f1: 0.0,
             }],
             rule_summary: Some(EvalRuleScoreSummary::default()),
+            suite_results: vec![],
             threshold_failures: vec![],
             results: vec![],
         };
@@ -1217,6 +1594,7 @@ expect:
                 f1: 1.0,
             }],
             rule_summary: Some(EvalRuleScoreSummary::default()),
+            suite_results: vec![],
             threshold_failures: vec![],
             results: vec![],
         };
@@ -1236,5 +1614,77 @@ expect:
         assert_eq!(failures.len(), 1);
         assert!(failures[0].contains("sec.sql.injection"));
         assert!(failures[0].contains("exceeded max 0.200"));
+    }
+
+    #[test]
+    fn test_eval_pattern_matches_regex_tags_and_confidence() {
+        let comment = core::Comment {
+            id: "comment-1".to_string(),
+            file_path: PathBuf::from("src/lib.rs"),
+            line_number: 12,
+            content: "Calling panic!(user_input) here can crash the request path".to_string(),
+            rule_id: Some("panic.user-input".to_string()),
+            severity: Severity::Warning,
+            category: Category::Bug,
+            suggestion: Some("Return an error instead of panicking".to_string()),
+            confidence: 0.91,
+            code_suggestion: None,
+            tags: vec!["reliability".to_string(), "panic".to_string()],
+            fix_effort: FixEffort::Low,
+            feedback: None,
+        };
+
+        let pattern = EvalPattern {
+            contains_any: vec!["panic".to_string(), "unwrap".to_string()],
+            matches_regex: Some("panic!\\([^)]*user_input[^)]*\\)".to_string()),
+            tags_any: vec!["security".to_string(), "reliability".to_string()],
+            confidence_at_least: Some(0.9),
+            fix_effort: Some("low".to_string()),
+            ..Default::default()
+        };
+
+        assert!(pattern.matches(&comment));
+    }
+
+    #[test]
+    fn test_build_suite_results_applies_pack_thresholds() {
+        let results = vec![EvalFixtureResult {
+            fixture: "community/sql-injection".to_string(),
+            suite: Some("community".to_string()),
+            passed: false,
+            total_comments: 2,
+            required_matches: 1,
+            required_total: 1,
+            benchmark_metrics: Some(FixtureResult {
+                fixture_name: "community/sql-injection".to_string(),
+                true_positives: 1,
+                false_positives: 1,
+                false_negatives: 0,
+                true_negatives: 0,
+                precision: 0.5,
+                recall: 1.0,
+                f1: 0.6666667,
+                passed: false,
+                details: vec![],
+            }),
+            suite_thresholds: Some(BenchmarkThresholds {
+                min_precision: 0.9,
+                min_recall: 0.9,
+                min_f1: 0.9,
+                max_false_positive_rate: 0.0,
+                min_weighted_score: 0.95,
+            }),
+            difficulty: Some(Difficulty::Hard),
+            rule_metrics: vec![],
+            rule_summary: None,
+            failures: vec!["missing finding".to_string()],
+        }];
+
+        let suites = build_suite_results(&results);
+
+        assert_eq!(suites.len(), 1);
+        assert_eq!(suites[0].suite, "community");
+        assert!(!suites[0].threshold_pass);
+        assert!(!suites[0].threshold_failures.is_empty());
     }
 }

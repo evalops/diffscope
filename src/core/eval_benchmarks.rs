@@ -479,6 +479,10 @@ pub struct CommunityFixturePack {
     pub description: String,
     pub languages: Vec<String>,
     pub categories: Vec<String>,
+    #[serde(default)]
+    pub thresholds: Option<BenchmarkThresholds>,
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
     pub fixtures: Vec<BenchmarkFixture>,
 }
 
@@ -490,6 +494,8 @@ impl CommunityFixturePack {
     pub fn to_benchmark_suite(&self) -> BenchmarkSuite {
         let mut suite = BenchmarkSuite::new(&self.name, &self.description);
         suite.fixtures = self.fixtures.clone();
+        suite.thresholds = self.thresholds.clone().unwrap_or_default();
+        suite.metadata.extend(self.metadata.clone());
         suite
             .metadata
             .insert("author".to_string(), self.author.clone());
@@ -821,6 +827,14 @@ mod tests {
             description: "OWASP Top 10 vulnerability checks".to_string(),
             languages: vec!["python".to_string(), "javascript".to_string()],
             categories: vec!["security".to_string()],
+            thresholds: Some(BenchmarkThresholds {
+                min_precision: 0.8,
+                min_recall: 0.7,
+                min_f1: 0.75,
+                max_false_positive_rate: 0.1,
+                min_weighted_score: 0.77,
+            }),
+            metadata: HashMap::from([("source".to_string(), "community-pack".to_string())]),
             fixtures: vec![sample_fixture()],
         })
         .unwrap();
@@ -832,6 +846,8 @@ mod tests {
         let suite = pack.to_benchmark_suite();
         assert_eq!(suite.name, "owasp-top10");
         assert_eq!(suite.metadata.get("author").unwrap(), "community");
+        assert_eq!(suite.metadata.get("source").unwrap(), "community-pack");
+        assert!((suite.thresholds.min_precision - 0.8).abs() < f32::EPSILON);
     }
 
     #[test]

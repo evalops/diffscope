@@ -877,6 +877,8 @@ fn exercise_eval_benchmarks(quality_trend_json: Option<&str>) -> QualityTrend {
         description: "A test pack".to_string(),
         languages: vec!["rust".to_string()],
         categories: vec!["security".to_string()],
+        thresholds: None,
+        metadata: HashMap::new(),
         fixtures: vec![],
     };
     let _pn = &pack.name;
