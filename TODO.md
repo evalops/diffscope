@@ -8,13 +8,6 @@
 - Prefer extracting pure helpers and formatter/parsing boundaries before moving async orchestration.
 - Keep module roots thin; if a root becomes mostly re-exports, let children carry the logic.
 
-## Review Backlog
-
-- [ ] `src/review/verification/prompt.rs`
-  - Split diff evidence extraction, source context extraction, and supporting-context gathering.
-  - Split supporting-context scoring/truncation from final formatting.
-  - Split prompt assembly from reusable rendering helpers.
-
 ## Core Backlog
 
 - [ ] `src/core/comment.rs`
