@@ -1,14 +1,21 @@
-use crate::adapters;
-use crate::core;
-use crate::core::offline::optimize_prompt_for_local;
 use anyhow::Result;
+
+use crate::config;
+use crate::core;
 
 use super::comments::{filter_comments_for_diff, synthesize_analyzer_comments};
 use super::context::{extract_symbols_from_diff, gather_related_file_context};
 use super::contracts::{FileReviewJob, PreparedReviewJobs};
-use super::guidance::build_review_guidance;
+use super::request::{build_review_request, specialized_passes};
 use super::session::{PipelineServices, ReviewSession};
 use super::types::ProgressUpdate;
+
+struct PreparedFileContext {
+    active_rules: Vec<core::ReviewRule>,
+    path_config: Option<config::PathConfig>,
+    deterministic_comments: Vec<core::Comment>,
+    context_chunks: Vec<core::LLMContextChunk>,
+}
 
 pub(super) async fn prepare_file_review_jobs(
     services: &PipelineServices,
@@ -92,248 +99,29 @@ pub(super) async fn prepare_file_review_jobs(
             });
         }
 
-        let mut context_chunks = services
-            .context_fetcher
-            .fetch_context_for_file(
-                &diff.file_path,
-                &diff
-                    .hunks
-                    .iter()
-                    .map(|h| (h.new_start, h.new_start + h.new_lines.saturating_sub(1)))
-                    .collect::<Vec<_>>(),
-            )
-            .await?;
-
-        context_chunks.extend(pre_analysis.context_chunks.clone());
-
-        let symbols = extract_symbols_from_diff(diff);
-        if !symbols.is_empty() {
-            let definition_chunks = services
-                .context_fetcher
-                .fetch_related_definitions(&diff.file_path, &symbols)
-                .await?;
-            context_chunks.extend(definition_chunks);
-            if let Some(index) = session.symbol_index.as_ref() {
-                let index_chunks = services
-                    .context_fetcher
-                    .fetch_related_definitions_with_index(
-                        &diff.file_path,
-                        &symbols,
-                        index,
-                        services.config.symbol_index_max_locations,
-                        services.config.symbol_index_graph_hops,
-                        services.config.symbol_index_graph_max_files,
-                    )
-                    .await?;
-                context_chunks.extend(index_chunks);
-            }
-        }
-
-        if let Some(index) = session.symbol_index.as_ref() {
-            let caller_chunks =
-                gather_related_file_context(index, &diff.file_path, &services.repo_path);
-            context_chunks.extend(caller_chunks);
-        }
-
-        if let Some(index) = session.semantic_index.as_ref() {
-            let semantic_chunks = core::semantic_context_for_diff(
-                index,
-                diff,
-                session
-                    .source_files
-                    .get(&diff.file_path)
-                    .map(|content| content.as_str()),
-                services.embedding_adapter.as_deref(),
-                services.config.semantic_rag_top_k,
-                services.config.semantic_rag_min_similarity,
-            )
-            .await;
-            context_chunks.extend(semantic_chunks);
-        }
-
-        let path_config = services.config.get_path_config(&diff.file_path).cloned();
-
-        if let Some(ref path_config) = path_config {
-            if !path_config.focus.is_empty() {
-                let focus_chunk = core::LLMContextChunk::documentation(
-                    diff.file_path.clone(),
-                    format!(
-                        "Focus areas for this file: {}",
-                        path_config.focus.join(", ")
-                    ),
-                )
-                .with_provenance(core::ContextProvenance::PathSpecificFocusAreas);
-                context_chunks.push(focus_chunk);
-            }
-            if !path_config.extra_context.is_empty() {
-                let extra_chunks = services
-                    .context_fetcher
-                    .fetch_additional_context(&path_config.extra_context)
-                    .await?;
-                context_chunks.extend(extra_chunks);
-            }
-        }
-        super::super::context_helpers::inject_custom_context(
-            &services.config,
-            &services.context_fetcher,
+        let prepared_file = assemble_file_context(
+            services,
+            session,
             diff,
-            &mut context_chunks,
+            pre_analysis,
+            deterministic_comments,
         )
         .await?;
-        super::super::context_helpers::inject_pattern_repository_context(
-            &services.config,
-            &services.pattern_repositories,
-            &services.context_fetcher,
-            diff,
-            &mut context_chunks,
-        )
-        .await?;
-        let active_rules = core::active_rules_for_file(
-            &services.review_rules,
-            &diff.file_path,
-            services.config.max_active_rules,
-        );
-        super::super::rule_helpers::inject_rule_context(diff, &active_rules, &mut context_chunks);
-        context_chunks = super::super::context_helpers::rank_and_trim_context_chunks(
-            diff,
-            context_chunks,
-            services.config.context_max_chunks,
-            services.config.context_budget_chars,
-        );
+
         session
             .verification_context
-            .insert(diff.file_path.clone(), context_chunks.clone());
+            .insert(diff.file_path.clone(), prepared_file.context_chunks.clone());
 
-        let specialized_passes: Vec<core::SpecializedPassKind> =
-            if services.config.multi_pass_specialized {
-                let mut passes = vec![
-                    core::SpecializedPassKind::Security,
-                    core::SpecializedPassKind::Correctness,
-                ];
-                if services.config.strictness >= 2 {
-                    passes.push(core::SpecializedPassKind::Style);
-                }
-                passes
-            } else {
-                Vec::new()
-            };
-
-        if specialized_passes.is_empty() {
-            let mut local_prompt_config = services.base_prompt_config.clone();
-            if let Some(custom_prompt) = &services.config.system_prompt {
-                local_prompt_config.system_prompt = custom_prompt.clone();
-            }
-            if let Some(ref path_config) = path_config {
-                if let Some(ref prompt) = path_config.system_prompt {
-                    local_prompt_config.system_prompt = prompt.clone();
-                }
-            }
-            if let Some(guidance) = build_review_guidance(&services.config, path_config.as_ref()) {
-                local_prompt_config.system_prompt.push_str("\n\n");
-                local_prompt_config.system_prompt.push_str(&guidance);
-            }
-            if !session.enhanced_guidance.is_empty() {
-                local_prompt_config.system_prompt.push_str("\n\n");
-                local_prompt_config
-                    .system_prompt
-                    .push_str(&session.enhanced_guidance);
-            }
-            if !services.feedback_context.is_empty() {
-                local_prompt_config.system_prompt.push_str("\n\n");
-                local_prompt_config
-                    .system_prompt
-                    .push_str(&services.feedback_context);
-            }
-            if let Some(instructions) = session.auto_instructions.as_ref() {
-                local_prompt_config
-                    .system_prompt
-                    .push_str("\n\n# Project-specific instructions (auto-detected):\n");
-                local_prompt_config.system_prompt.push_str(instructions);
-            }
-            let local_prompt_builder = core::PromptBuilder::new(local_prompt_config);
-            let (system_prompt, user_prompt) =
-                local_prompt_builder.build_prompt(diff, &context_chunks)?;
-
-            let (system_prompt, user_prompt) = if services.is_local {
-                let context_window = services.config.context_window.unwrap_or(8192);
-                optimize_prompt_for_local(&system_prompt, &user_prompt, context_window)
-            } else {
-                (system_prompt, user_prompt)
-            };
-
-            jobs.push(FileReviewJob {
-                job_order: next_job_order,
-                diff_index,
-                request: adapters::llm::LLMRequest {
-                    system_prompt,
-                    user_prompt,
-                    temperature: None,
-                    max_tokens: None,
-                    response_schema: Some(review_comments_response_schema()),
-                },
-                active_rules,
-                path_config,
-                file_path: diff.file_path.clone(),
-                deterministic_comments: deterministic_comments.clone(),
-                pass_kind: None,
-                mark_file_complete: true,
-            });
-            next_job_order += 1;
-        } else {
-            for (pass_index, pass_kind) in specialized_passes.iter().enumerate() {
-                let deterministic_comments_for_job =
-                    if specialized_passes.first() == Some(pass_kind) {
-                        deterministic_comments.clone()
-                    } else {
-                        Vec::new()
-                    };
-                let mut local_prompt_config = services.base_prompt_config.clone();
-                local_prompt_config.system_prompt = pass_kind.system_prompt();
-
-                if !session.enhanced_guidance.is_empty() {
-                    local_prompt_config.system_prompt.push_str("\n\n");
-                    local_prompt_config
-                        .system_prompt
-                        .push_str(&session.enhanced_guidance);
-                }
-                if let Some(instructions) = session.auto_instructions.as_ref() {
-                    local_prompt_config
-                        .system_prompt
-                        .push_str("\n\n# Project-specific instructions (auto-detected):\n");
-                    local_prompt_config.system_prompt.push_str(instructions);
-                }
-
-                let local_prompt_builder = core::PromptBuilder::new(local_prompt_config);
-                let (system_prompt, user_prompt) =
-                    local_prompt_builder.build_prompt(diff, &context_chunks)?;
-
-                let (system_prompt, user_prompt) = if services.is_local {
-                    let context_window = services.config.context_window.unwrap_or(8192);
-                    optimize_prompt_for_local(&system_prompt, &user_prompt, context_window)
-                } else {
-                    (system_prompt, user_prompt)
-                };
-
-                jobs.push(FileReviewJob {
-                    job_order: next_job_order,
-                    diff_index,
-                    request: adapters::llm::LLMRequest {
-                        system_prompt,
-                        user_prompt,
-                        temperature: None,
-                        max_tokens: None,
-                        response_schema: Some(review_comments_response_schema()),
-                    },
-                    active_rules: active_rules.clone(),
-                    path_config: path_config.clone(),
-                    file_path: diff.file_path.clone(),
-                    deterministic_comments: deterministic_comments_for_job,
-                    pass_kind: Some(*pass_kind),
-                    mark_file_complete: pass_index + 1 == specialized_passes.len(),
-                });
-                next_job_order += 1;
-            }
-        }
+        let file_jobs = build_file_review_jobs(
+            services,
+            session,
+            diff_index,
+            diff,
+            &prepared_file,
+            next_job_order,
+        )?;
+        next_job_order += file_jobs.len();
+        jobs.extend(file_jobs);
     }
 
     Ok(PreparedReviewJobs {
@@ -344,31 +132,192 @@ pub(super) async fn prepare_file_review_jobs(
     })
 }
 
-fn review_comments_response_schema() -> adapters::llm::StructuredOutputSchema {
-    adapters::llm::StructuredOutputSchema::json_schema(
-        "review_findings",
-        serde_json::json!({
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["line", "content", "severity", "category", "confidence", "fix_effort", "tags"],
-                "properties": {
-                    "line": {"type": "integer", "minimum": 1},
-                    "content": {"type": "string"},
-                    "severity": {"type": "string", "enum": ["error", "warning", "info", "suggestion"]},
-                    "category": {"type": "string", "enum": ["bug", "security", "performance", "style", "best_practice"]},
-                    "confidence": {"type": ["number", "string"]},
-                    "fix_effort": {"type": "string", "enum": ["low", "medium", "high"]},
-                    "rule_id": {"type": ["string", "null"]},
-                    "suggestion": {"type": ["string", "null"]},
-                    "code_suggestion": {"type": ["string", "null"]},
-                    "tags": {
-                        "type": "array",
-                        "items": {"type": "string"}
-                    }
-                }
-            }
-        }),
+async fn assemble_file_context(
+    services: &PipelineServices,
+    session: &ReviewSession,
+    diff: &core::UnifiedDiff,
+    pre_analysis: crate::plugins::PreAnalysis,
+    deterministic_comments: Vec<core::Comment>,
+) -> Result<PreparedFileContext> {
+    let mut context_chunks = services
+        .context_fetcher
+        .fetch_context_for_file(
+            &diff.file_path,
+            &diff
+                .hunks
+                .iter()
+                .map(|h| (h.new_start, h.new_start + h.new_lines.saturating_sub(1)))
+                .collect::<Vec<_>>(),
+        )
+        .await?;
+
+    context_chunks.extend(pre_analysis.context_chunks.clone());
+
+    let symbols = extract_symbols_from_diff(diff);
+    if !symbols.is_empty() {
+        let definition_chunks = services
+            .context_fetcher
+            .fetch_related_definitions(&diff.file_path, &symbols)
+            .await?;
+        context_chunks.extend(definition_chunks);
+        if let Some(index) = session.symbol_index.as_ref() {
+            let index_chunks = services
+                .context_fetcher
+                .fetch_related_definitions_with_index(
+                    &diff.file_path,
+                    &symbols,
+                    index,
+                    services.config.symbol_index_max_locations,
+                    services.config.symbol_index_graph_hops,
+                    services.config.symbol_index_graph_max_files,
+                )
+                .await?;
+            context_chunks.extend(index_chunks);
+        }
+    }
+
+    if let Some(index) = session.symbol_index.as_ref() {
+        let caller_chunks =
+            gather_related_file_context(index, &diff.file_path, &services.repo_path);
+        context_chunks.extend(caller_chunks);
+    }
+
+    if let Some(index) = session.semantic_index.as_ref() {
+        let semantic_chunks = core::semantic_context_for_diff(
+            index,
+            diff,
+            session
+                .source_files
+                .get(&diff.file_path)
+                .map(|content| content.as_str()),
+            services.embedding_adapter.as_deref(),
+            services.config.semantic_rag_top_k,
+            services.config.semantic_rag_min_similarity,
+        )
+        .await;
+        context_chunks.extend(semantic_chunks);
+    }
+
+    let path_config = services.config.get_path_config(&diff.file_path).cloned();
+
+    if let Some(ref path_config) = path_config {
+        if !path_config.focus.is_empty() {
+            let focus_chunk = core::LLMContextChunk::documentation(
+                diff.file_path.clone(),
+                format!(
+                    "Focus areas for this file: {}",
+                    path_config.focus.join(", ")
+                ),
+            )
+            .with_provenance(core::ContextProvenance::PathSpecificFocusAreas);
+            context_chunks.push(focus_chunk);
+        }
+        if !path_config.extra_context.is_empty() {
+            let extra_chunks = services
+                .context_fetcher
+                .fetch_additional_context(&path_config.extra_context)
+                .await?;
+            context_chunks.extend(extra_chunks);
+        }
+    }
+
+    super::super::context_helpers::inject_custom_context(
+        &services.config,
+        &services.context_fetcher,
+        diff,
+        &mut context_chunks,
     )
+    .await?;
+    super::super::context_helpers::inject_pattern_repository_context(
+        &services.config,
+        &services.pattern_repositories,
+        &services.context_fetcher,
+        diff,
+        &mut context_chunks,
+    )
+    .await?;
+
+    let active_rules = core::active_rules_for_file(
+        &services.review_rules,
+        &diff.file_path,
+        services.config.max_active_rules,
+    );
+    super::super::rule_helpers::inject_rule_context(diff, &active_rules, &mut context_chunks);
+    context_chunks = super::super::context_helpers::rank_and_trim_context_chunks(
+        diff,
+        context_chunks,
+        services.config.context_max_chunks,
+        services.config.context_budget_chars,
+    );
+
+    Ok(PreparedFileContext {
+        active_rules,
+        path_config,
+        deterministic_comments,
+        context_chunks,
+    })
+}
+
+fn build_file_review_jobs(
+    services: &PipelineServices,
+    session: &ReviewSession,
+    diff_index: usize,
+    diff: &core::UnifiedDiff,
+    prepared_file: &PreparedFileContext,
+    next_job_order: usize,
+) -> Result<Vec<FileReviewJob>> {
+    let pass_kinds = specialized_passes(&services.config);
+    let mut jobs = Vec::new();
+
+    if pass_kinds.is_empty() {
+        jobs.push(FileReviewJob {
+            job_order: next_job_order,
+            diff_index,
+            request: build_review_request(
+                services,
+                session,
+                diff,
+                &prepared_file.context_chunks,
+                prepared_file.path_config.as_ref(),
+                None,
+            )?,
+            active_rules: prepared_file.active_rules.clone(),
+            path_config: prepared_file.path_config.clone(),
+            file_path: diff.file_path.clone(),
+            deterministic_comments: prepared_file.deterministic_comments.clone(),
+            pass_kind: None,
+            mark_file_complete: true,
+        });
+        return Ok(jobs);
+    }
+
+    let total_passes = pass_kinds.len();
+    for (pass_index, pass_kind) in pass_kinds.into_iter().enumerate() {
+        let deterministic_comments = if pass_index == 0 {
+            prepared_file.deterministic_comments.clone()
+        } else {
+            Vec::new()
+        };
+
+        jobs.push(FileReviewJob {
+            job_order: next_job_order + pass_index,
+            diff_index,
+            request: build_review_request(
+                services,
+                session,
+                diff,
+                &prepared_file.context_chunks,
+                prepared_file.path_config.as_ref(),
+                Some(pass_kind),
+            )?,
+            active_rules: prepared_file.active_rules.clone(),
+            path_config: prepared_file.path_config.clone(),
+            file_path: diff.file_path.clone(),
+            deterministic_comments,
+            pass_kind: Some(pass_kind),
+            mark_file_complete: pass_index + 1 == total_passes,
+        });
+    }
+
+    Ok(jobs)
 }

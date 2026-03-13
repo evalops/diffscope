@@ -18,6 +18,8 @@ mod guidance;
 mod postprocess;
 #[path = "pipeline/prepare.rs"]
 mod prepare;
+#[path = "pipeline/request.rs"]
+mod request;
 #[path = "pipeline/session.rs"]
 mod session;
 #[path = "pipeline/types.rs"]

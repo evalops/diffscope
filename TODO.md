@@ -18,14 +18,14 @@
   - `ExecutionSummary`
 - [x] Update `prepare.rs`, `execution.rs`, `postprocess.rs`, and `pipeline.rs` to use the new contracts module.
 - [x] Split `execute_review_jobs()` into dispatch/reduction helpers while preserving behavior.
-- [ ] Validate, commit, and push.
+- [x] Validate, commit, and push.
 
 ## Slice 2 — prepare decomposition
 
-- [ ] Create `src/review/pipeline/request.rs`.
-- [ ] Extract request schema and prompt/request-building helpers out of `prepare.rs`.
-- [ ] Introduce a small per-file preparation carrier type for assembled context and request metadata.
-- [ ] Split `prepare_file_review_jobs()` into:
+- [x] Create `src/review/pipeline/request.rs`.
+- [x] Extract request schema and prompt/request-building helpers out of `prepare.rs`.
+- [x] Introduce a small per-file preparation carrier type for assembled context and request metadata.
+- [x] Split `prepare_file_review_jobs()` into:
   - file eligibility / triage handling
   - context assembly
   - request/job construction
