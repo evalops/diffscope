@@ -1,9 +1,16 @@
+#[path = "loading/diff.rs"]
+mod diff;
+#[path = "loading/repo.rs"]
+mod repo;
+
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::core::eval_benchmarks::{BenchmarkThresholds, Difficulty};
 
 use super::super::super::{EvalFixture, LoadedEvalFixture};
+use diff::load_diff_content;
+use repo::resolve_repo_path;
 
 pub(super) struct PreparedFixtureExecution {
     pub(super) fixture_name: String,
@@ -48,40 +55,4 @@ pub(super) fn prepare_fixture_execution(
         diff_content,
         repo_path,
     })
-}
-
-fn load_diff_content(
-    fixture_name: &str,
-    fixture_dir: &Path,
-    fixture: &EvalFixture,
-) -> Result<String> {
-    match (fixture.diff.clone(), fixture.diff_file.clone()) {
-        (Some(diff), _) => Ok(diff),
-        (None, Some(diff_file)) => {
-            let path = if diff_file.is_absolute() {
-                diff_file
-            } else {
-                fixture_dir.join(diff_file)
-            };
-            Ok(std::fs::read_to_string(path)?)
-        }
-        (None, None) => anyhow::bail!(
-            "Fixture '{}' must define either diff or diff_file",
-            fixture_name
-        ),
-    }
-}
-
-fn resolve_repo_path(fixture_dir: &Path, fixture: &EvalFixture) -> PathBuf {
-    fixture
-        .repo_path
-        .clone()
-        .map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                fixture_dir.join(path)
-            }
-        })
-        .unwrap_or_else(|| PathBuf::from("."))
 }

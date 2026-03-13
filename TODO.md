@@ -71,7 +71,7 @@
 - [x] `src/commands/doctor/command/display.rs`: separate header/config output, endpoint listing, and inference result rendering.
 - [x] `src/commands/doctor/command/run.rs`: separate endpoint discovery, recommendation flow, and test helpers.
 - [x] `src/commands/eval/runner/matching.rs`: split required-match search, unexpected-match detection, and rule metric assembly.
-- [ ] `src/commands/eval/runner/execute/loading.rs`: separate diff resolution from repo-path resolution if it grows again.
+- [x] `src/commands/eval/runner/execute/loading.rs`: separate diff resolution from repo-path resolution if it grows again.
 - [ ] `src/commands/feedback_eval/report/examples.rs`: split ranking helpers from example builders.
 - [ ] `src/commands/doctor/system.rs`: carve environment probes vs output helpers.
 
