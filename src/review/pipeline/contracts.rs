@@ -5,7 +5,8 @@ use crate::adapters;
 use crate::config;
 use crate::core;
 
-use super::session::{PipelineServices, ReviewSession};
+use super::services::PipelineServices;
+use super::session::ReviewSession;
 use super::types::{AgentActivity, FileMetric};
 
 pub(super) struct PreparedReviewJobs {

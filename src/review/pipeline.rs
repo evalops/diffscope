@@ -18,8 +18,12 @@ mod guidance;
 mod postprocess;
 #[path = "pipeline/prepare.rs"]
 mod prepare;
+#[path = "pipeline/repo_support.rs"]
+mod repo_support;
 #[path = "pipeline/request.rs"]
 mod request;
+#[path = "pipeline/services.rs"]
+mod services;
 #[path = "pipeline/session.rs"]
 mod session;
 #[path = "pipeline/types.rs"]
@@ -29,7 +33,9 @@ use contracts::ReviewExecutionContext;
 use execution::execute_review_jobs;
 use postprocess::run_postprocess;
 use prepare::prepare_file_review_jobs;
-use session::{chunk_diff_for_context, should_optimize_for_local, PipelineServices, ReviewSession};
+use repo_support::chunk_diff_for_context;
+use services::{should_optimize_for_local, PipelineServices};
+use session::ReviewSession;
 
 pub use comments::{filter_comments_for_diff, is_line_in_diff};
 pub use context::{build_symbol_index, extract_symbols_from_diff};

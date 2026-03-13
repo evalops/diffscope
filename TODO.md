@@ -2,11 +2,11 @@
 
 ## Goals
 
-- [ ] Extract shared phase contracts so `prepare.rs`, `execution.rs`, and `postprocess.rs` stop depending on `execution.rs` internals.
-- [ ] Decompose `prepare_file_review_jobs()` into smaller context-assembly and request-building steps.
-- [ ] Split `session.rs` into service/bootstrap concerns and repo-support concerns.
-- [ ] Keep the refactor behavior-preserving and validate with `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test` after each slice.
-- [ ] Commit and push regularly after each completed slice.
+- [x] Extract shared phase contracts so `prepare.rs`, `execution.rs`, and `postprocess.rs` stop depending on `execution.rs` internals.
+- [x] Decompose `prepare_file_review_jobs()` into smaller context-assembly and request-building steps.
+- [x] Split `session.rs` into service/bootstrap concerns and repo-support concerns.
+- [x] Keep the refactor behavior-preserving and validate with `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test` after each slice.
+- [x] Commit and push regularly after each completed slice.
 
 ## Slice 1 — shared phase contracts
 
@@ -29,16 +29,16 @@
   - file eligibility / triage handling
   - context assembly
   - request/job construction
-- [ ] Validate, commit, and push.
+- [x] Validate, commit, and push.
 
 ## Slice 3 — session split
 
-- [ ] Create `src/review/pipeline/services.rs` for `PipelineServices` and service bootstrapping.
-- [ ] Create `src/review/pipeline/repo_support.rs` for repo/runtime helpers:
+- [x] Create `src/review/pipeline/services.rs` for `PipelineServices` and service bootstrapping.
+- [x] Create `src/review/pipeline/repo_support.rs` for repo/runtime helpers:
   - diff chunking
   - instruction file detection
   - git log gathering
   - convention store persistence
-- [ ] Keep `ReviewSession` focused on per-review state in `session.rs`.
-- [ ] Update imports in `pipeline.rs`, `prepare.rs`, and `postprocess.rs`.
-- [ ] Validate, commit, and push.
+- [x] Keep `ReviewSession` focused on per-review state in `session.rs`.
+- [x] Update imports in `pipeline.rs`, `prepare.rs`, and `postprocess.rs`.
+- [x] Validate, commit, and push.

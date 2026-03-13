@@ -6,7 +6,8 @@ use crate::core;
 use crate::core::offline::optimize_prompt_for_local;
 
 use super::guidance::build_review_guidance;
-use super::session::{PipelineServices, ReviewSession};
+use super::services::PipelineServices;
+use super::session::ReviewSession;
 
 pub(super) fn specialized_passes(config: &config::Config) -> Vec<core::SpecializedPassKind> {
     if !config.multi_pass_specialized {

@@ -7,7 +7,8 @@ use super::comments::{filter_comments_for_diff, synthesize_analyzer_comments};
 use super::context::{extract_symbols_from_diff, gather_related_file_context};
 use super::contracts::{FileReviewJob, PreparedReviewJobs};
 use super::request::{build_review_request, specialized_passes};
-use super::session::{PipelineServices, ReviewSession};
+use super::services::PipelineServices;
+use super::session::ReviewSession;
 use super::types::ProgressUpdate;
 
 struct PreparedFileContext {
