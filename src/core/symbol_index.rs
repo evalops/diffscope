@@ -10,8 +10,13 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use crate::core::symbol_graph::{RankedSymbol, SymbolGraph};
+use crate::core::symbol_graph::SymbolGraph;
 use crate::core::ContextProvenance;
+
+#[path = "symbol_index/retrieval.rs"]
+mod retrieval;
+
+pub use retrieval::{SymbolContextRetriever, SymbolRetrievalPolicy};
 
 #[derive(Debug, Clone)]
 pub struct SymbolLocation {
@@ -387,155 +392,6 @@ impl SymbolIndex {
         self.symbols.get(symbol)
     }
 
-    pub fn graph_related_locations(
-        &self,
-        current_file: &Path,
-        symbols: &[String],
-        max_hops: usize,
-        max_locations: usize,
-        max_files: usize,
-    ) -> Vec<SymbolLocation> {
-        let Some(graph) = &self.symbol_graph else {
-            return Vec::new();
-        };
-        if symbols.is_empty() || max_locations == 0 || max_files == 0 || max_hops == 0 {
-            return Vec::new();
-        }
-
-        let ranked = graph.related_symbols(
-            symbols,
-            max_hops,
-            max_locations.saturating_mul(max_files).max(max_locations),
-        );
-
-        let mut results = Vec::new();
-        let mut seen_locations = HashSet::new();
-        let mut seen_files = HashSet::new();
-
-        for ranked_symbol in ranked {
-            if ranked_symbol.file_path == current_file {
-                continue;
-            }
-            if seen_files.len() >= max_files && !seen_files.contains(&ranked_symbol.file_path) {
-                continue;
-            }
-
-            let Some(mut location) = self.lookup_ranked_symbol_location(&ranked_symbol) else {
-                continue;
-            };
-
-            let location_key = format!(
-                "{}:{}:{}",
-                location.file_path.display(),
-                location.line_range.0,
-                location.line_range.1
-            );
-            if !seen_locations.insert(location_key) {
-                continue;
-            }
-
-            let relation_path = ranked_symbol
-                .relation_path
-                .iter()
-                .map(|relation| relation.as_label().to_string())
-                .collect::<Vec<_>>();
-            location.provenance = Some(ContextProvenance::symbol_graph_path(
-                relation_path.clone(),
-                ranked_symbol.hops,
-                ranked_symbol.relevance_score,
-            ));
-            location.snippet = format!(
-                "[Graph: {}, hops={}, relevance={:.2}]\n{}",
-                relation_path.join(" -> "),
-                ranked_symbol.hops,
-                ranked_symbol.relevance_score,
-                location.snippet
-            );
-            seen_files.insert(location.file_path.clone());
-            results.push(location);
-        }
-
-        results
-    }
-
-    pub fn multi_hop_locations(
-        &self,
-        current_file: &Path,
-        symbols: &[String],
-        max_locations: usize,
-        max_hops: usize,
-        max_files: usize,
-    ) -> Vec<SymbolLocation> {
-        if symbols.is_empty() || max_files == 0 {
-            return Vec::new();
-        }
-
-        let mut direct_files = HashSet::new();
-        let mut locations = Vec::new();
-        let mut seen_locations = HashSet::new();
-
-        for symbol in symbols {
-            if let Some(entries) = self.lookup(symbol) {
-                for location in entries.iter().take(max_locations) {
-                    let location_key = format!(
-                        "{}:{}:{}",
-                        location.file_path.display(),
-                        location.line_range.0,
-                        location.line_range.1
-                    );
-                    if seen_locations.insert(location_key) {
-                        direct_files.insert(location.file_path.clone());
-                        locations.push(location.clone());
-                    }
-                }
-            }
-        }
-
-        let mut queue: std::collections::VecDeque<(PathBuf, usize)> =
-            std::collections::VecDeque::new();
-        let mut seen_files = HashSet::new();
-
-        for file in direct_files {
-            if file == current_file {
-                continue;
-            }
-            seen_files.insert(file.clone());
-            queue.push_back((file, 0));
-        }
-
-        while let Some((file, depth)) = queue.pop_front() {
-            if depth >= max_hops {
-                continue;
-            }
-
-            for neighbor in self.neighbor_files(&file) {
-                if neighbor == current_file {
-                    continue;
-                }
-                if !seen_files.insert(neighbor.clone()) {
-                    continue;
-                }
-                queue.push_back((neighbor, depth + 1));
-            }
-        }
-
-        for file in seen_files.into_iter().take(max_files) {
-            if locations.iter().any(|location| location.file_path == file) {
-                continue;
-            }
-            if let Some(summary) = self.file_summaries.get(&file) {
-                locations.push(SymbolLocation {
-                    file_path: file,
-                    line_range: (1, summary.line_count.max(1)),
-                    snippet: format!("[Dependency graph context]\n{}", summary.snippet),
-                    provenance: Some(ContextProvenance::DependencyGraphNeighborhood),
-                });
-            }
-        }
-
-        locations
-    }
-
     pub fn files_indexed(&self) -> usize {
         self.files_indexed
     }
@@ -589,17 +445,6 @@ impl SymbolIndex {
         self.file_summaries.get(file).map(|s| s.snippet.as_str())
     }
 
-    fn neighbor_files(&self, file: &Path) -> HashSet<PathBuf> {
-        let mut neighbors = HashSet::new();
-        if let Some(deps) = self.dependency_graph.get(file) {
-            neighbors.extend(deps.iter().cloned());
-        }
-        if let Some(reverse) = self.reverse_dependency_graph.get(file) {
-            neighbors.extend(reverse.iter().cloned());
-        }
-        neighbors
-    }
-
     fn build_graph_from_sources(&mut self, sources: &HashMap<PathBuf, String>) {
         if sources.is_empty() {
             self.symbol_graph = None;
@@ -612,24 +457,6 @@ impl SymbolIndex {
         } else {
             self.symbol_graph = Some(graph);
         }
-    }
-
-    fn lookup_ranked_symbol_location(&self, ranked: &RankedSymbol) -> Option<SymbolLocation> {
-        self.lookup(&ranked.name).and_then(|locations| {
-            locations
-                .iter()
-                .filter(|location| location.file_path == ranked.file_path)
-                .min_by_key(|location| {
-                    let start = location.line_range.0;
-                    let end = location.line_range.1;
-                    if ranked.line < start {
-                        start - ranked.line
-                    } else {
-                        ranked.line.saturating_sub(end)
-                    }
-                })
-                .cloned()
-        })
     }
 }
 

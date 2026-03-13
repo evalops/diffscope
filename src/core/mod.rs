@@ -45,4 +45,4 @@ pub use semantic::{
     load_semantic_feedback_store, refresh_semantic_index, save_semantic_feedback_store,
     semantic_context_for_diff, SemanticFeedbackExample, SemanticFeedbackStore,
 };
-pub use symbol_index::SymbolIndex;
+pub use symbol_index::{SymbolContextRetriever, SymbolIndex, SymbolRetrievalPolicy};

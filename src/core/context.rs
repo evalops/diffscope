@@ -6,7 +6,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use crate::core::function_chunker::find_enclosing_boundary_line;
-use crate::core::{ContextProvenance, SymbolIndex};
+use crate::core::{ContextProvenance, SymbolContextRetriever, SymbolIndex, SymbolRetrievalPolicy};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMContextChunk {
@@ -271,13 +271,13 @@ impl ContextFetcher {
             }
         }
 
-        for location in index.graph_related_locations(
-            file_path,
-            symbols,
-            graph_hops,
-            max_locations,
-            graph_max_files,
-        ) {
+        let retriever = SymbolContextRetriever::new(
+            index,
+            SymbolRetrievalPolicy::new(max_locations, graph_hops, graph_max_files),
+        );
+        let related_locations = retriever.related_symbol_locations(file_path, symbols);
+
+        for location in related_locations.definition_locations {
             if &location.file_path == file_path {
                 continue;
             }
@@ -290,13 +290,7 @@ impl ContextFetcher {
             chunks.push(chunk);
         }
 
-        for location in index.multi_hop_locations(
-            file_path,
-            symbols,
-            max_locations,
-            graph_hops,
-            graph_max_files,
-        ) {
+        for location in related_locations.reference_locations {
             if &location.file_path == file_path {
                 continue;
             }
