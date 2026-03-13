@@ -8,14 +8,6 @@
 - Prefer extracting pure helpers and formatter/parsing boundaries before moving async orchestration.
 - Keep module roots thin; if a root becomes mostly re-exports, let children carry the logic.
 
-## Immediate Queue
-
-- [ ] `src/review/compression.rs`
-  - Split token estimation and skipped-summary helpers from compression stages.
-  - Split deletion-only compression and clipping primitives from stage selection.
-  - Split stage 2 compressed selection from stage 4 multi-call batching.
-  - Isolate per-stage budget accounting and file-placement helpers.
-
 ## Review Backlog
 
 - [ ] `src/review/verification/parser.rs`
