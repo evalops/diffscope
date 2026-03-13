@@ -476,7 +476,6 @@ fn parse_optional_capture(captures: &regex::Captures<'_>, group: usize) -> Optio
     captures
         .get(group)
         .and_then(|value| value.as_str().parse::<usize>().ok())
-        .filter(|value| *value > 0)
 }
 
 #[cfg(test)]
@@ -557,6 +556,8 @@ index 83db48f..0000000\n\
         assert_eq!(diffs.len(), 1);
         assert!(diffs[0].is_deleted);
         assert!(!diffs[0].is_new);
+        assert_eq!(diffs[0].hunks[0].old_lines, 1);
+        assert_eq!(diffs[0].hunks[0].new_lines, 0);
     }
 
     #[test]
@@ -574,6 +575,8 @@ index 0000000..f735c20\n\
         assert_eq!(diffs.len(), 1);
         assert!(diffs[0].is_new);
         assert!(!diffs[0].is_deleted);
+        assert_eq!(diffs[0].hunks[0].old_lines, 0);
+        assert_eq!(diffs[0].hunks[0].new_lines, 1);
     }
 
     #[test]
