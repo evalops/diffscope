@@ -287,13 +287,10 @@ pub fn inject_rule_context(
         }
     }
 
-    context_chunks.push(core::LLMContextChunk {
-        content: lines.join("\n"),
-        context_type: core::ContextType::Documentation,
-        file_path: diff.file_path.clone(),
-        line_range: None,
-        provenance: Some("active review rules".to_string()),
-    });
+    context_chunks.push(
+        core::LLMContextChunk::documentation(diff.file_path.clone(), lines.join("\n"))
+            .with_provenance(core::ContextProvenance::ActiveReviewRules),
+    );
 }
 
 pub fn apply_rule_overrides(

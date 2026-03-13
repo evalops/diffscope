@@ -494,13 +494,11 @@ async fn review_diff_content_raw_inner(
         // Add focus areas and extra context if configured
         if let Some(ref pc) = path_config {
             if !pc.focus.is_empty() {
-                let focus_chunk = core::LLMContextChunk {
-                    content: format!("Focus areas for this file: {}", pc.focus.join(", ")),
-                    context_type: core::ContextType::Documentation,
-                    file_path: diff.file_path.clone(),
-                    line_range: None,
-                    provenance: Some("path-specific focus areas".to_string()),
-                };
+                let focus_chunk = core::LLMContextChunk::documentation(
+                    diff.file_path.clone(),
+                    format!("Focus areas for this file: {}", pc.focus.join(", ")),
+                )
+                .with_provenance(core::ContextProvenance::PathSpecificFocusAreas);
                 context_chunks.push(focus_chunk);
             }
             if !pc.extra_context.is_empty() {
@@ -1764,13 +1762,13 @@ fn gather_related_file_context(
             } else {
                 summary.to_string()
             };
-            chunks.push(core::LLMContextChunk {
-                file_path: caller_path.clone(),
-                content: format!("[Caller/dependent file]\n{}", truncated),
-                context_type: core::ContextType::Reference,
-                line_range: None,
-                provenance: Some("reverse dependency summary".to_string()),
-            });
+            chunks.push(
+                core::LLMContextChunk::reference(
+                    caller_path.clone(),
+                    format!("[Caller/dependent file]\n{}", truncated),
+                )
+                .with_provenance(core::ContextProvenance::ReverseDependencySummary),
+            );
         }
     }
 
@@ -1782,13 +1780,13 @@ fn gather_related_file_context(
         if let Ok(content) = std::fs::read_to_string(test_path) {
             let snippet: String = content.lines().take(60).collect::<Vec<_>>().join("\n");
             if !snippet.is_empty() {
-                chunks.push(core::LLMContextChunk {
-                    file_path: relative.to_path_buf(),
-                    content: format!("[Test file]\n{}", snippet),
-                    context_type: core::ContextType::Reference,
-                    line_range: None,
-                    provenance: Some("related test file".to_string()),
-                });
+                chunks.push(
+                    core::LLMContextChunk::reference(
+                        relative.to_path_buf(),
+                        format!("[Test file]\n{}", snippet),
+                    )
+                    .with_provenance(core::ContextProvenance::RelatedTestFile),
+                );
             }
         }
     }

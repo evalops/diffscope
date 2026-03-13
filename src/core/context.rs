@@ -6,7 +6,8 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use crate::core::function_chunker::find_enclosing_boundary_line;
-use crate::core::SymbolIndex;
+use crate::core::{ContextProvenance, SymbolIndex};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMContextChunk {
     pub file_path: PathBuf,
@@ -14,7 +15,7 @@ pub struct LLMContextChunk {
     pub context_type: ContextType,
     pub line_range: Option<(usize, usize)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provenance: Option<String>,
+    pub provenance: Option<ContextProvenance>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -23,6 +24,52 @@ pub enum ContextType {
     Definition,
     Reference,
     Documentation,
+}
+
+impl LLMContextChunk {
+    pub fn new(
+        file_path: impl Into<PathBuf>,
+        content: impl Into<String>,
+        context_type: ContextType,
+    ) -> Self {
+        Self {
+            file_path: file_path.into(),
+            content: content.into(),
+            context_type,
+            line_range: None,
+            provenance: None,
+        }
+    }
+
+    pub fn file_content(file_path: impl Into<PathBuf>, content: impl Into<String>) -> Self {
+        Self::new(file_path, content, ContextType::FileContent)
+    }
+
+    pub fn definition(file_path: impl Into<PathBuf>, content: impl Into<String>) -> Self {
+        Self::new(file_path, content, ContextType::Definition)
+    }
+
+    pub fn reference(file_path: impl Into<PathBuf>, content: impl Into<String>) -> Self {
+        Self::new(file_path, content, ContextType::Reference)
+    }
+
+    pub fn documentation(file_path: impl Into<PathBuf>, content: impl Into<String>) -> Self {
+        Self::new(file_path, content, ContextType::Documentation)
+    }
+
+    pub fn with_line_range(mut self, line_range: (usize, usize)) -> Self {
+        self.line_range = Some(line_range);
+        self
+    }
+
+    pub fn with_provenance(mut self, provenance: ContextProvenance) -> Self {
+        self.provenance = Some(provenance);
+        self
+    }
+
+    pub fn provenance_label(&self) -> Option<String> {
+        self.provenance.as_ref().map(ToString::to_string)
+    }
 }
 
 pub struct ContextFetcher {
@@ -71,13 +118,10 @@ impl ContextFetcher {
                         file_lines[start_idx..end_idx].join("\n"),
                         MAX_CONTEXT_CHARS,
                     );
-                    chunks.push(LLMContextChunk {
-                        file_path: file_path.clone(),
-                        content: chunk_content,
-                        context_type: ContextType::FileContent,
-                        line_range: Some((expanded_start, expanded_end)),
-                        provenance: None,
-                    });
+                    chunks.push(
+                        LLMContextChunk::file_content(file_path.clone(), chunk_content)
+                            .with_line_range((expanded_start, expanded_end)),
+                    );
                 }
             }
         }
@@ -135,13 +179,10 @@ impl ContextFetcher {
                 continue;
             }
 
-            chunks.push(LLMContextChunk {
-                file_path: relative_path.to_path_buf(),
-                content: snippet,
-                context_type: ContextType::Reference,
-                line_range: None,
-                provenance: None,
-            });
+            chunks.push(LLMContextChunk::reference(
+                relative_path.to_path_buf(),
+                snippet,
+            ));
         }
 
         Ok(chunks)
@@ -184,13 +225,10 @@ impl ContextFetcher {
                                 MAX_CONTEXT_CHARS,
                             );
 
-                            chunks.push(LLMContextChunk {
-                                file_path: file_path.clone(),
-                                content: definition_content,
-                                context_type: ContextType::Definition,
-                                line_range: Some((start_line + 1, end_line)),
-                                provenance: None,
-                            });
+                            chunks.push(
+                                LLMContextChunk::definition(file_path.clone(), definition_content)
+                                    .with_line_range((start_line + 1, end_line)),
+                            );
                         }
                     }
                 }
@@ -222,13 +260,13 @@ impl ContextFetcher {
                         continue;
                     }
                     let snippet = truncate_with_notice(location.snippet.clone(), MAX_CONTEXT_CHARS);
-                    chunks.push(LLMContextChunk {
-                        file_path: location.file_path.clone(),
-                        content: snippet,
-                        context_type: ContextType::Definition,
-                        line_range: Some(location.line_range),
-                        provenance: location.provenance.clone(),
-                    });
+                    let mut chunk =
+                        LLMContextChunk::definition(location.file_path.clone(), snippet)
+                            .with_line_range(location.line_range);
+                    if let Some(provenance) = location.provenance.clone() {
+                        chunk = chunk.with_provenance(provenance);
+                    }
+                    chunks.push(chunk);
                 }
             }
         }
@@ -244,13 +282,12 @@ impl ContextFetcher {
                 continue;
             }
             let snippet = truncate_with_notice(location.snippet, MAX_CONTEXT_CHARS);
-            chunks.push(LLMContextChunk {
-                file_path: location.file_path,
-                content: snippet,
-                context_type: ContextType::Definition,
-                line_range: Some(location.line_range),
-                provenance: location.provenance,
-            });
+            let mut chunk = LLMContextChunk::definition(location.file_path, snippet)
+                .with_line_range(location.line_range);
+            if let Some(provenance) = location.provenance {
+                chunk = chunk.with_provenance(provenance);
+            }
+            chunks.push(chunk);
         }
 
         for location in index.multi_hop_locations(
@@ -264,13 +301,12 @@ impl ContextFetcher {
                 continue;
             }
             let snippet = truncate_with_notice(location.snippet, MAX_CONTEXT_CHARS);
-            chunks.push(LLMContextChunk {
-                file_path: location.file_path,
-                content: snippet,
-                context_type: ContextType::Reference,
-                line_range: Some(location.line_range),
-                provenance: location.provenance,
-            });
+            let mut chunk = LLMContextChunk::reference(location.file_path, snippet)
+                .with_line_range(location.line_range);
+            if let Some(provenance) = location.provenance {
+                chunk = chunk.with_provenance(provenance);
+            }
+            chunks.push(chunk);
         }
 
         Ok(chunks)
@@ -441,12 +477,12 @@ mod tests {
         assert_eq!(graph_chunk.context_type, ContextType::Definition);
         assert!(graph_chunk.content.contains("validate_token"));
         assert!(graph_chunk
-            .provenance
+            .provenance_label()
             .as_deref()
             .unwrap_or_default()
             .contains("symbol graph"));
         assert!(graph_chunk
-            .provenance
+            .provenance_label()
             .as_deref()
             .unwrap_or_default()
             .contains("calls"));

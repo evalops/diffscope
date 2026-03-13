@@ -121,8 +121,7 @@ TAGS: [comma-separated relevant tags]
                     chunk.file_path.display(),
                     chunk.context_type,
                     chunk
-                        .provenance
-                        .as_ref()
+                        .provenance_label()
                         .map(|value| format!(" | {}", value))
                         .unwrap_or_default()
                 );

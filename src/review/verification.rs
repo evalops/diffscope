@@ -239,13 +239,8 @@ fn score_supporting_context(chunk: &LLMContextChunk, comment: &Comment) -> i32 {
         }
     }
 
-    if let Some(provenance) = chunk.provenance.as_deref() {
-        let lower = provenance.to_ascii_lowercase();
-        if lower.contains("symbol graph path:") {
-            score += 80;
-        } else if lower.contains("semantic retrieval") {
-            score += 30;
-        }
+    if let Some(provenance) = chunk.provenance.as_ref() {
+        score += provenance.verification_bonus();
     }
 
     score
@@ -262,9 +257,9 @@ fn format_context_chunk_for_verification(chunk: &LLMContextChunk) -> String {
             .unwrap_or_default()
     );
 
-    if let Some(provenance) = chunk.provenance.as_deref() {
+    if let Some(provenance) = chunk.provenance.as_ref() {
         header.push_str(" | ");
-        header.push_str(provenance);
+        header.push_str(&provenance.to_string());
     }
 
     format!("{}\n{}", header, chunk.content)
@@ -699,9 +694,11 @@ mod tests {
                         .to_string(),
                     context_type: crate::core::ContextType::Definition,
                     line_range: Some((1, 3)),
-                    provenance: Some(
-                        "symbol graph path: calls (hops=1, relevance=0.50)".to_string(),
-                    ),
+                    provenance: Some(crate::core::ContextProvenance::symbol_graph_path(
+                        vec!["calls".to_string()],
+                        1,
+                        0.50,
+                    )),
                 }],
             )]),
         );

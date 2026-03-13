@@ -449,8 +449,7 @@ impl PromptBuilder {
                     .map(|(s, e)| format!(":{}-{}", s, e))
                     .unwrap_or_default(),
                 chunk
-                    .provenance
-                    .as_ref()
+                    .provenance_label()
                     .map(|value| format!(" | {}", value))
                     .unwrap_or_default(),
                 chunk.content

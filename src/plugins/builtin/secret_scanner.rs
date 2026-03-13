@@ -1,5 +1,5 @@
 use crate::core::comment::{Category, Severity};
-use crate::core::{ContextType, LLMContextChunk, UnifiedDiff};
+use crate::core::{LLMContextChunk, UnifiedDiff};
 use crate::plugins::{AnalyzerFinding, PreAnalysis, PreAnalyzer};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -686,13 +686,8 @@ impl PreAnalyzer for SecretScanner {
         ));
 
         Ok(PreAnalysis {
-            context_chunks: vec![LLMContextChunk {
-                file_path: diff.file_path.clone(),
-                content: report,
-                context_type: ContextType::Documentation,
-                line_range: None,
-                provenance: Some("secret scanner".to_string()),
-            }],
+            context_chunks: vec![LLMContextChunk::documentation(diff.file_path.clone(), report)
+                .with_provenance(crate::core::ContextProvenance::analyzer("secret scanner"))],
             findings: all_findings
                 .into_iter()
                 .map(|finding| {

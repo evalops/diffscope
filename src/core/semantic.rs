@@ -7,9 +7,10 @@ use std::path::{Path, PathBuf};
 
 use crate::adapters::llm::LLMAdapter;
 use crate::core::code_summary::{summarize_file_symbols, SummaryCache};
-use crate::core::context::{ContextType, LLMContextChunk};
+use crate::core::context::LLMContextChunk;
 use crate::core::diff_parser::{ChangeType, UnifiedDiff};
 use crate::core::function_chunker::chunk_diff_by_functions;
+use crate::core::ContextProvenance;
 
 const MAX_CODE_FILE_BYTES: usize = 512 * 1024;
 const FALLBACK_EMBEDDING_DIMENSIONS: usize = 128;
@@ -447,16 +448,14 @@ pub async fn semantic_context_for_diff(
             semantic_match.chunk.summary,
             semantic_match.chunk.code_excerpt,
         );
-        chunks.push(LLMContextChunk {
-            file_path: semantic_match.chunk.file_path.clone(),
-            content,
-            context_type: ContextType::Reference,
-            line_range: Some(semantic_match.chunk.line_range),
-            provenance: Some(format!(
-                "semantic retrieval (similarity={:.2}, symbol={})",
-                semantic_match.similarity, semantic_match.chunk.symbol_name
-            )),
-        });
+        chunks.push(
+            LLMContextChunk::reference(semantic_match.chunk.file_path.clone(), content)
+                .with_line_range(semantic_match.chunk.line_range)
+                .with_provenance(ContextProvenance::semantic_retrieval(
+                    semantic_match.similarity,
+                    semantic_match.chunk.symbol_name.clone(),
+                )),
+        );
         if chunks.len() >= limit {
             break;
         }

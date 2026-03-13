@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::core::symbol_index::SymbolLocation;
+use crate::core::ContextProvenance;
 
 /// Relationship between two symbols in the codebase.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -338,9 +339,13 @@ impl SymbolGraph {
                                 "[Graph: {}, hops={}, relevance={:.2}]\n{}",
                                 relation_path, rs.hops, rs.relevance_score, node.name
                             ),
-                            provenance: Some(format!(
-                                "symbol graph path: {} (hops={}, relevance={:.2})",
-                                relation_path, rs.hops, rs.relevance_score
+                            provenance: Some(ContextProvenance::symbol_graph_path(
+                                rs.relation_path
+                                    .iter()
+                                    .map(|relation| relation.as_label().to_string())
+                                    .collect(),
+                                rs.hops,
+                                rs.relevance_score,
                             )),
                         });
                     }

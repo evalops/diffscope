@@ -6,6 +6,7 @@ pub mod comment;
 pub mod commit_prompt;
 pub mod composable_pipeline;
 pub mod context;
+pub mod context_provenance;
 pub mod convention_learner;
 pub mod diff_parser;
 pub mod enhanced_review;
@@ -29,6 +30,7 @@ pub use changelog::ChangelogGenerator;
 pub use comment::{Comment, CommentSynthesizer};
 pub use commit_prompt::CommitPromptBuilder;
 pub use context::{ContextFetcher, ContextType, LLMContextChunk};
+pub use context_provenance::ContextProvenance;
 pub use diff_parser::{DiffParser, UnifiedDiff};
 pub use enhanced_review::{
     apply_enhanced_filters, build_enhanced_context, generate_enhanced_guidance,

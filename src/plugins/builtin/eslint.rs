@@ -1,5 +1,5 @@
 use crate::core::comment::{Category, Severity};
-use crate::core::{ContextType, LLMContextChunk, UnifiedDiff};
+use crate::core::{LLMContextChunk, UnifiedDiff};
 use crate::plugins::{AnalyzerFinding, PreAnalysis, PreAnalyzer};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -145,13 +145,13 @@ fn parse_eslint_analyses(repo_root: &Path, payload: &str) -> HashMap<PathBuf, Pr
 
         if !findings.is_empty() {
             let mut analysis = PreAnalysis::default();
-            analysis.context_chunks.push(LLMContextChunk {
-                file_path: file_path.clone(),
-                content: build_context_chunk("ESLint", &findings),
-                context_type: ContextType::Documentation,
-                line_range: None,
-                provenance: Some("eslint analyzer".to_string()),
-            });
+            analysis.context_chunks.push(
+                LLMContextChunk::documentation(
+                    file_path.clone(),
+                    build_context_chunk("ESLint", &findings),
+                )
+                .with_provenance(crate::core::ContextProvenance::analyzer("eslint")),
+            );
             analysis.findings = findings;
             analyses.insert(file_path, analysis);
         }

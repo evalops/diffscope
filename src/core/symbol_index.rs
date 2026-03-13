@@ -11,13 +11,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use crate::core::symbol_graph::{RankedSymbol, SymbolGraph};
+use crate::core::ContextProvenance;
 
 #[derive(Debug, Clone)]
 pub struct SymbolLocation {
     pub file_path: PathBuf,
     pub line_range: (usize, usize),
     pub snippet: String,
-    pub provenance: Option<String>,
+    pub provenance: Option<ContextProvenance>,
 }
 
 #[derive(Debug, Default)]
@@ -433,25 +434,19 @@ impl SymbolIndex {
                 continue;
             }
 
-            location.provenance = Some(format!(
-                "symbol graph path: {} (hops={}, relevance={:.2})",
-                ranked_symbol
-                    .relation_path
-                    .iter()
-                    .map(|relation| relation.as_label())
-                    .collect::<Vec<_>>()
-                    .join(" -> "),
+            let relation_path = ranked_symbol
+                .relation_path
+                .iter()
+                .map(|relation| relation.as_label().to_string())
+                .collect::<Vec<_>>();
+            location.provenance = Some(ContextProvenance::symbol_graph_path(
+                relation_path.clone(),
                 ranked_symbol.hops,
-                ranked_symbol.relevance_score
+                ranked_symbol.relevance_score,
             ));
             location.snippet = format!(
                 "[Graph: {}, hops={}, relevance={:.2}]\n{}",
-                ranked_symbol
-                    .relation_path
-                    .iter()
-                    .map(|relation| relation.as_label())
-                    .collect::<Vec<_>>()
-                    .join(" -> "),
+                relation_path.join(" -> "),
                 ranked_symbol.hops,
                 ranked_symbol.relevance_score,
                 location.snippet
@@ -533,7 +528,7 @@ impl SymbolIndex {
                     file_path: file,
                     line_range: (1, summary.line_count.max(1)),
                     snippet: format!("[Dependency graph context]\n{}", summary.snippet),
-                    provenance: Some("dependency graph neighborhood".to_string()),
+                    provenance: Some(ContextProvenance::DependencyGraphNeighborhood),
                 });
             }
         }

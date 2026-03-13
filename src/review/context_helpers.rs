@@ -144,13 +144,13 @@ pub async fn inject_custom_context(
 ) -> Result<()> {
     for entry in config.matching_custom_context(&diff.file_path) {
         if !entry.notes.is_empty() {
-            context_chunks.push(core::LLMContextChunk {
-                content: format!("Custom context notes:\n{}", entry.notes.join("\n")),
-                context_type: core::ContextType::Documentation,
-                file_path: diff.file_path.clone(),
-                line_range: None,
-                provenance: Some("custom context notes".to_string()),
-            });
+            context_chunks.push(
+                core::LLMContextChunk::documentation(
+                    diff.file_path.clone(),
+                    format!("Custom context notes:\n{}", entry.notes.join("\n")),
+                )
+                .with_provenance(core::ContextProvenance::CustomContextNotes),
+            );
         }
 
         if !entry.files.is_empty() {
@@ -194,17 +194,21 @@ pub async fn inject_pattern_repository_context(
             continue;
         }
 
-        context_chunks.push(core::LLMContextChunk {
-            content: format!("Pattern repository context source: {}", repo.source),
-            context_type: core::ContextType::Documentation,
-            file_path: diff.file_path.clone(),
-            line_range: None,
-            provenance: Some(format!("pattern repository source: {}", repo.source)),
-        });
+        context_chunks.push(
+            core::LLMContextChunk::documentation(
+                diff.file_path.clone(),
+                format!("Pattern repository context source: {}", repo.source),
+            )
+            .with_provenance(core::ContextProvenance::pattern_repository_source(
+                repo.source.clone(),
+            )),
+        );
 
         for chunk in &mut chunks {
             chunk.content = format!("[Pattern repository: {}]\n{}", repo.source, chunk.content);
-            chunk.provenance = Some(format!("pattern repository: {}", repo.source));
+            chunk.provenance = Some(core::ContextProvenance::pattern_repository_context(
+                repo.source.clone(),
+            ));
         }
         context_chunks.extend(chunks);
     }
@@ -230,7 +234,7 @@ pub fn rank_and_trim_context_chunks(
             chunk.file_path.display(),
             chunk.context_type,
             chunk.line_range,
-            chunk.provenance,
+            chunk.provenance.as_ref().map(ToString::to_string),
             chunk.content
         );
         if seen.insert(key) {
@@ -274,37 +278,12 @@ pub fn rank_and_trim_context_chunks(
                 }
             }
 
-            if chunk.content.starts_with("Active review rules.") {
-                score += 120;
-            } else if chunk
-                .content
-                .starts_with("Pattern repository context source:")
-            {
-                score += 30;
-            } else if chunk.content.starts_with("[Pattern repository:") {
-                score += 25;
-            }
-
             if chunk.content.len() > 4000 {
                 score -= 10;
             }
 
-            if let Some(provenance) = chunk.provenance.as_deref() {
-                let provenance_lower = provenance.to_ascii_lowercase();
-                if provenance_lower.contains("symbol graph path:") {
-                    score += 50;
-                    if provenance_lower.contains("hops=1") {
-                        score += 15;
-                    }
-                    if provenance_lower.contains("calls") || provenance_lower.contains("called-by")
-                    {
-                        score += 10;
-                    }
-                } else if provenance_lower.contains("semantic retrieval") {
-                    score += 25;
-                } else if provenance_lower.contains("pattern repository") {
-                    score += 10;
-                }
+            if let Some(provenance) = chunk.provenance.as_ref() {
+                score += provenance.ranking_bonus();
             }
 
             (score, chunk.content.len(), chunk)
@@ -546,7 +525,11 @@ mod tests {
                 context_type: core::ContextType::Reference,
                 file_path: PathBuf::from("auth.rs"),
                 line_range: Some((10, 20)),
-                provenance: Some("symbol graph path: calls (hops=1, relevance=0.50)".to_string()),
+                provenance: Some(core::ContextProvenance::symbol_graph_path(
+                    vec!["calls".to_string()],
+                    1,
+                    0.50,
+                )),
             },
         ];
 
