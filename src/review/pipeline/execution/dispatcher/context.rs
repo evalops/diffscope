@@ -18,15 +18,15 @@ pub(super) fn build_agent_loop_config(
     context: &ReviewExecutionContext<'_>,
 ) -> core::agent_loop::AgentLoopConfig {
     core::agent_loop::AgentLoopConfig {
-        max_iterations: context.services.config.agent_max_iterations,
-        max_total_tokens: context.services.config.agent_max_total_tokens,
+        max_iterations: context.services.config.agent.max_iterations,
+        max_total_tokens: context.services.config.agent.max_total_tokens,
     }
 }
 
 pub(super) fn build_agent_tool_context(
     context: &ReviewExecutionContext<'_>,
 ) -> Option<Arc<core::agent_tools::ReviewToolContext>> {
-    if !(context.services.config.agent_review && context.services.adapter.supports_tools()) {
+    if !(context.services.config.agent.enabled && context.services.adapter.supports_tools()) {
         return None;
     }
 

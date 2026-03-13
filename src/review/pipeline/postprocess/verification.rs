@@ -19,9 +19,9 @@ pub(super) async fn apply_verification_pass(
     let (analyzer_comments, llm_comments): (Vec<_>, Vec<_>) =
         comments.into_iter().partition(is_analyzer_comment);
 
-    let (verified_llm_comments, warnings) = if services.config.verification_pass
+    let (verified_llm_comments, warnings) = if services.config.verification.enabled
         && !llm_comments.is_empty()
-        && llm_comments.len() <= services.config.verification_max_comments
+        && llm_comments.len() <= services.config.verification.max_comments
     {
         let comment_count_before = llm_comments.len();
         let summary = super::super::super::verification::verify_comments(
@@ -30,8 +30,8 @@ pub(super) async fn apply_verification_pass(
             &session.source_files,
             &session.verification_context,
             services.verification_adapter.as_ref(),
-            services.config.verification_min_score,
-            services.config.verification_fail_open,
+            services.config.verification.min_score,
+            services.config.verification.fail_open,
         )
         .await;
 

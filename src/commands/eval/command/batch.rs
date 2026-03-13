@@ -38,7 +38,7 @@ pub(super) async fn run_eval_batch(
     output_path: Option<&Path>,
     options: &EvalRunOptions,
 ) -> Result<()> {
-    config.verification_fail_open = true;
+    config.verification.fail_open = true;
     let prepared_options = prepare_eval_options(options)?;
     let models = matrix_models(&config, options);
     let repeat_total = options.repeat.max(1);

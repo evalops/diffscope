@@ -18,7 +18,7 @@ pub(in super::super) async fn dispatch_jobs(
 
     let agent_tool_ctx = build_agent_tool_context(context);
     let agent_loop_config = build_agent_loop_config(context);
-    let agent_tools_filter = context.services.config.agent_tools_enabled.clone();
+    let agent_tools_filter = context.services.config.agent.tools_enabled.clone();
 
     futures::stream::iter(jobs)
         .map(|job| {

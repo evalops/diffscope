@@ -1210,7 +1210,7 @@ pub struct GhStatusResponse {
 
 pub async fn get_gh_status(State(state): State<Arc<AppState>>) -> Json<GhStatusResponse> {
     let config = state.config.read().await;
-    let token = match config.github_token.as_deref() {
+    let token = match config.github.token.as_deref() {
         Some(t) if !t.is_empty() => t.to_string(),
         _ => {
             return Json(GhStatusResponse {
@@ -1313,7 +1313,8 @@ pub async fn get_gh_repos(
 ) -> Result<Json<Vec<GhRepo>>, (StatusCode, String)> {
     let config = state.config.read().await;
     let token = config
-        .github_token
+        .github
+        .token
         .as_deref()
         .filter(|t| !t.is_empty())
         .ok_or_else(|| {
@@ -1568,7 +1569,8 @@ pub async fn get_gh_prs(
 
     let config = state.config.read().await;
     let token = config
-        .github_token
+        .github
+        .token
         .as_deref()
         .filter(|t| !t.is_empty())
         .ok_or_else(|| {
@@ -1723,7 +1725,8 @@ pub async fn start_pr_review(
 
     let config = state.config.read().await;
     let token = config
-        .github_token
+        .github
+        .token
         .as_deref()
         .filter(|t| !t.is_empty())
         .ok_or_else(|| {
@@ -1817,7 +1820,7 @@ async fn run_pr_review_task(
 
     let config = state.config.read().await.clone();
     let repo_path = state.repo_path.clone();
-    let github_token = config.github_token.clone();
+    let github_token = config.github.token.clone();
     let model = config.model.clone();
     let provider = config.adapter.clone();
     let base_url = config.base_url.clone();

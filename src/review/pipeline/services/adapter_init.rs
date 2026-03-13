@@ -32,11 +32,11 @@ fn build_verification_adapter(
     model_config: &ModelConfig,
     adapter: &Arc<dyn adapters::llm::LLMAdapter>,
 ) -> Result<Arc<dyn adapters::llm::LLMAdapter>> {
-    let verification_config = config.to_model_config_for_role(config.verification_model_role);
+    let verification_config = config.to_model_config_for_role(config.verification.model_role);
     if verification_config.model_name != model_config.model_name {
         info!(
             "Using '{}' model '{}' for verification pass",
-            format!("{:?}", config.verification_model_role).to_lowercase(),
+            format!("{:?}", config.verification.model_role).to_lowercase(),
             verification_config.model_name
         );
         Ok(Arc::from(adapters::llm::create_adapter(

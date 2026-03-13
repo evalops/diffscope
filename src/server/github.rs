@@ -35,7 +35,8 @@ pub async fn start_device_flow(
 ) -> Result<Json<DeviceFlowResponse>, (StatusCode, String)> {
     let config = state.config.read().await;
     let client_id = config
-        .github_client_id
+        .github
+        .client_id
         .as_deref()
         .filter(|s| !s.is_empty())
         .ok_or_else(|| {
@@ -110,7 +111,8 @@ pub async fn poll_device_flow(
 ) -> Result<Json<PollDeviceFlowResponse>, (StatusCode, String)> {
     let config = state.config.read().await;
     let client_id = config
-        .github_client_id
+        .github
+        .client_id
         .as_deref()
         .filter(|s| !s.is_empty())
         .ok_or_else(|| {
@@ -192,7 +194,7 @@ pub async fn poll_device_flow(
     // Store the token in config
     {
         let mut config = state.config.write().await;
-        config.github_token = Some(access_token);
+        config.github.token = Some(access_token);
     }
     AppState::save_config_async(&state);
 
@@ -210,7 +212,7 @@ pub async fn poll_device_flow(
 pub async fn disconnect_github(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     {
         let mut config = state.config.write().await;
-        config.github_token = None;
+        config.github.token = None;
     }
     AppState::save_config_async(&state);
     info!("GitHub disconnected");
@@ -229,7 +231,8 @@ pub struct WebhookStatusResponse {
 pub async fn get_webhook_status(State(state): State<Arc<AppState>>) -> Json<WebhookStatusResponse> {
     let config = state.config.read().await;
     let configured = config
-        .github_webhook_secret
+        .github
+        .webhook_secret
         .as_ref()
         .is_some_and(|s| !s.is_empty());
     Json(WebhookStatusResponse {
@@ -248,7 +251,7 @@ pub async fn handle_webhook(
     let config = state.config.read().await;
 
     // Verify signature if webhook secret is configured
-    if let Some(ref secret) = config.github_webhook_secret {
+    if let Some(ref secret) = config.github.webhook_secret {
         if !secret.is_empty() {
             let signature = headers
                 .get("x-hub-signature-256")
@@ -272,9 +275,9 @@ pub async fn handle_webhook(
 
     tracing::Span::current().record("event_type", event_type);
 
-    let token = config.github_token.clone();
-    let github_app_id = config.github_app_id;
-    let private_key = config.github_private_key.clone();
+    let token = config.github.token.clone();
+    let github_app_id = config.github.app_id;
+    let private_key = config.github.private_key.clone();
     drop(config);
 
     info!(event = %event_type, "Received GitHub webhook");

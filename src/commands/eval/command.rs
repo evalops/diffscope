@@ -24,7 +24,7 @@ pub async fn eval_command(
     output_path: Option<PathBuf>,
     options: EvalRunOptions,
 ) -> Result<()> {
-    config.verification_fail_open = true;
+    config.verification.fail_open = true;
     if options.repeat > 1 || !options.matrix_models.is_empty() {
         return run_eval_batch(config, &fixtures_dir, output_path.as_deref(), &options).await;
     }
@@ -87,7 +87,7 @@ fn build_eval_run_metadata(
             fixture_name_filters: options.fixture_name_filters.clone(),
             max_fixtures: options.max_fixtures,
         },
-        verification_fail_open: config.verification_fail_open,
+        verification_fail_open: config.verification.fail_open,
         trend_file: options
             .trend_file
             .as_ref()
