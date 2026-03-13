@@ -10,20 +10,14 @@
 
 ## Immediate Queue
 
-- [ ] `src/review/filters.rs`
-  - Split comment-type classification and comment-type filtering.
-  - Split vague-comment detection heuristics from vague-comment filtering.
-  - Split explicit/adaptive feedback suppression decisions from filter application.
-  - Split feedback-confidence lookup fallback order from confidence mutation.
-  - Keep `apply_review_filters()` as a thin composition root.
-
-## Review Backlog
-
 - [ ] `src/review/feedback.rs`
   - Split feedback stats/data models from file-pattern derivation.
   - Split JSON persistence and atomic-write helpers from store mutation helpers.
   - Split prompt-facing learned-feedback context generation from semantic example recording.
   - Split semantic embedding alignment/loading/saving from example ingestion.
+
+## Review Backlog
+
 - [ ] `src/review/triage.rs`
   - Split file-kind heuristics (`lock`, `generated`) from change-shape heuristics.
   - Split whitespace-only detection from comment-only detection.
