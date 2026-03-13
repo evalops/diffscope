@@ -11,7 +11,6 @@
 ## Immediate Queue
 
 - [ ] `src/core/semantic.rs`
-  - Split semantic index/store model types and defaults from persistence I/O helpers.
   - Split embedding metadata compatibility and adapter/fallback embedding generation.
   - Split source-file discovery and excerpt/query builders from index refresh bookkeeping.
   - Split semantic diff retrieval and feedback-example matching from feedback-store maintenance.
@@ -24,7 +23,6 @@
 ## Core Backlog
 
 - [ ] `src/core/semantic.rs`
-  - Split JSON/file persistence helpers from default path derivation and atomic write helpers.
   - Split semantic chunk hashing/key generation from summary/excerpt assembly.
   - Split changed-range filtering and per-query match scoring from context chunk rendering.
   - Split feedback embedding-text/fingerprint helpers from feedback-store reconciliation.

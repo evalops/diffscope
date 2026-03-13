@@ -1,6 +1,5 @@
 use anyhow::Result;
 use ignore::WalkBuilder;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -12,6 +11,11 @@ use crate::core::diff_parser::{ChangeType, UnifiedDiff};
 use crate::core::function_chunker::chunk_diff_by_functions;
 use crate::core::ContextProvenance;
 
+#[path = "semantic/persistence.rs"]
+mod persistence;
+#[path = "semantic/types.rs"]
+mod types;
+
 const MAX_CODE_FILE_BYTES: usize = 512 * 1024;
 const FALLBACK_EMBEDDING_DIMENSIONS: usize = 128;
 const SUPPORTED_CODE_EXTENSIONS: &[&str] = &[
@@ -19,119 +23,18 @@ const SUPPORTED_CODE_EXTENSIONS: &[&str] = &[
     "cc", "cpp", "cxx", "hpp", "swift", "scala",
 ];
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SemanticChunk {
-    pub key: String,
-    pub file_path: PathBuf,
-    pub symbol_name: String,
-    pub line_range: (usize, usize),
-    pub summary: String,
-    pub embedding_text: String,
-    pub code_excerpt: String,
-    pub embedding: Vec<f32>,
-    pub content_hash: String,
-}
+use types::default_embedding_metadata;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SemanticIndex {
-    pub version: u32,
-    pub entries: HashMap<String, SemanticChunk>,
-    #[serde(default)]
-    pub file_states: HashMap<PathBuf, SemanticFileState>,
-    #[serde(default)]
-    pub embedding: SemanticEmbeddingMetadata,
-}
-
-#[derive(Debug, Clone)]
-pub struct SemanticMatch {
-    pub chunk: SemanticChunk,
-    pub similarity: f32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SemanticFeedbackExample {
-    pub content: String,
-    pub category: String,
-    pub file_patterns: Vec<String>,
-    pub accepted: bool,
-    pub created_at: String,
-    pub embedding: Vec<f32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SemanticFeedbackStore {
-    pub version: u32,
-    pub examples: Vec<SemanticFeedbackExample>,
-    #[serde(default)]
-    pub embedding: SemanticEmbeddingMetadata,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct SemanticFileState {
-    pub content_hash: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SemanticEmbeddingMetadata {
-    pub strategy: String,
-    pub model: String,
-    pub dimensions: usize,
-}
-
-impl Default for SemanticEmbeddingMetadata {
-    fn default() -> Self {
-        default_embedding_metadata()
-    }
-}
-
-impl Default for SemanticIndex {
-    fn default() -> Self {
-        Self {
-            version: 1,
-            entries: HashMap::new(),
-            file_states: HashMap::new(),
-            embedding: default_embedding_metadata(),
-        }
-    }
-}
-
-impl Default for SemanticFeedbackStore {
-    fn default() -> Self {
-        Self {
-            version: 1,
-            examples: Vec::new(),
-            embedding: default_embedding_metadata(),
-        }
-    }
-}
-
-fn default_embedding_metadata() -> SemanticEmbeddingMetadata {
-    SemanticEmbeddingMetadata {
-        strategy: "hash-v1".to_string(),
-        model: "local-hash".to_string(),
-        dimensions: FALLBACK_EMBEDDING_DIMENSIONS,
-    }
-}
-
-impl SemanticIndex {
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
-
-    pub fn from_json(content: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(content)
-    }
-}
+pub use persistence::{
+    default_index_path, default_semantic_feedback_path, load_semantic_feedback_store,
+    load_semantic_index, save_semantic_feedback_store, save_semantic_index,
+};
+pub use types::{
+    SemanticChunk, SemanticEmbeddingMetadata, SemanticFeedbackExample, SemanticFeedbackStore,
+    SemanticFileState, SemanticIndex, SemanticMatch,
+};
 
 impl SemanticFeedbackStore {
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
-
-    pub fn from_json(content: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(content)
-    }
-
     pub fn add_example(&mut self, example: SemanticFeedbackExample) {
         let fingerprint = feedback_example_fingerprint(
             &example.content,
@@ -162,61 +65,6 @@ pub fn align_semantic_feedback_store(
         store.examples.clear();
     }
     store.embedding = merge_embedding_metadata(&store.embedding, &expected);
-}
-
-pub fn default_index_path(repo_root: &Path) -> PathBuf {
-    let repo_key = hash_text(&repo_root.to_string_lossy());
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("diffscope")
-        .join("semantic")
-        .join(format!("{}.json", &repo_key[..16]))
-}
-
-pub fn default_semantic_feedback_path(feedback_path: &Path) -> PathBuf {
-    let parent = feedback_path.parent().unwrap_or_else(|| Path::new("."));
-    let stem = feedback_path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("diffscope.feedback");
-    parent.join(format!("{}.semantic.json", stem))
-}
-
-pub fn load_semantic_index(path: &Path) -> SemanticIndex {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|content| SemanticIndex::from_json(&content).ok())
-        .unwrap_or_default()
-}
-
-pub fn save_semantic_index(path: &Path, index: &SemanticIndex) -> Result<()> {
-    atomic_write_string(path, &index.to_json()?)
-}
-
-pub fn load_semantic_feedback_store(path: &Path) -> SemanticFeedbackStore {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|content| SemanticFeedbackStore::from_json(&content).ok())
-        .unwrap_or_default()
-}
-
-pub fn save_semantic_feedback_store(path: &Path, store: &SemanticFeedbackStore) -> Result<()> {
-    atomic_write_string(path, &store.to_json()?)
-}
-
-fn atomic_write_string(path: &Path, content: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("semantic.json");
-    let tmp_path = path.with_file_name(format!("{}.{}.tmp", file_name, std::process::id()));
-    std::fs::write(&tmp_path, content)?;
-    std::fs::rename(&tmp_path, path)?;
-    Ok(())
 }
 
 pub async fn embed_texts_with_fallback(
