@@ -10,11 +10,6 @@
 
 ## Review Backlog
 
-- [ ] `src/review/verification/parser.rs`
-  - Split response schema construction from response parsing.
-  - Split fenced-JSON extraction / JSON decoding from regex fallback parsing.
-  - Split auto-zero detection from verification-result reconciliation.
-  - Keep `parse_verification_response()` as a thin coordinator.
 - [ ] `src/review/verification/prompt.rs`
   - Split diff evidence extraction, source context extraction, and supporting-context gathering.
   - Split supporting-context scoring/truncation from final formatting.
