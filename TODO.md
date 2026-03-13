@@ -82,7 +82,7 @@
 - [x] `src/commands/feedback_eval/input/loading.rs`: split format detection from JSON parsing/loading.
 - [x] `src/commands/feedback_eval/input/conversion.rs`: split review-session conversion from label normalization helpers.
 - [x] `src/commands/pr.rs`: separate summary-only flow, full review flow, and comment-posting orchestration.
-- [ ] `src/commands/pr/gh.rs`: carve PR resolution, diff fetching, and metadata fetching.
+- [x] `src/commands/pr/gh.rs`: carve PR resolution, diff fetching, and metadata fetching.
 - [ ] `src/commands/git/suggest.rs`: split commit-message prompting from PR-title prompting and response extraction.
 - [ ] `src/commands/review/command.rs`: split review/check/compare entrypoints if they keep diverging.
 - [ ] `src/commands/misc/feedback/command.rs`: separate file loading/ID normalization from store persistence.
