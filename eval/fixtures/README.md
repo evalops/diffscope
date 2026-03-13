@@ -54,9 +54,30 @@ diffscope eval \
   --output eval-report.json
 ```
 
+Matrix + repeat run with artifacts:
+
+```bash
+OPENROUTER_API_KEY=... \
+diffscope \
+  --adapter openrouter \
+  --base-url https://openrouter.ai/api/v1 \
+  --model anthropic/claude-opus-4.1 \
+  eval \
+  --fixtures eval/fixtures \
+  --suite review-depth-core \
+  --matrix-model openai/o3 \
+  --repeat 2 \
+  --label frontier-smoke \
+  --trend-file eval/trends/frontier-smoke.json \
+  --artifact-dir eval/artifacts/frontier-smoke \
+  --output eval/batch/frontier-smoke.json
+```
+
 Notes:
 - Fixtures call the configured model and API provider; they are not deterministic unit tests.
 - Treat this set as a baseline and tighten `must_find`/`must_not_find` thresholds over time.
 - Benchmark-pack fixtures now preserve category/language/source metadata in the JSON report so live runs can be sliced by dimension.
 - Use `--baseline` together with the dimension drop flags when you want regressions to fail on shared suites, categories, or languages instead of only on the whole run.
 - Use `--trend-file` with `--label` to append comparable live-run checkpoints into a reusable `QualityTrend` JSON history, including suite/category/language micro-F1 series and verifier-health counters.
+- Use `--matrix-model` plus `--repeat` to compare the configured primary model against a small frontier-model matrix and to spot flaky live-run variance.
+- Use `--artifact-dir` to persist failed-fixture artifacts and per-run JSON reports for debugging.

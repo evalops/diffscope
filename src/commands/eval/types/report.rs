@@ -49,6 +49,12 @@ pub(in super::super) struct EvalRunMetadata {
     pub(in super::super) verification_fail_open: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in super::super) trend_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) artifact_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) repeat_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) repeat_total: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -153,6 +159,8 @@ pub(in super::super) struct EvalFixtureResult {
     pub(in super::super) rule_summary: Option<EvalRuleScoreSummary>,
     #[serde(default)]
     pub(in super::super) warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) artifact_path: Option<String>,
     #[serde(default)]
     pub(in super::super) failures: Vec<String>,
 }

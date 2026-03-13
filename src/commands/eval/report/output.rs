@@ -32,6 +32,14 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
         if let Some(trend_file) = report.run.trend_file.as_deref() {
             println!("Trend file: {}", trend_file);
         }
+        if let Some(artifact_dir) = report.run.artifact_dir.as_deref() {
+            println!("Artifact dir: {}", artifact_dir);
+        }
+        if let (Some(repeat_index), Some(repeat_total)) =
+            (report.run.repeat_index, report.run.repeat_total)
+        {
+            println!("Repeat: {}/{}", repeat_index, repeat_total);
+        }
     }
 
     println!(
@@ -84,6 +92,9 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
         }
         for warning in &result.warnings {
             println!("  warning: {}", warning);
+        }
+        if let Some(artifact_path) = result.artifact_path.as_deref() {
+            println!("  artifact: {}", artifact_path);
         }
     }
 
@@ -251,6 +262,9 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
 
 pub(in super::super) async fn write_eval_report(report: &EvalReport, path: &Path) -> Result<()> {
     let serialized = serde_json::to_string_pretty(report)?;
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
     tokio::fs::write(path, serialized).await?;
     Ok(())
 }

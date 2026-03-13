@@ -1,3 +1,5 @@
+#[path = "command/batch.rs"]
+mod batch;
 #[path = "command/fixtures.rs"]
 mod fixtures;
 #[path = "command/options.rs"]
@@ -11,6 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::config;
 
 use super::{EvalRunFilters, EvalRunMetadata, EvalRunOptions};
+use batch::run_eval_batch;
 use fixtures::run_eval_fixtures;
 use options::prepare_eval_options;
 use report::emit_eval_report;
@@ -22,12 +25,30 @@ pub async fn eval_command(
     options: EvalRunOptions,
 ) -> Result<()> {
     config.verification_fail_open = true;
+    if options.repeat > 1 || !options.matrix_models.is_empty() {
+        return run_eval_batch(config, &fixtures_dir, output_path.as_deref(), &options).await;
+    }
+
     let execution = run_eval_fixtures(&config, &fixtures_dir, &options).await?;
     let prepared_options = prepare_eval_options(&options)?;
-    let run_metadata = build_eval_run_metadata(&config, &fixtures_dir, &options, &execution);
+    let report_output_path = output_path.clone().or_else(|| {
+        options
+            .artifact_dir
+            .as_ref()
+            .map(|dir| dir.join("report.json"))
+    });
+    let run_metadata = build_eval_run_metadata(
+        &config,
+        &fixtures_dir,
+        &options,
+        &execution,
+        None,
+        None,
+        options.artifact_dir.as_deref(),
+    );
     emit_eval_report(
         execution.results,
-        output_path.as_deref(),
+        report_output_path.as_deref(),
         prepared_options,
         run_metadata,
     )
@@ -39,6 +60,9 @@ fn build_eval_run_metadata(
     fixtures_dir: &Path,
     options: &EvalRunOptions,
     execution: &fixtures::EvalFixtureExecution,
+    repeat_index: Option<usize>,
+    repeat_total: Option<usize>,
+    artifact_dir: Option<&Path>,
 ) -> EvalRunMetadata {
     let (_, resolved_base_url, resolved_adapter) = config.resolve_provider();
     let provider = inferred_provider(
@@ -68,6 +92,9 @@ fn build_eval_run_metadata(
             .trend_file
             .as_ref()
             .map(|path| path.display().to_string()),
+        artifact_dir: artifact_dir.map(|path| path.display().to_string()),
+        repeat_index,
+        repeat_total,
     }
 }
 

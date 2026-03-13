@@ -249,6 +249,7 @@ mod tests {
             rule_metrics: vec![],
             rule_summary: None,
             warnings: vec![],
+            artifact_path: None,
             failures: vec!["missing finding".to_string()],
         }];
 
@@ -282,6 +283,7 @@ mod tests {
                 rule_metrics: vec![],
                 rule_summary: None,
                 warnings: vec![],
+                artifact_path: None,
                 failures: vec![],
             },
             EvalFixtureResult {
@@ -303,6 +305,7 @@ mod tests {
                 rule_metrics: vec![],
                 rule_summary: None,
                 warnings: vec![],
+                artifact_path: None,
                 failures: vec![],
             },
         ];
@@ -349,6 +352,7 @@ mod tests {
                 rule_metrics: vec![],
                 rule_summary: None,
                 warnings: vec![],
+                artifact_path: None,
                 failures: vec![],
             },
             EvalFixtureResult {
@@ -365,6 +369,7 @@ mod tests {
                 rule_metrics: vec![],
                 rule_summary: None,
                 warnings: vec![],
+                artifact_path: None,
                 failures: vec!["missing".to_string()],
             },
         ];

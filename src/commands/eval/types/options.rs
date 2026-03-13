@@ -11,6 +11,8 @@ pub struct EvalRunOptions {
     pub min_macro_f1: Option<f32>,
     pub min_rule_f1: Vec<String>,
     pub max_rule_f1_drop: Vec<String>,
+    pub matrix_models: Vec<String>,
+    pub repeat: usize,
     pub suite_filters: Vec<String>,
     pub category_filters: Vec<String>,
     pub language_filters: Vec<String>,
@@ -18,4 +20,5 @@ pub struct EvalRunOptions {
     pub max_fixtures: Option<usize>,
     pub label: Option<String>,
     pub trend_file: Option<PathBuf>,
+    pub artifact_dir: Option<PathBuf>,
 }

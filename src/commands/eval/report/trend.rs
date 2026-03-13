@@ -192,6 +192,7 @@ mod tests {
                 rule_metrics: vec![],
                 rule_summary: None,
                 warnings: vec![],
+                artifact_path: None,
                 failures: vec![],
             }],
         }

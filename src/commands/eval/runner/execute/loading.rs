@@ -13,6 +13,7 @@ use diff::load_diff_content;
 use repo::resolve_repo_path;
 
 pub(super) struct PreparedFixtureExecution {
+    pub(super) fixture_path: PathBuf,
     pub(super) fixture_name: String,
     pub(super) fixture: EvalFixture,
     pub(super) suite_name: Option<String>,
@@ -49,6 +50,7 @@ pub(super) fn prepare_fixture_execution(
     let repo_path = resolve_repo_path(&fixture_dir, &fixture);
 
     Ok(PreparedFixtureExecution {
+        fixture_path,
         fixture_name,
         fixture,
         suite_name,

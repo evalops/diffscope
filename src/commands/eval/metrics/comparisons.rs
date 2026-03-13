@@ -165,6 +165,7 @@ mod tests {
                     "verification fail-open kept 1 comment(s) after unparseable verifier output"
                         .to_string(),
                 ],
+                artifact_path: None,
                 failures: vec![],
             },
             EvalFixtureResult {
@@ -181,6 +182,7 @@ mod tests {
                 rule_metrics: vec![],
                 rule_summary: None,
                 warnings: vec![],
+                artifact_path: None,
                 failures: vec![],
             },
         ];

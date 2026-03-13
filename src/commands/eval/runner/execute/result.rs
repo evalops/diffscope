@@ -58,6 +58,7 @@ pub(super) fn build_fixture_result(
     match_summary: FixtureMatchSummary,
     benchmark_metrics: Option<BenchmarkFixtureResult>,
     warnings: Vec<String>,
+    artifact_path: Option<String>,
     failures: Vec<String>,
 ) -> EvalFixtureResult {
     EvalFixtureResult {
@@ -74,6 +75,7 @@ pub(super) fn build_fixture_result(
         rule_metrics: match_summary.rule_metrics,
         rule_summary: match_summary.rule_summary,
         warnings,
+        artifact_path,
         failures,
     }
 }

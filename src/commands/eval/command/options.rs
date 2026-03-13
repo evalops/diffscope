@@ -4,6 +4,7 @@ use super::super::fixtures::load_eval_report;
 use super::super::thresholds::{parse_rule_threshold_args, EvalThresholdOptions};
 use super::super::{EvalReport, EvalRunOptions};
 
+#[derive(Clone)]
 pub(super) struct PreparedEvalOptions {
     pub(super) baseline: Option<EvalReport>,
     pub(super) threshold_options: EvalThresholdOptions,

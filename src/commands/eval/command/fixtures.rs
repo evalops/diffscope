@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::config;
 
 use super::super::fixtures::collect_eval_fixtures;
-use super::super::runner::run_eval_fixture;
+use super::super::runner::{run_eval_fixture, EvalFixtureArtifactContext};
 use super::super::{EvalFixtureResult, EvalRunOptions, LoadedEvalFixture};
 
 pub(super) struct EvalFixtureExecution {
@@ -36,10 +36,19 @@ pub(super) async fn run_eval_fixtures(
     }
 
     let selected_count = fixtures.len();
+    let artifact_context =
+        options
+            .artifact_dir
+            .as_ref()
+            .map(|artifact_dir| EvalFixtureArtifactContext {
+                artifact_dir: artifact_dir.clone(),
+                run_label: options.label.clone(),
+                model: config.model.clone(),
+            });
 
     let mut results = Vec::new();
     for fixture in fixtures {
-        results.push(run_eval_fixture(config, fixture).await?);
+        results.push(run_eval_fixture(config, fixture, artifact_context.as_ref()).await?);
     }
 
     Ok(EvalFixtureExecution {
@@ -202,6 +211,8 @@ mod tests {
                 min_macro_f1: None,
                 min_rule_f1: Vec::new(),
                 max_rule_f1_drop: Vec::new(),
+                matrix_models: Vec::new(),
+                repeat: 1,
                 suite_filters: vec!["review-depth-core".to_string()],
                 category_filters: vec!["security".to_string()],
                 language_filters: vec!["rust".to_string()],
@@ -209,6 +220,7 @@ mod tests {
                 max_fixtures: None,
                 label: None,
                 trend_file: None,
+                artifact_dir: None,
             },
         );
 
@@ -238,6 +250,8 @@ mod tests {
                 min_macro_f1: None,
                 min_rule_f1: Vec::new(),
                 max_rule_f1_drop: Vec::new(),
+                matrix_models: Vec::new(),
+                repeat: 1,
                 suite_filters: vec![],
                 category_filters: vec![],
                 language_filters: vec![],
@@ -245,6 +259,7 @@ mod tests {
                 max_fixtures: Some(1),
                 label: None,
                 trend_file: None,
+                artifact_dir: None,
             },
         );
 

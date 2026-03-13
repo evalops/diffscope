@@ -338,6 +338,20 @@ enum Commands {
         #[arg(
             long,
             value_delimiter = ',',
+            help = "Additional model(s) to run as part of the eval matrix (repeatable)"
+        )]
+        matrix_model: Vec<String>,
+
+        #[arg(
+            long,
+            default_value_t = 1,
+            help = "Run each selected model this many times to measure flake"
+        )]
+        repeat: usize,
+
+        #[arg(
+            long,
+            value_delimiter = ',',
             help = "Only run benchmark-pack fixtures from the named suite(s)"
         )]
         suite: Vec<String>,
@@ -371,6 +385,12 @@ enum Commands {
 
         #[arg(long, help = "Append benchmark summary to this QualityTrend JSON file")]
         trend_file: Option<PathBuf>,
+
+        #[arg(
+            long,
+            help = "Write failed-fixture artifacts and per-run reports under this directory"
+        )]
+        artifact_dir: Option<PathBuf>,
     },
     #[command(about = "Evaluate accepted/rejected human feedback from stored review data")]
     FeedbackEval {
@@ -577,6 +597,8 @@ async fn main() -> Result<()> {
             min_macro_f1,
             min_rule_f1,
             max_rule_f1_drop,
+            matrix_model,
+            repeat,
             suite,
             category,
             language,
@@ -584,6 +606,7 @@ async fn main() -> Result<()> {
             max_fixtures,
             label,
             trend_file,
+            artifact_dir,
         } => {
             let eval_options = EvalRunOptions {
                 baseline_report: baseline,
@@ -595,6 +618,8 @@ async fn main() -> Result<()> {
                 min_macro_f1,
                 min_rule_f1,
                 max_rule_f1_drop,
+                matrix_models: matrix_model,
+                repeat,
                 suite_filters: suite,
                 category_filters: category,
                 language_filters: language,
@@ -602,6 +627,7 @@ async fn main() -> Result<()> {
                 max_fixtures,
                 label,
                 trend_file,
+                artifact_dir,
             };
             commands::eval_command(config, fixtures, output, eval_options).await?;
         }
