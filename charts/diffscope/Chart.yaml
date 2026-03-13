@@ -4,9 +4,9 @@ description: AI-powered code review engine with smart analysis and professional 
 type: application
 version: 0.1.0
 appVersion: "0.5.3"
-home: https://github.com/haasonsaas/diffscope
+home: https://github.com/evalops/diffscope
 sources:
-  - https://github.com/haasonsaas/diffscope
+  - https://github.com/evalops/diffscope
 maintainers:
   - name: Jonathan Haas
 keywords:

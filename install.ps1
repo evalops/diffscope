@@ -1,9 +1,9 @@
 # DiffScope Installation Script for Windows
-# Run with: iwr -useb https://raw.githubusercontent.com/haasonsaas/diffscope/main/install.ps1 | iex
+# Run with: iwr -useb https://raw.githubusercontent.com/evalops/diffscope/main/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
-$REPO = "haasonsaas/diffscope"
+$REPO = "evalops/diffscope"
 $INSTALL_DIR = "$env:LOCALAPPDATA\diffscope\bin"
 $BINARY_NAME = "diffscope.exe"
 

@@ -36,18 +36,18 @@ jobs:
           body: |
             # DiffScope ${{ steps.get_version.outputs.VERSION }}
             
-            See [CHANGELOG.md](https://github.com/haasonsaas/diffscope/blob/main/CHANGELOG.md) for details.
+            See [CHANGELOG.md](https://github.com/evalops/diffscope/blob/main/CHANGELOG.md) for details.
             
             ## 🚀 Installation
             
             ### Quick install (Linux/macOS):
             ```bash
-            curl -sSL https://raw.githubusercontent.com/haasonsaas/diffscope/main/install.sh | sh
+            curl -sSL https://raw.githubusercontent.com/evalops/diffscope/main/install.sh | sh
             ```
             
             ### Quick install (Windows):
             ```powershell
-            iwr -useb https://raw.githubusercontent.com/haasonsaas/diffscope/main/install.ps1 | iex
+            iwr -useb https://raw.githubusercontent.com/evalops/diffscope/main/install.ps1 | iex
             ```
             
             ### Manual installation:
@@ -239,21 +239,21 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/haasonsaas/diffscope:latest
-            ghcr.io/haasonsaas/diffscope:${{ steps.get_version.outputs.VERSION }}
+            ghcr.io/evalops/diffscope:latest
+            ghcr.io/evalops/diffscope:${{ steps.get_version.outputs.VERSION }}
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
       - name: Sign image (keyless)
         env:
-          IMAGE_REF: ghcr.io/haasonsaas/diffscope@${{ steps.build-and-push.outputs.digest }}
+          IMAGE_REF: ghcr.io/evalops/diffscope@${{ steps.build-and-push.outputs.digest }}
         run: cosign sign --yes "${IMAGE_REF}"
 
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: ghcr.io/haasonsaas/diffscope@${{ steps.build-and-push.outputs.digest }}
+          image: ghcr.io/evalops/diffscope@${{ steps.build-and-push.outputs.digest }}
           format: spdx-json
           output-file: sbom-diffscope.spdx.json
 

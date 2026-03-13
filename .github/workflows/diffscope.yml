@@ -39,7 +39,7 @@ jobs:
 
       - name: Run DiffScope
         if: steps.check_key.outputs.skip != 'true'
-        uses: docker://ghcr.io/haasonsaas/diffscope:latest
+        uses: docker://ghcr.io/evalops/diffscope:latest
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         with:

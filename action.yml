@@ -20,7 +20,7 @@ inputs:
 
 runs:
   using: 'docker'
-  image: 'docker://ghcr.io/haasonsaas/diffscope:latest'
+  image: 'docker://ghcr.io/evalops/diffscope:latest'
   args:
     - review
     - '--model'

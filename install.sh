@@ -4,7 +4,7 @@
 
 set -e
 
-REPO="haasonsaas/diffscope"
+REPO="evalops/diffscope"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 BINARY_NAME="diffscope"
 

@@ -2180,7 +2180,7 @@ pub(super) async fn post_pr_review_comments(
         ));
     }
     review_body_text
-        .push_str("_Automated review by [DiffScope](https://github.com/haasonsaas/diffscope)_");
+        .push_str("_Automated review by [DiffScope](https://github.com/evalops/diffscope)_");
 
     // Determine event type based on severity
     let has_errors = comments
@@ -2331,7 +2331,7 @@ mod tests {
             status: Some("failed".to_string()),
             time_from: Some("2025-06-01T12:00:00Z".to_string()),
             time_to: Some("2025-06-30T12:00:00Z".to_string()),
-            github_repo: Some("haasonsaas/diffscope".to_string()),
+            github_repo: Some("evalops/diffscope".to_string()),
             limit: Some(100),
             offset: Some(25),
         };
@@ -2341,10 +2341,7 @@ mod tests {
         assert_eq!(filters.status, Some("failed".to_string()));
         assert!(filters.time_from.is_some());
         assert!(filters.time_to.is_some());
-        assert_eq!(
-            filters.github_repo,
-            Some("haasonsaas/diffscope".to_string())
-        );
+        assert_eq!(filters.github_repo, Some("evalops/diffscope".to_string()));
         assert_eq!(filters.limit, Some(100));
         assert_eq!(filters.offset, Some(25));
     }
