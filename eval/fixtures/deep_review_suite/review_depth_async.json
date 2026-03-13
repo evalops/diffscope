@@ -1,0 +1,95 @@
+{
+  "name": "review-depth-async",
+  "author": "diffscope",
+  "version": "1.0.0",
+  "description": "Async-correctness benchmark pack for deeper live review runs.",
+  "languages": [
+    "rust",
+    "typescript"
+  ],
+  "categories": [
+    "bug",
+    "security"
+  ],
+  "thresholds": {
+    "min_precision": 0.45,
+    "min_recall": 0.35,
+    "min_f1": 0.4,
+    "max_false_positive_rate": 0.45,
+    "min_weighted_score": 0.45
+  },
+  "metadata": {
+    "purpose": "live-regression-eval",
+    "family": "review-depth"
+  },
+  "fixtures": [
+    {
+      "name": "rust-fire-and-forget-sync-task",
+      "category": "bug",
+      "language": "rust",
+      "difficulty": "Hard",
+      "diff_content": "diff --git a/src/sync.rs b/src/sync.rs\nindex 1111111..2222222 100644\n--- a/src/sync.rs\n+++ b/src/sync.rs\n@@ -1,5 +1,6 @@\n pub async fn refresh_user(user_id: String) -> anyhow::Result<()> {\n-    sync_user(user_id).await?;\n+    tokio::spawn(async move {\n+        sync_user(user_id).await.unwrap();\n+    });\n     Ok(())\n }\n",
+      "expected_findings": [
+        {
+          "description": "Background task errors are detached from the caller and can fail silently.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "src/sync.rs",
+          "line_hint": 3,
+          "contains_any": [
+            "fire and forget",
+            "spawned task is not awaited",
+            "detached task error",
+            "background task may fail silently"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Async work should not be detached if the caller relies on success or error propagation.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "typescript-missing-await-permission-check",
+      "category": "security",
+      "language": "typescript",
+      "difficulty": "Expert",
+      "diff_content": "diff --git a/src/permissions.ts b/src/permissions.ts\nindex 1111111..2222222 100644\n--- a/src/permissions.ts\n+++ b/src/permissions.ts\n@@ -1,5 +1,5 @@\n export async function deleteProject(user, projectId) {\n-  const allowed = await checkPermission(user, projectId);\n+  const allowed = checkPermission(user, projectId);\n   if (!allowed) throw new Error(\"forbidden\");\n   return db.project.delete({ where: { id: projectId } });\n }\n",
+      "expected_findings": [
+        {
+          "description": "Missing await makes the permission check always truthy and bypasses authorization.",
+          "severity": "Error",
+          "category": "Security",
+          "file_pattern": "src/permissions.ts",
+          "line_hint": 2,
+          "contains_any": [
+            "missing await",
+            "promise is always truthy",
+            "authorization bypass",
+            "async permission check"
+          ],
+          "tags_any": [
+            "authorization",
+            "async"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Awaiting async permission checks is required before destructive actions.",
+      "source": "deep-review-suite"
+    }
+  ]
+}

@@ -18,6 +18,7 @@ pub(in super::super) struct FeedbackEvalComment {
     pub(in super::super) line_number: Option<usize>,
     pub(in super::super) file_patterns: Vec<String>,
     pub(in super::super) content: String,
+    pub(in super::super) rule_id: Option<String>,
     pub(in super::super) category: String,
     pub(in super::super) severity: Option<String>,
     pub(in super::super) confidence: Option<f32>,

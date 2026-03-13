@@ -68,6 +68,7 @@ mod tests {
             line_number: Some(10),
             file_patterns: vec!["*.rs".to_string()],
             content: "User-controlled SQL is interpolated into the query string.".to_string(),
+            rule_id: Some("sec.sql.injection".to_string()),
             category: "Security".to_string(),
             severity: Some("Warning".to_string()),
             confidence,

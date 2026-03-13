@@ -10,213 +10,301 @@ use crate::core::eval_benchmarks::{
 use super::fixtures::EvalFixtureMetadata;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(in super::super) struct EvalRunFilters {
+pub struct EvalRunFilters {
     #[serde(default)]
-    pub(in super::super) suite_filters: Vec<String>,
+    pub suite_filters: Vec<String>,
     #[serde(default)]
-    pub(in super::super) category_filters: Vec<String>,
+    pub category_filters: Vec<String>,
     #[serde(default)]
-    pub(in super::super) language_filters: Vec<String>,
+    pub language_filters: Vec<String>,
     #[serde(default)]
-    pub(in super::super) fixture_name_filters: Vec<String>,
+    pub fixture_name_filters: Vec<String>,
     #[serde(default)]
-    pub(in super::super) max_fixtures: Option<usize>,
+    pub max_fixtures: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(in super::super) struct EvalRunMetadata {
+pub struct EvalRunMetadata {
     #[serde(default)]
-    pub(in super::super) started_at: String,
+    pub started_at: String,
     #[serde(default)]
-    pub(in super::super) fixtures_root: String,
+    pub fixtures_root: String,
     #[serde(default)]
-    pub(in super::super) fixtures_discovered: usize,
+    pub fixtures_discovered: usize,
     #[serde(default)]
-    pub(in super::super) fixtures_selected: usize,
+    pub fixtures_selected: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) label: Option<String>,
+    pub label: Option<String>,
     #[serde(default)]
-    pub(in super::super) model: String,
+    pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) adapter: Option<String>,
+    pub adapter: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) provider: Option<String>,
+    pub provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) base_url: Option<String>,
+    pub base_url: Option<String>,
     #[serde(default)]
-    pub(in super::super) filters: EvalRunFilters,
+    pub filters: EvalRunFilters,
     #[serde(default)]
-    pub(in super::super) verification_fail_open: bool,
+    pub verification_fail_open: bool,
+    #[serde(default)]
+    pub verification_judges: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) trend_file: Option<String>,
+    pub verification_consensus_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) artifact_dir: Option<String>,
+    pub trend_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) repeat_index: Option<usize>,
+    pub artifact_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) repeat_total: Option<usize>,
+    pub repeat_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_total: Option<usize>,
+    #[serde(default)]
+    pub reproduction_validation: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(in super::super) struct EvalNamedMetricComparison {
+pub struct EvalNamedMetricComparison {
     #[serde(default)]
-    pub(in super::super) name: String,
+    pub name: String,
     #[serde(default)]
-    pub(in super::super) current_micro_f1: f32,
+    pub current_micro_f1: f32,
     #[serde(default)]
-    pub(in super::super) baseline_micro_f1: f32,
+    pub baseline_micro_f1: f32,
     #[serde(default)]
-    pub(in super::super) micro_f1_delta: f32,
+    pub micro_f1_delta: f32,
     #[serde(default)]
-    pub(in super::super) current_weighted_score: f32,
+    pub current_weighted_score: f32,
     #[serde(default)]
-    pub(in super::super) baseline_weighted_score: f32,
+    pub baseline_weighted_score: f32,
     #[serde(default)]
-    pub(in super::super) weighted_score_delta: f32,
+    pub weighted_score_delta: f32,
     #[serde(default)]
-    pub(in super::super) current_fixture_count: usize,
+    pub current_fixture_count: usize,
     #[serde(default)]
-    pub(in super::super) baseline_fixture_count: usize,
+    pub baseline_fixture_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(in super::super) struct EvalVerificationHealth {
+pub struct EvalVerificationHealth {
     #[serde(default)]
-    pub(in super::super) warnings_total: usize,
+    pub warnings_total: usize,
     #[serde(default)]
-    pub(in super::super) fixtures_with_warnings: usize,
+    pub fixtures_with_warnings: usize,
     #[serde(default)]
-    pub(in super::super) fail_open_warning_count: usize,
+    pub fail_open_warning_count: usize,
     #[serde(default)]
-    pub(in super::super) parse_failure_count: usize,
+    pub parse_failure_count: usize,
     #[serde(default)]
-    pub(in super::super) request_failure_count: usize,
+    pub request_failure_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EvalAgentToolCall {
+    #[serde(default)]
+    pub iteration: usize,
+    #[serde(default)]
+    pub tool_name: String,
+    #[serde(default)]
+    pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EvalAgentActivity {
+    #[serde(default)]
+    pub total_iterations: usize,
+    #[serde(default)]
+    pub tool_calls: Vec<EvalAgentToolCall>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EvalVerificationJudgeReport {
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub total_comments: usize,
+    #[serde(default)]
+    pub passed_comments: usize,
+    #[serde(default)]
+    pub filtered_comments: usize,
+    #[serde(default)]
+    pub abstained_comments: usize,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EvalVerificationReport {
+    #[serde(default)]
+    pub consensus_mode: String,
+    #[serde(default)]
+    pub required_votes: usize,
+    #[serde(default)]
+    pub judge_count: usize,
+    #[serde(default)]
+    pub judges: Vec<EvalVerificationJudgeReport>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EvalReproductionCheck {
+    #[serde(default)]
+    pub comment_id: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reproduced: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+    #[serde(default)]
+    pub agent_activity: Option<EvalAgentActivity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EvalReproductionSummary {
+    #[serde(default)]
+    pub confirmed: usize,
+    #[serde(default)]
+    pub rejected: usize,
+    #[serde(default)]
+    pub inconclusive: usize,
+    #[serde(default)]
+    pub checks: Vec<EvalReproductionCheck>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(in super::super) struct EvalRuleMetrics {
+pub struct EvalRuleMetrics {
     #[serde(default)]
-    pub(in super::super) rule_id: String,
+    pub rule_id: String,
     #[serde(default)]
-    pub(in super::super) expected: usize,
+    pub expected: usize,
     #[serde(default)]
-    pub(in super::super) predicted: usize,
+    pub predicted: usize,
     #[serde(default)]
-    pub(in super::super) true_positives: usize,
+    pub true_positives: usize,
     #[serde(default)]
-    pub(in super::super) false_positives: usize,
+    pub false_positives: usize,
     #[serde(default)]
-    pub(in super::super) false_negatives: usize,
+    pub false_negatives: usize,
     #[serde(default)]
-    pub(in super::super) precision: f32,
+    pub precision: f32,
     #[serde(default)]
-    pub(in super::super) recall: f32,
+    pub recall: f32,
     #[serde(default)]
-    pub(in super::super) f1: f32,
+    pub f1: f32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
-pub(in super::super) struct EvalRuleScoreSummary {
+pub struct EvalRuleScoreSummary {
     #[serde(default)]
-    pub(in super::super) micro_precision: f32,
+    pub micro_precision: f32,
     #[serde(default)]
-    pub(in super::super) micro_recall: f32,
+    pub micro_recall: f32,
     #[serde(default)]
-    pub(in super::super) micro_f1: f32,
+    pub micro_f1: f32,
     #[serde(default)]
-    pub(in super::super) macro_precision: f32,
+    pub macro_precision: f32,
     #[serde(default)]
-    pub(in super::super) macro_recall: f32,
+    pub macro_recall: f32,
     #[serde(default)]
-    pub(in super::super) macro_f1: f32,
+    pub macro_f1: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EvalFixtureResult {
+    #[serde(default)]
+    pub fixture: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suite: Option<String>,
+    #[serde(default)]
+    pub passed: bool,
+    #[serde(default)]
+    pub total_comments: usize,
+    #[serde(default)]
+    pub required_matches: usize,
+    #[serde(default)]
+    pub required_total: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_metrics: Option<BenchmarkFixtureResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suite_thresholds: Option<BenchmarkThresholds>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub difficulty: Option<Difficulty>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<EvalFixtureMetadata>,
+    #[serde(default)]
+    pub rule_metrics: Vec<EvalRuleMetrics>,
+    #[serde(default)]
+    pub rule_summary: Option<EvalRuleScoreSummary>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_report: Option<EvalVerificationReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_activity: Option<EvalAgentActivity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reproduction_summary: Option<EvalReproductionSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_path: Option<String>,
+    #[serde(default)]
+    pub failures: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(in super::super) struct EvalFixtureResult {
+pub struct EvalSuiteResult {
     #[serde(default)]
-    pub(in super::super) fixture: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) suite: Option<String>,
+    pub suite: String,
     #[serde(default)]
-    pub(in super::super) passed: bool,
+    pub fixture_count: usize,
     #[serde(default)]
-    pub(in super::super) total_comments: usize,
+    pub aggregate: BenchmarkAggregateMetrics,
     #[serde(default)]
-    pub(in super::super) required_matches: usize,
+    pub thresholds_enforced: bool,
     #[serde(default)]
-    pub(in super::super) required_total: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) benchmark_metrics: Option<BenchmarkFixtureResult>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) suite_thresholds: Option<BenchmarkThresholds>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) difficulty: Option<Difficulty>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) metadata: Option<EvalFixtureMetadata>,
+    pub threshold_pass: bool,
     #[serde(default)]
-    pub(in super::super) rule_metrics: Vec<EvalRuleMetrics>,
-    #[serde(default)]
-    pub(in super::super) rule_summary: Option<EvalRuleScoreSummary>,
-    #[serde(default)]
-    pub(in super::super) warnings: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) artifact_path: Option<String>,
-    #[serde(default)]
-    pub(in super::super) failures: Vec<String>,
+    pub threshold_failures: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(in super::super) struct EvalSuiteResult {
+pub struct EvalReport {
     #[serde(default)]
-    pub(in super::super) suite: String,
+    pub run: EvalRunMetadata,
     #[serde(default)]
-    pub(in super::super) fixture_count: usize,
+    pub fixtures_total: usize,
     #[serde(default)]
-    pub(in super::super) aggregate: BenchmarkAggregateMetrics,
+    pub fixtures_passed: usize,
     #[serde(default)]
-    pub(in super::super) thresholds_enforced: bool,
+    pub fixtures_failed: usize,
     #[serde(default)]
-    pub(in super::super) threshold_pass: bool,
+    pub rule_metrics: Vec<EvalRuleMetrics>,
     #[serde(default)]
-    pub(in super::super) threshold_failures: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(in super::super) struct EvalReport {
-    #[serde(default)]
-    pub(in super::super) run: EvalRunMetadata,
-    #[serde(default)]
-    pub(in super::super) fixtures_total: usize,
-    #[serde(default)]
-    pub(in super::super) fixtures_passed: usize,
-    #[serde(default)]
-    pub(in super::super) fixtures_failed: usize,
-    #[serde(default)]
-    pub(in super::super) rule_metrics: Vec<EvalRuleMetrics>,
-    #[serde(default)]
-    pub(in super::super) rule_summary: Option<EvalRuleScoreSummary>,
+    pub rule_summary: Option<EvalRuleScoreSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) benchmark_summary: Option<BenchmarkAggregateMetrics>,
+    pub benchmark_summary: Option<BenchmarkAggregateMetrics>,
     #[serde(default)]
-    pub(in super::super) suite_results: Vec<EvalSuiteResult>,
+    pub suite_results: Vec<EvalSuiteResult>,
     #[serde(default)]
-    pub(in super::super) benchmark_by_category: HashMap<String, BenchmarkAggregateMetrics>,
+    pub benchmark_by_category: HashMap<String, BenchmarkAggregateMetrics>,
     #[serde(default)]
-    pub(in super::super) benchmark_by_language: HashMap<String, BenchmarkAggregateMetrics>,
+    pub benchmark_by_language: HashMap<String, BenchmarkAggregateMetrics>,
     #[serde(default)]
-    pub(in super::super) benchmark_by_difficulty: HashMap<String, BenchmarkAggregateMetrics>,
+    pub benchmark_by_difficulty: HashMap<String, BenchmarkAggregateMetrics>,
     #[serde(default)]
-    pub(in super::super) suite_comparisons: Vec<EvalNamedMetricComparison>,
+    pub suite_comparisons: Vec<EvalNamedMetricComparison>,
     #[serde(default)]
-    pub(in super::super) category_comparisons: Vec<EvalNamedMetricComparison>,
+    pub category_comparisons: Vec<EvalNamedMetricComparison>,
     #[serde(default)]
-    pub(in super::super) language_comparisons: Vec<EvalNamedMetricComparison>,
+    pub language_comparisons: Vec<EvalNamedMetricComparison>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(in super::super) verification_health: Option<EvalVerificationHealth>,
+    pub verification_health: Option<EvalVerificationHealth>,
     #[serde(default)]
-    pub(in super::super) warnings: Vec<String>,
+    pub warnings: Vec<String>,
     #[serde(default)]
-    pub(in super::super) threshold_failures: Vec<String>,
+    pub threshold_failures: Vec<String>,
     #[serde(default)]
-    pub(in super::super) results: Vec<EvalFixtureResult>,
+    pub results: Vec<EvalFixtureResult>,
 }

@@ -49,7 +49,7 @@ fn add_expected_counts(
     expected_patterns: &[EvalPattern],
 ) {
     for pattern in expected_patterns {
-        if let Some(rule_id) = pattern.normalized_rule_id() {
+        if let Some(rule_id) = pattern.normalized_rule_ids().into_iter().next() {
             counts_by_rule.entry(rule_id).or_default().expected += 1;
         }
     }
@@ -73,16 +73,21 @@ fn add_true_positive_counts(
     matched_pairs: &[(usize, usize)],
 ) {
     for (expected_idx, comment_idx) in matched_pairs {
-        let expected_rule = expected_patterns
+        let expected_rule_ids = expected_patterns
             .get(*expected_idx)
-            .and_then(EvalPattern::normalized_rule_id);
+            .map(EvalPattern::normalized_rule_ids)
+            .unwrap_or_default();
         let predicted_rule = comments
             .get(*comment_idx)
             .and_then(|comment| normalize_rule_id(comment.rule_id.as_deref()));
-        if let (Some(expected_rule), Some(predicted_rule)) = (expected_rule, predicted_rule) {
-            if expected_rule == predicted_rule {
+        if let Some(predicted_rule) = predicted_rule {
+            if expected_rule_ids
+                .iter()
+                .any(|expected| expected == &predicted_rule)
+            {
+                let canonical_rule = expected_rule_ids.first().cloned().unwrap_or(predicted_rule);
                 counts_by_rule
-                    .entry(expected_rule)
+                    .entry(canonical_rule)
                     .or_default()
                     .true_positives += 1;
             }

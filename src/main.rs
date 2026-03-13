@@ -30,7 +30,7 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    #[arg(long, global = true, default_value = "claude-sonnet-4-6")]
+    #[arg(long, global = true, default_value = "anthropic/claude-opus-4.5")]
     model: String,
 
     #[arg(
@@ -46,7 +46,7 @@ struct Cli {
     #[arg(
         long,
         global = true,
-        help = "Force adapter: openai, anthropic, or ollama"
+        help = "Force adapter: openai, anthropic, openrouter, or ollama"
     )]
     adapter: Option<String>,
 
@@ -391,6 +391,27 @@ enum Commands {
             help = "Write failed-fixture artifacts and per-run reports under this directory"
         )]
         artifact_dir: Option<PathBuf>,
+
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Allow eval runs with non-frontier review/judge models"
+        )]
+        allow_subfrontier_models: bool,
+
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Run a tool-using reproduction validator over emitted comments"
+        )]
+        repro_validate: bool,
+
+        #[arg(
+            long,
+            default_value_t = 3,
+            help = "Maximum number of comments per fixture to send through reproduction validation"
+        )]
+        repro_max_comments: usize,
     },
     #[command(about = "Evaluate accepted/rejected human feedback from stored review data")]
     FeedbackEval {
@@ -408,6 +429,12 @@ enum Commands {
             help = "Confidence threshold used for acceptance calibration (0.0-1.0)"
         )]
         confidence_threshold: f32,
+
+        #[arg(
+            long,
+            help = "Optional eval JSON report to correlate with feedback outcomes"
+        )]
+        eval_report: Option<PathBuf>,
     },
 }
 
@@ -607,6 +634,9 @@ async fn main() -> Result<()> {
             label,
             trend_file,
             artifact_dir,
+            allow_subfrontier_models,
+            repro_validate,
+            repro_max_comments,
         } => {
             let eval_options = EvalRunOptions {
                 baseline_report: baseline,
@@ -628,6 +658,9 @@ async fn main() -> Result<()> {
                 label,
                 trend_file,
                 artifact_dir,
+                allow_subfrontier_models,
+                repro_validate,
+                repro_max_comments,
             };
             commands::eval_command(config, fixtures, output, eval_options).await?;
         }
@@ -635,8 +668,10 @@ async fn main() -> Result<()> {
             input,
             output,
             confidence_threshold,
+            eval_report,
         } => {
-            commands::feedback_eval_command(input, output, confidence_threshold).await?;
+            commands::feedback_eval_command(input, output, confidence_threshold, eval_report)
+                .await?;
         }
     }
 

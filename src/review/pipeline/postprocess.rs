@@ -104,6 +104,7 @@ pub(super) async fn run_postprocess(
         comments_by_pass,
         hotspots: session.enhanced_ctx.hotspots.clone(),
         agent_activity,
+        verification_report: verification_output.report,
         warnings: verification_output.warnings,
     })
 }

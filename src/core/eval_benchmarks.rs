@@ -102,6 +102,8 @@ pub struct ExpectedFinding {
     #[serde(default)]
     pub fix_effort: Option<String>,
     pub rule_id: Option<String>,
+    #[serde(default)]
+    pub rule_id_aliases: Vec<String>,
 }
 
 /// A finding that should NOT be reported (false positive check).
@@ -571,6 +573,7 @@ mod tests {
                 confidence_at_most: None,
                 fix_effort: None,
                 rule_id: Some("sec.sql.injection".to_string()),
+                rule_id_aliases: Vec::new(),
             }],
             negative_findings: vec![],
             min_total: None,

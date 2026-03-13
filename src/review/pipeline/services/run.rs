@@ -25,7 +25,7 @@ pub(super) async fn build_pipeline_services(
         feedback_context: support_services.feedback_context,
         plugin_manager: support_services.plugin_manager,
         adapter: adapter_services.adapter,
-        verification_adapter: adapter_services.verification_adapter,
+        verification_adapters: adapter_services.verification_adapters,
         embedding_adapter: adapter_services.embedding_adapter,
         base_prompt_config: support_services.base_prompt_config,
         convention_store_path: support_services.convention_store_path,

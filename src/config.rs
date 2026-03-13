@@ -25,6 +25,24 @@ pub enum ModelRole {
     Fast,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationConsensusMode {
+    Any,
+    Majority,
+    All,
+}
+
+impl VerificationConsensusMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Any => "any",
+            Self::Majority => "majority",
+            Self::All => "all",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     #[serde(default)]
@@ -51,16 +69,16 @@ pub struct Config {
     pub model: String,
 
     /// Cheap/fast model for triage, summarization, NL translation.
-    #[serde(default)]
+    #[serde(default = "default_model_weak")]
     pub model_weak: Option<String>,
 
     /// Fast model for lightweight LLM tasks: PR summaries, commit messages,
     /// PR titles, diagram generation. Falls back to model_weak, then primary.
-    #[serde(default)]
+    #[serde(default = "default_model_fast")]
     pub model_fast: Option<String>,
 
     /// Reasoning-capable model for complex analysis and self-reflection.
-    #[serde(default)]
+    #[serde(default = "default_model_reasoning")]
     pub model_reasoning: Option<String>,
 
     /// Embedding model for RAG indexing.
@@ -298,6 +316,14 @@ pub struct Config {
     #[serde(default = "default_verification_model_role")]
     pub verification_model_role: ModelRole,
 
+    /// Additional model roles used as verification judges.
+    #[serde(default = "default_verification_additional_model_roles")]
+    pub verification_additional_model_roles: Vec<ModelRole>,
+
+    /// How multiple verification judges should be combined.
+    #[serde(default = "default_verification_consensus_mode")]
+    pub verification_consensus_mode: VerificationConsensusMode,
+
     /// Minimum verification score to keep a comment (0-10, default 5).
     #[serde(default = "default_verification_min_score")]
     pub verification_min_score: u8,
@@ -437,9 +463,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             model: default_model(),
-            model_weak: None,
-            model_fast: None,
-            model_reasoning: None,
+            model_weak: default_model_weak(),
+            model_fast: default_model_fast(),
+            model_reasoning: default_model_reasoning(),
             model_embedding: None,
             fallback_models: Vec::new(),
             temperature: default_temperature(),
@@ -509,6 +535,8 @@ impl Default for Config {
             agent_tools_enabled: None,
             verification_pass: true,
             verification_model_role: default_verification_model_role(),
+            verification_additional_model_roles: default_verification_additional_model_roles(),
+            verification_consensus_mode: default_verification_consensus_mode(),
             verification_min_score: default_verification_min_score(),
             verification_max_comments: default_verification_max_comments(),
             verification_fail_open: false,
@@ -715,7 +743,10 @@ impl Config {
         // Normalize adapter field
         if let Some(ref adapter) = self.adapter {
             let normalized = adapter.trim().to_lowercase();
-            self.adapter = if matches!(normalized.as_str(), "openai" | "anthropic" | "ollama") {
+            self.adapter = if matches!(
+                normalized.as_str(),
+                "openai" | "anthropic" | "openrouter" | "ollama"
+            ) {
                 Some(normalized)
             } else {
                 None
@@ -1204,7 +1235,19 @@ impl Config {
 }
 
 fn default_model() -> String {
-    "claude-opus-4-6".to_string()
+    "anthropic/claude-opus-4.5".to_string()
+}
+
+fn default_model_weak() -> Option<String> {
+    Some("anthropic/claude-sonnet-4.5".to_string())
+}
+
+fn default_model_fast() -> Option<String> {
+    Some("anthropic/claude-sonnet-4.5".to_string())
+}
+
+fn default_model_reasoning() -> Option<String> {
+    Some("anthropic/claude-opus-4.5".to_string())
 }
 
 fn default_temperature() -> f32 {
@@ -1338,6 +1381,14 @@ fn default_agent_max_iterations() -> usize {
 
 fn default_verification_model_role() -> ModelRole {
     ModelRole::Weak
+}
+
+fn default_verification_additional_model_roles() -> Vec<ModelRole> {
+    vec![ModelRole::Reasoning]
+}
+
+fn default_verification_consensus_mode() -> VerificationConsensusMode {
+    VerificationConsensusMode::Any
 }
 
 fn default_verification_min_score() -> u8 {
@@ -1653,6 +1704,18 @@ mod tests {
     }
 
     #[test]
+    fn normalize_preserves_openrouter_adapter_override() {
+        let mut config = Config {
+            adapter: Some("OpenRouter".to_string()),
+            ..Config::default()
+        };
+
+        config.normalize();
+
+        assert_eq!(config.adapter.as_deref(), Some("openrouter"));
+    }
+
+    #[test]
     fn normalize_output_language_trims() {
         let mut config = Config {
             output_language: Some("  JA  ".to_string()),
@@ -1942,8 +2005,18 @@ temperature: 0.3
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.model, "claude-sonnet-4-6");
-        assert!(config.model_weak.is_none());
-        assert!(config.model_reasoning.is_none());
+        assert_eq!(
+            config.model_weak,
+            Some("anthropic/claude-sonnet-4.5".to_string())
+        );
+        assert_eq!(
+            config.model_fast,
+            Some("anthropic/claude-sonnet-4.5".to_string())
+        );
+        assert_eq!(
+            config.model_reasoning,
+            Some("anthropic/claude-opus-4.5".to_string())
+        );
         assert!(config.model_embedding.is_none());
         assert!(config.fallback_models.is_empty());
     }
@@ -1957,6 +2030,33 @@ temperature: 0.3
             model.contains("opus"),
             "Default model should be Opus (frontier), got: {}",
             model
+        );
+    }
+
+    #[test]
+    fn test_default_frontier_role_models_match_requested_pair() {
+        let config = Config::default();
+        assert_eq!(config.model, "anthropic/claude-opus-4.5");
+        assert_eq!(
+            config.model_weak,
+            Some("anthropic/claude-sonnet-4.5".to_string())
+        );
+        assert_eq!(
+            config.model_fast,
+            Some("anthropic/claude-sonnet-4.5".to_string())
+        );
+        assert_eq!(
+            config.model_reasoning,
+            Some("anthropic/claude-opus-4.5".to_string())
+        );
+        assert_eq!(config.verification_model_role, ModelRole::Weak);
+        assert_eq!(
+            config.verification_additional_model_roles,
+            vec![ModelRole::Reasoning]
+        );
+        assert_eq!(
+            config.verification_consensus_mode,
+            VerificationConsensusMode::Any
         );
     }
 

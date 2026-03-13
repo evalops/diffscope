@@ -17,10 +17,15 @@ mod types;
 
 pub use command::eval_command;
 pub use types::EvalRunOptions;
+pub use types::{
+    EvalAgentActivity, EvalAgentToolCall, EvalFixtureMetadata, EvalReport, EvalReproductionCheck,
+    EvalReproductionSummary, EvalRuleMetrics, EvalRunMetadata, EvalVerificationJudgeReport,
+    EvalVerificationReport,
+};
 
 #[allow(unused_imports)]
 use types::{
-    EvalExpectations, EvalFixture, EvalFixtureMetadata, EvalFixtureResult,
-    EvalNamedMetricComparison, EvalPattern, EvalReport, EvalRuleMetrics, EvalRuleScoreSummary,
-    EvalRunFilters, EvalRunMetadata, EvalSuiteResult, EvalVerificationHealth, LoadedEvalFixture,
+    EvalExpectations, EvalFixture, EvalFixtureResult, EvalNamedMetricComparison, EvalPattern,
+    EvalRuleScoreSummary, EvalRunFilters, EvalSuiteResult, EvalVerificationHealth,
+    LoadedEvalFixture,
 };

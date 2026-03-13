@@ -710,6 +710,7 @@ fn exercise_eval_benchmarks(quality_trend_json: Option<&str>) -> QualityTrend {
             confidence_at_most: Some(0.95),
             fix_effort: Some("medium".to_string()),
             rule_id: Some("test.rule".to_string()),
+            rule_id_aliases: vec![],
         }],
         negative_findings: vec![NegativeFinding {
             description: "should not find".to_string(),

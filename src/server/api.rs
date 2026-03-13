@@ -1065,8 +1065,8 @@ pub async fn test_provider(Json(request): Json<TestProviderRequest>) -> Json<Tes
                     ok: true,
                     message: "Connected to Anthropic API.".to_string(),
                     models: vec![
-                        "claude-sonnet-4-6".to_string(),
-                        "claude-opus-4-6".to_string(),
+                        "anthropic/claude-sonnet-4.5".to_string(),
+                        "anthropic/claude-opus-4.5".to_string(),
                         "claude-haiku-4-5-20251001".to_string(),
                     ],
                 }),

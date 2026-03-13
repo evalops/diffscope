@@ -18,7 +18,7 @@ serviceAccount:
 diffscope:
   host: "0.0.0.0"
   port: 3000
-  model: "claude-sonnet-4-6"
+  model: "anthropic/claude-opus-4.5"
   # Adapter override: openai, anthropic, ollama, openrouter (auto-detected if empty)
   adapter: ""
   # Base URL for LLM API (auto-set to Ollama service URL when ollama.enabled)

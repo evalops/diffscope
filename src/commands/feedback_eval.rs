@@ -11,6 +11,7 @@ pub use command::feedback_eval_command;
 
 #[allow(unused_imports)]
 use types::{
-    FeedbackEvalBucket, FeedbackEvalComment, FeedbackEvalExample, FeedbackEvalReport,
-    FeedbackThresholdMetrics, LoadedFeedbackEvalInput,
+    FeedbackEvalBucket, FeedbackEvalCategoryCorrelation, FeedbackEvalComment,
+    FeedbackEvalCorrelationReport, FeedbackEvalExample, FeedbackEvalReport,
+    FeedbackEvalRuleCorrelation, FeedbackThresholdMetrics, LoadedFeedbackEvalInput,
 };

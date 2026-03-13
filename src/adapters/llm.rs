@@ -27,7 +27,7 @@ pub struct ModelConfig {
 impl Default for ModelConfig {
     fn default() -> Self {
         Self {
-            model_name: "claude-opus-4-6".to_string(),
+            model_name: "anthropic/claude-opus-4.5".to_string(),
             api_key: None,
             base_url: None,
             temperature: 0.2,
@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn test_model_config_default() {
         let config = ModelConfig::default();
-        assert_eq!(config.model_name, "claude-opus-4-6");
+        assert_eq!(config.model_name, "anthropic/claude-opus-4.5");
         assert!(config.api_key.is_none());
         assert!(config.base_url.is_none());
         assert!((config.temperature - 0.2).abs() < f32::EPSILON);

@@ -15,6 +15,54 @@ pub(in super::super) struct FeedbackEvalBucket {
     pub(in super::super) acceptance_rate: f32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(in super::super) struct FeedbackEvalCategoryCorrelation {
+    #[serde(default)]
+    pub(in super::super) name: String,
+    #[serde(default)]
+    pub(in super::super) feedback_total: usize,
+    #[serde(default)]
+    pub(in super::super) feedback_acceptance_rate: f32,
+    #[serde(default)]
+    pub(in super::super) high_confidence_total: usize,
+    #[serde(default)]
+    pub(in super::super) high_confidence_acceptance_rate: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) eval_fixture_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) eval_micro_f1: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) eval_weighted_score: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(in super::super) struct FeedbackEvalRuleCorrelation {
+    #[serde(default)]
+    pub(in super::super) rule_id: String,
+    #[serde(default)]
+    pub(in super::super) feedback_total: usize,
+    #[serde(default)]
+    pub(in super::super) feedback_acceptance_rate: f32,
+    #[serde(default)]
+    pub(in super::super) high_confidence_total: usize,
+    #[serde(default)]
+    pub(in super::super) high_confidence_acceptance_rate: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) eval_precision: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) eval_recall: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) eval_f1: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(in super::super) struct FeedbackEvalCorrelationReport {
+    #[serde(default)]
+    pub(in super::super) by_category: Vec<FeedbackEvalCategoryCorrelation>,
+    #[serde(default)]
+    pub(in super::super) by_rule: Vec<FeedbackEvalRuleCorrelation>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub(in super::super) struct FeedbackThresholdMetrics {
     #[serde(default)]
@@ -87,11 +135,19 @@ pub(in super::super) struct FeedbackEvalReport {
     #[serde(default)]
     pub(in super::super) by_category: Vec<FeedbackEvalBucket>,
     #[serde(default)]
+    pub(in super::super) by_rule: Vec<FeedbackEvalBucket>,
+    #[serde(default)]
+    pub(in super::super) high_confidence_by_category: Vec<FeedbackEvalBucket>,
+    #[serde(default)]
+    pub(in super::super) high_confidence_by_rule: Vec<FeedbackEvalBucket>,
+    #[serde(default)]
     pub(in super::super) by_severity: Vec<FeedbackEvalBucket>,
     #[serde(default)]
     pub(in super::super) by_repo: Vec<FeedbackEvalBucket>,
     #[serde(default)]
     pub(in super::super) by_file_pattern: Vec<FeedbackEvalBucket>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) eval_correlation: Option<FeedbackEvalCorrelationReport>,
     #[serde(default)]
     pub(in super::super) showcase_candidates: Vec<FeedbackEvalExample>,
     #[serde(default)]

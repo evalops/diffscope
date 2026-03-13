@@ -61,6 +61,7 @@ mod tests {
                     confidence_at_most: None,
                     fix_effort: Some("medium".to_string()),
                     rule_id: Some("sec.sql.injection".to_string()),
+                    rule_id_aliases: vec!["security.sql-injection".to_string()],
                 }],
                 negative_findings: vec![NegativeFinding {
                     description: "no false positive on sanitizer".to_string(),
