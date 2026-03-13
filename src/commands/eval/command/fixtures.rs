@@ -195,6 +195,9 @@ mod tests {
             &EvalRunOptions {
                 baseline_report: None,
                 max_micro_f1_drop: None,
+                max_suite_f1_drop: None,
+                max_category_f1_drop: None,
+                max_language_f1_drop: None,
                 min_micro_f1: None,
                 min_macro_f1: None,
                 min_rule_f1: Vec::new(),
@@ -228,6 +231,9 @@ mod tests {
             &EvalRunOptions {
                 baseline_report: None,
                 max_micro_f1_drop: None,
+                max_suite_f1_drop: None,
+                max_category_f1_drop: None,
+                max_language_f1_drop: None,
                 min_micro_f1: None,
                 min_macro_f1: None,
                 min_rule_f1: Vec::new(),

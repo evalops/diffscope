@@ -26,6 +26,7 @@ pub(in super::super::super) fn evaluate_eval_thresholds(
         options,
     );
     failures.extend(check_drop_thresholds(
+        current,
         current_micro_f1,
         &current_by_rule,
         baseline,
@@ -36,7 +37,9 @@ pub(in super::super::super) fn evaluate_eval_thresholds(
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::super::{EvalReport, EvalRuleMetrics, EvalRuleScoreSummary};
+    use super::super::super::super::{
+        EvalNamedMetricComparison, EvalReport, EvalRuleMetrics, EvalRuleScoreSummary,
+    };
     use super::*;
     use crate::commands::eval::thresholds::EvalRuleThreshold;
 
@@ -61,12 +64,19 @@ mod tests {
             benchmark_by_category: Default::default(),
             benchmark_by_language: Default::default(),
             benchmark_by_difficulty: Default::default(),
+            suite_comparisons: vec![],
+            category_comparisons: vec![],
+            language_comparisons: vec![],
+            verification_health: None,
             warnings: vec![],
             threshold_failures: vec![],
             results: vec![],
         };
         let options = EvalThresholdOptions {
             max_micro_f1_drop: Some(0.05),
+            max_suite_f1_drop: None,
+            max_category_f1_drop: None,
+            max_language_f1_drop: None,
             min_micro_f1: None,
             min_macro_f1: None,
             min_rule_f1: vec![],
@@ -105,6 +115,10 @@ mod tests {
             benchmark_by_category: Default::default(),
             benchmark_by_language: Default::default(),
             benchmark_by_difficulty: Default::default(),
+            suite_comparisons: vec![],
+            category_comparisons: vec![],
+            language_comparisons: vec![],
+            verification_health: None,
             warnings: vec![],
             threshold_failures: vec![],
             results: vec![],
@@ -131,12 +145,19 @@ mod tests {
             benchmark_by_category: Default::default(),
             benchmark_by_language: Default::default(),
             benchmark_by_difficulty: Default::default(),
+            suite_comparisons: vec![],
+            category_comparisons: vec![],
+            language_comparisons: vec![],
+            verification_health: None,
             warnings: vec![],
             threshold_failures: vec![],
             results: vec![],
         };
         let options = EvalThresholdOptions {
             max_micro_f1_drop: None,
+            max_suite_f1_drop: None,
+            max_category_f1_drop: None,
+            max_language_f1_drop: None,
             min_micro_f1: None,
             min_macro_f1: None,
             min_rule_f1: vec![],
@@ -151,5 +172,62 @@ mod tests {
         assert_eq!(failures.len(), 1);
         assert!(failures[0].contains("sec.sql.injection"));
         assert!(failures[0].contains("exceeded max 0.200"));
+    }
+
+    #[test]
+    fn test_evaluate_eval_thresholds_checks_dimension_drop() {
+        let current = EvalReport {
+            run: Default::default(),
+            fixtures_total: 2,
+            fixtures_passed: 2,
+            fixtures_failed: 0,
+            rule_metrics: vec![],
+            rule_summary: Some(EvalRuleScoreSummary::default()),
+            benchmark_summary: None,
+            suite_results: vec![],
+            benchmark_by_category: Default::default(),
+            benchmark_by_language: Default::default(),
+            benchmark_by_difficulty: Default::default(),
+            suite_comparisons: vec![],
+            category_comparisons: vec![EvalNamedMetricComparison {
+                name: "security".to_string(),
+                current_micro_f1: 0.6,
+                baseline_micro_f1: 0.9,
+                micro_f1_delta: -0.3,
+                current_weighted_score: 0.6,
+                baseline_weighted_score: 0.9,
+                weighted_score_delta: -0.3,
+                current_fixture_count: 1,
+                baseline_fixture_count: 1,
+            }],
+            language_comparisons: vec![],
+            verification_health: None,
+            warnings: vec![],
+            threshold_failures: vec![],
+            results: vec![],
+        };
+        let baseline = EvalReport {
+            category_comparisons: vec![],
+            suite_comparisons: vec![],
+            language_comparisons: vec![],
+            verification_health: None,
+            ..current.clone()
+        };
+        let options = EvalThresholdOptions {
+            max_micro_f1_drop: None,
+            max_suite_f1_drop: None,
+            max_category_f1_drop: Some(0.1),
+            max_language_f1_drop: None,
+            min_micro_f1: None,
+            min_macro_f1: None,
+            min_rule_f1: vec![],
+            max_rule_f1_drop: vec![],
+        };
+
+        let failures = evaluate_eval_thresholds(&current, Some(&baseline), &options);
+
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("category 'security'"));
+        assert!(failures[0].contains("exceeded max 0.100"));
     }
 }

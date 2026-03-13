@@ -51,6 +51,42 @@ pub(in super::super) struct EvalRunMetadata {
     pub(in super::super) trend_file: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(in super::super) struct EvalNamedMetricComparison {
+    #[serde(default)]
+    pub(in super::super) name: String,
+    #[serde(default)]
+    pub(in super::super) current_micro_f1: f32,
+    #[serde(default)]
+    pub(in super::super) baseline_micro_f1: f32,
+    #[serde(default)]
+    pub(in super::super) micro_f1_delta: f32,
+    #[serde(default)]
+    pub(in super::super) current_weighted_score: f32,
+    #[serde(default)]
+    pub(in super::super) baseline_weighted_score: f32,
+    #[serde(default)]
+    pub(in super::super) weighted_score_delta: f32,
+    #[serde(default)]
+    pub(in super::super) current_fixture_count: usize,
+    #[serde(default)]
+    pub(in super::super) baseline_fixture_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(in super::super) struct EvalVerificationHealth {
+    #[serde(default)]
+    pub(in super::super) warnings_total: usize,
+    #[serde(default)]
+    pub(in super::super) fixtures_with_warnings: usize,
+    #[serde(default)]
+    pub(in super::super) fail_open_warning_count: usize,
+    #[serde(default)]
+    pub(in super::super) parse_failure_count: usize,
+    #[serde(default)]
+    pub(in super::super) request_failure_count: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(in super::super) struct EvalRuleMetrics {
     #[serde(default)]
@@ -161,6 +197,14 @@ pub(in super::super) struct EvalReport {
     pub(in super::super) benchmark_by_language: HashMap<String, BenchmarkAggregateMetrics>,
     #[serde(default)]
     pub(in super::super) benchmark_by_difficulty: HashMap<String, BenchmarkAggregateMetrics>,
+    #[serde(default)]
+    pub(in super::super) suite_comparisons: Vec<EvalNamedMetricComparison>,
+    #[serde(default)]
+    pub(in super::super) category_comparisons: Vec<EvalNamedMetricComparison>,
+    #[serde(default)]
+    pub(in super::super) language_comparisons: Vec<EvalNamedMetricComparison>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) verification_health: Option<EvalVerificationHealth>,
     #[serde(default)]
     pub(in super::super) warnings: Vec<String>,
     #[serde(default)]

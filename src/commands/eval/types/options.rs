@@ -4,6 +4,9 @@ use std::path::PathBuf;
 pub struct EvalRunOptions {
     pub baseline_report: Option<PathBuf>,
     pub max_micro_f1_drop: Option<f32>,
+    pub max_suite_f1_drop: Option<f32>,
+    pub max_category_f1_drop: Option<f32>,
+    pub max_language_f1_drop: Option<f32>,
     pub min_micro_f1: Option<f32>,
     pub min_macro_f1: Option<f32>,
     pub min_rule_f1: Vec<String>,

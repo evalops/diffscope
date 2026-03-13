@@ -20,7 +20,7 @@ pub use types::EvalRunOptions;
 
 #[allow(unused_imports)]
 use types::{
-    EvalExpectations, EvalFixture, EvalFixtureMetadata, EvalFixtureResult, EvalPattern, EvalReport,
-    EvalRuleMetrics, EvalRuleScoreSummary, EvalRunFilters, EvalRunMetadata, EvalSuiteResult,
-    LoadedEvalFixture,
+    EvalExpectations, EvalFixture, EvalFixtureMetadata, EvalFixtureResult,
+    EvalNamedMetricComparison, EvalPattern, EvalReport, EvalRuleMetrics, EvalRuleScoreSummary,
+    EvalRunFilters, EvalRunMetadata, EvalSuiteResult, EvalVerificationHealth, LoadedEvalFixture,
 };

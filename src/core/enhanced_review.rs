@@ -885,6 +885,7 @@ fn exercise_eval_benchmarks(quality_trend_json: Option<&str>) -> QualityTrend {
         micro_recall: 0.0,
         fixture_count: 0,
         label: None,
+        ..Default::default()
     };
 
     // Exercise CommunityFixturePack and all fields/methods

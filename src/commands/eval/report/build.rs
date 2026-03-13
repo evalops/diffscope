@@ -1,6 +1,7 @@
 use super::super::metrics::{
-    aggregate_rule_metrics, build_benchmark_breakdowns, build_overall_benchmark_summary,
-    build_suite_results, collect_suite_threshold_failures, summarize_rule_metrics,
+    aggregate_rule_metrics, build_benchmark_breakdowns, build_named_breakdown_comparisons,
+    build_overall_benchmark_summary, build_suite_comparisons, build_suite_results,
+    build_verification_health, collect_suite_threshold_failures, summarize_rule_metrics,
 };
 use super::super::thresholds::{evaluate_eval_thresholds, EvalThresholdOptions};
 use super::super::{EvalFixtureResult, EvalReport, EvalRunMetadata};
@@ -28,6 +29,16 @@ pub(in super::super) fn build_eval_report(
     let benchmark_summary = build_overall_benchmark_summary(&results);
     let suite_results = build_suite_results(&results);
     let breakdowns = build_benchmark_breakdowns(&results);
+    let suite_comparisons = build_suite_comparisons(&suite_results, baseline);
+    let category_comparisons = build_named_breakdown_comparisons(
+        &breakdowns.by_category,
+        baseline.map(|report| &report.benchmark_by_category),
+    );
+    let language_comparisons = build_named_breakdown_comparisons(
+        &breakdowns.by_language,
+        baseline.map(|report| &report.benchmark_by_language),
+    );
+    let verification_health = build_verification_health(&results);
 
     let mut report = EvalReport {
         run,
@@ -41,6 +52,10 @@ pub(in super::super) fn build_eval_report(
         benchmark_by_category: breakdowns.by_category,
         benchmark_by_language: breakdowns.by_language,
         benchmark_by_difficulty: breakdowns.by_difficulty,
+        suite_comparisons,
+        category_comparisons,
+        language_comparisons,
+        verification_health,
         warnings,
         threshold_failures: Vec::new(),
         results,

@@ -155,6 +155,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     Review {
         #[arg(long)]
@@ -295,6 +296,24 @@ enum Commands {
 
         #[arg(long, help = "Maximum allowed drop in micro-F1 vs baseline (0.0-1.0)")]
         max_micro_f1_drop: Option<f32>,
+
+        #[arg(
+            long,
+            help = "Maximum allowed micro-F1 drop for any shared suite vs baseline (0.0-1.0)"
+        )]
+        max_suite_f1_drop: Option<f32>,
+
+        #[arg(
+            long,
+            help = "Maximum allowed micro-F1 drop for any shared category vs baseline (0.0-1.0)"
+        )]
+        max_category_f1_drop: Option<f32>,
+
+        #[arg(
+            long,
+            help = "Maximum allowed micro-F1 drop for any shared language vs baseline (0.0-1.0)"
+        )]
+        max_language_f1_drop: Option<f32>,
 
         #[arg(long, help = "Minimum required micro-F1 for current run (0.0-1.0)")]
         min_micro_f1: Option<f32>,
@@ -551,6 +570,9 @@ async fn main() -> Result<()> {
             output,
             baseline,
             max_micro_f1_drop,
+            max_suite_f1_drop,
+            max_category_f1_drop,
+            max_language_f1_drop,
             min_micro_f1,
             min_macro_f1,
             min_rule_f1,
@@ -566,6 +588,9 @@ async fn main() -> Result<()> {
             let eval_options = EvalRunOptions {
                 baseline_report: baseline,
                 max_micro_f1_drop,
+                max_suite_f1_drop,
+                max_category_f1_drop,
+                max_language_f1_drop,
                 min_micro_f1,
                 min_macro_f1,
                 min_rule_f1,

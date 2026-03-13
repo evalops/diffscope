@@ -424,7 +424,7 @@ pub struct QualityTrend {
     pub entries: Vec<TrendEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TrendEntry {
     pub timestamp: String,
     pub micro_f1: f32,
@@ -432,6 +432,26 @@ pub struct TrendEntry {
     pub micro_recall: f32,
     pub fixture_count: usize,
     pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weighted_score: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub suite_micro_f1: HashMap<String, f32>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub category_micro_f1: HashMap<String, f32>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub language_micro_f1: HashMap<String, f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_warning_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_fail_open_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_parse_failure_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_request_failure_count: Option<usize>,
 }
 
 impl QualityTrend {
@@ -447,6 +467,8 @@ impl QualityTrend {
             micro_recall: result.aggregate.micro_recall,
             fixture_count: result.fixture_results.len(),
             label: label.map(|s| s.to_string()),
+            weighted_score: Some(result.aggregate.weighted_score),
+            ..Default::default()
         });
     }
 
@@ -766,6 +788,7 @@ mod tests {
                 micro_recall: 0.5,
                 fixture_count: 10,
                 label: None,
+                ..Default::default()
             });
         }
 
@@ -784,6 +807,7 @@ mod tests {
                 micro_recall: 0.5,
                 fixture_count: 10,
                 label: None,
+                ..Default::default()
             });
         }
 
@@ -836,6 +860,7 @@ mod tests {
             micro_recall: 0.7,
             fixture_count: 10,
             label: Some("v1.0".to_string()),
+            ..Default::default()
         });
 
         let json = trend.to_json().unwrap();

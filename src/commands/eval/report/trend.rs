@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 
-use crate::core::eval_benchmarks::{BenchmarkResult, QualityTrend};
+use crate::core::eval_benchmarks::{BenchmarkResult, QualityTrend, TrendEntry};
 
 use super::super::EvalReport;
 
@@ -9,7 +9,7 @@ pub(in super::super) async fn update_eval_quality_trend(
     report: &EvalReport,
     path: &Path,
 ) -> Result<()> {
-    let Some(result) = benchmark_result_for_report(report) else {
+    let Some(entry) = trend_entry_for_report(report) else {
         return Ok(());
     };
 
@@ -22,7 +22,7 @@ pub(in super::super) async fn update_eval_quality_trend(
     } else {
         QualityTrend::new()
     };
-    trend.record(&result, report.run.label.as_deref());
+    trend.entries.push(entry);
 
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -33,6 +33,45 @@ pub(in super::super) async fn update_eval_quality_trend(
         .await
         .with_context(|| format!("failed to write trend file {}", path.display()))?;
     Ok(())
+}
+
+fn trend_entry_for_report(report: &EvalReport) -> Option<TrendEntry> {
+    let result = benchmark_result_for_report(report)?;
+    let verification_health = report.verification_health.as_ref();
+
+    Some(TrendEntry {
+        timestamp: result.timestamp.clone(),
+        micro_f1: result.aggregate.micro_f1,
+        micro_precision: result.aggregate.micro_precision,
+        micro_recall: result.aggregate.micro_recall,
+        fixture_count: result.fixture_results.len(),
+        label: report.run.label.clone(),
+        weighted_score: Some(result.aggregate.weighted_score),
+        model: (!report.run.model.is_empty()).then(|| report.run.model.clone()),
+        provider: report.run.provider.clone(),
+        suite_micro_f1: report
+            .suite_results
+            .iter()
+            .map(|suite| (suite.suite.clone(), suite.aggregate.micro_f1))
+            .collect(),
+        category_micro_f1: report
+            .benchmark_by_category
+            .iter()
+            .map(|(name, metrics)| (name.clone(), metrics.micro_f1))
+            .collect(),
+        language_micro_f1: report
+            .benchmark_by_language
+            .iter()
+            .map(|(name, metrics)| (name.clone(), metrics.micro_f1))
+            .collect(),
+        verification_warning_count: verification_health.map(|health| health.warnings_total),
+        verification_fail_open_count: verification_health
+            .map(|health| health.fail_open_warning_count),
+        verification_parse_failure_count: verification_health
+            .map(|health| health.parse_failure_count),
+        verification_request_failure_count: verification_health
+            .map(|health| health.request_failure_count),
+    })
 }
 
 fn benchmark_result_for_report(report: &EvalReport) -> Option<BenchmarkResult> {
@@ -66,7 +105,9 @@ fn benchmark_result_for_report(report: &EvalReport) -> Option<BenchmarkResult> {
 mod tests {
     use tempfile::tempdir;
 
-    use crate::commands::eval::{EvalFixtureResult, EvalReport, EvalRunMetadata};
+    use crate::commands::eval::{
+        EvalFixtureResult, EvalReport, EvalRunMetadata, EvalSuiteResult, EvalVerificationHealth,
+    };
     use crate::core::eval_benchmarks::{AggregateMetrics, FixtureResult};
 
     use super::*;
@@ -76,6 +117,8 @@ mod tests {
             run: EvalRunMetadata {
                 started_at: timestamp.to_string(),
                 label: label.map(|value| value.to_string()),
+                model: "anthropic/claude-opus-4.1".to_string(),
+                provider: Some("openrouter".to_string()),
                 ..Default::default()
             },
             fixtures_total: 1,
@@ -91,10 +134,48 @@ mod tests {
                 weighted_score: 1.0,
                 ..Default::default()
             }),
-            suite_results: vec![],
-            benchmark_by_category: Default::default(),
-            benchmark_by_language: Default::default(),
+            suite_results: vec![EvalSuiteResult {
+                suite: "deep-review".to_string(),
+                fixture_count: 1,
+                aggregate: AggregateMetrics {
+                    fixture_count: 1,
+                    micro_f1: 1.0,
+                    weighted_score: 1.0,
+                    ..Default::default()
+                },
+                thresholds_enforced: false,
+                threshold_pass: true,
+                threshold_failures: vec![],
+            }],
+            benchmark_by_category: std::collections::HashMap::from([(
+                "security".to_string(),
+                AggregateMetrics {
+                    fixture_count: 1,
+                    micro_f1: 1.0,
+                    weighted_score: 1.0,
+                    ..Default::default()
+                },
+            )]),
+            benchmark_by_language: std::collections::HashMap::from([(
+                "rust".to_string(),
+                AggregateMetrics {
+                    fixture_count: 1,
+                    micro_f1: 1.0,
+                    weighted_score: 1.0,
+                    ..Default::default()
+                },
+            )]),
             benchmark_by_difficulty: Default::default(),
+            suite_comparisons: vec![],
+            category_comparisons: vec![],
+            language_comparisons: vec![],
+            verification_health: Some(EvalVerificationHealth {
+                warnings_total: 2,
+                fixtures_with_warnings: 1,
+                fail_open_warning_count: 2,
+                parse_failure_count: 1,
+                request_failure_count: 1,
+            }),
             warnings: vec![],
             threshold_failures: vec![],
             results: vec![EvalFixtureResult {
@@ -136,5 +217,16 @@ mod tests {
         assert_eq!(trend.entries.len(), 2);
         assert_eq!(trend.entries[0].label.as_deref(), Some("first"));
         assert_eq!(trend.entries[1].label.as_deref(), Some("second"));
+        assert_eq!(trend.entries[0].provider.as_deref(), Some("openrouter"));
+        assert_eq!(
+            trend.entries[0].suite_micro_f1.get("deep-review").copied(),
+            Some(1.0)
+        );
+        assert_eq!(
+            trend.entries[0]
+                .verification_parse_failure_count
+                .unwrap_or_default(),
+            1
+        );
     }
 }

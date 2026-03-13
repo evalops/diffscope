@@ -11,10 +11,15 @@
 ## Improvement Queue
 
 - [ ] `src/commands/eval/`
-  - Add suite/category/language baseline comparisons instead of only whole-run threshold gates.
+  - Add suite/category/language baseline comparisons so regressions are gated by dimension, not only whole-run totals.
+  - Add model-matrix and repeat execution support so the same suite can be compared across frontier models and flake-checked.
+  - Capture failed-run artifacts, including emitted comments, verifier warnings, and per-fixture mismatch details.
+  - Reduce fixture brittleness with semantic/alias expectation matching instead of exact wording dependence.
+  - Extend trend history with suite/category/language series plus verifier-health counters and model/provider labels.
   - Expand `review-depth-core` with authz, supply-chain, and async-correctness benchmark packs.
 - [ ] `src/commands/feedback_eval/`
-  - Correlate feedback calibration with eval-suite category and rule-level performance.
+  - Correlate feedback calibration with eval-suite category performance and rule-level precision/recall.
+  - Surface high-confidence but frequently rejected categories/rules so review quality gaps are obvious.
 
 ## Immediate Queue
 

@@ -6,6 +6,9 @@ mod parsing;
 #[derive(Debug, Clone)]
 pub(super) struct EvalThresholdOptions {
     pub(super) max_micro_f1_drop: Option<f32>,
+    pub(super) max_suite_f1_drop: Option<f32>,
+    pub(super) max_category_f1_drop: Option<f32>,
+    pub(super) max_language_f1_drop: Option<f32>,
     pub(super) min_micro_f1: Option<f32>,
     pub(super) min_macro_f1: Option<f32>,
     pub(super) min_rule_f1: Vec<EvalRuleThreshold>,

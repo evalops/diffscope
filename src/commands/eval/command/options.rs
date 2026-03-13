@@ -23,6 +23,9 @@ pub(super) fn prepare_eval_options(options: &EvalRunOptions) -> Result<PreparedE
         baseline,
         threshold_options: EvalThresholdOptions {
             max_micro_f1_drop: options.max_micro_f1_drop,
+            max_suite_f1_drop: options.max_suite_f1_drop,
+            max_category_f1_drop: options.max_category_f1_drop,
+            max_language_f1_drop: options.max_language_f1_drop,
             min_micro_f1: options.min_micro_f1,
             min_macro_f1: options.min_macro_f1,
             min_rule_f1: min_rule_thresholds,

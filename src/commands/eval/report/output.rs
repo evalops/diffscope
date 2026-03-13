@@ -187,6 +187,59 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
         }
     }
 
+    if !report.suite_comparisons.is_empty() {
+        println!("Baseline suite deltas:");
+        for comparison in &report.suite_comparisons {
+            println!(
+                "  - {}: micro F1 {:+.0}% weighted {:+.0}% (baseline {:.0}% -> current {:.0}%)",
+                comparison.name,
+                comparison.micro_f1_delta * 100.0,
+                comparison.weighted_score_delta * 100.0,
+                comparison.baseline_micro_f1 * 100.0,
+                comparison.current_micro_f1 * 100.0
+            );
+        }
+    }
+
+    if !report.category_comparisons.is_empty() {
+        println!("Baseline category deltas:");
+        for comparison in &report.category_comparisons {
+            println!(
+                "  - {}: micro F1 {:+.0}% weighted {:+.0}% (baseline {:.0}% -> current {:.0}%)",
+                comparison.name,
+                comparison.micro_f1_delta * 100.0,
+                comparison.weighted_score_delta * 100.0,
+                comparison.baseline_micro_f1 * 100.0,
+                comparison.current_micro_f1 * 100.0
+            );
+        }
+    }
+
+    if !report.language_comparisons.is_empty() {
+        println!("Baseline language deltas:");
+        for comparison in &report.language_comparisons {
+            println!(
+                "  - {}: micro F1 {:+.0}% weighted {:+.0}% (baseline {:.0}% -> current {:.0}%)",
+                comparison.name,
+                comparison.micro_f1_delta * 100.0,
+                comparison.weighted_score_delta * 100.0,
+                comparison.baseline_micro_f1 * 100.0,
+                comparison.current_micro_f1 * 100.0
+            );
+        }
+    }
+
+    if let Some(verification_health) = report.verification_health.as_ref() {
+        println!(
+            "Verification health: warnings={} fixtures={} fail-open={} parse-failures={} request-failures={}",
+            verification_health.warnings_total,
+            verification_health.fixtures_with_warnings,
+            verification_health.fail_open_warning_count,
+            verification_health.parse_failure_count,
+            verification_health.request_failure_count
+        );
+    }
+
     for warning in &report.warnings {
         println!("Warning: {}", warning);
     }

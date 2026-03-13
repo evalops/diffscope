@@ -11,6 +11,6 @@ pub(super) use fixtures::{EvalFixture, EvalFixtureMetadata, LoadedEvalFixture};
 pub use options::EvalRunOptions;
 pub(super) use pattern::{EvalExpectations, EvalPattern};
 pub(super) use report::{
-    EvalFixtureResult, EvalReport, EvalRuleMetrics, EvalRuleScoreSummary, EvalRunFilters,
-    EvalRunMetadata, EvalSuiteResult,
+    EvalFixtureResult, EvalNamedMetricComparison, EvalReport, EvalRuleMetrics,
+    EvalRuleScoreSummary, EvalRunFilters, EvalRunMetadata, EvalSuiteResult, EvalVerificationHealth,
 };
