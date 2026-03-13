@@ -20,6 +20,12 @@ use super::super::{EvalFixtureResult, LoadedEvalFixture};
 
 pub(in super::super) use self::artifact::EvalFixtureArtifactContext;
 
+pub(crate) fn describe_eval_fixture_graph(
+    repro_validate: bool,
+) -> crate::core::dag::DagGraphContract {
+    self::dag::describe_eval_fixture_graph(repro_validate)
+}
+
 pub(in super::super) async fn run_eval_fixture(
     config: &config::Config,
     loaded_fixture: LoadedEvalFixture,

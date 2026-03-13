@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::EnvFilter;
 
-use commands::{EvalRunOptions, GitCommands};
+use commands::{describe_eval_fixture_graph, EvalRunOptions, GitCommands};
 use config::CliOverrides;
 use output::OutputFormat;
 
@@ -436,6 +436,35 @@ enum Commands {
         )]
         eval_report: Option<PathBuf>,
     },
+    #[command(about = "Print pipeline DAG contracts for orchestration and planning")]
+    Dag {
+        #[command(subcommand)]
+        command: DagCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum DagCommands {
+    #[command(about = "Describe the top-level review pipeline DAG")]
+    Review,
+    #[command(about = "Describe the granular review postprocess DAG")]
+    Postprocess {
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Describe the graph as if convention-store persistence is enabled"
+        )]
+        convention_store_path: bool,
+    },
+    #[command(about = "Describe the eval fixture execution DAG")]
+    Eval {
+        #[arg(
+            long,
+            default_value_t = false,
+            help = "Describe the graph with reproduction validation enabled"
+        )]
+        repro_validate: bool,
+    },
 }
 
 #[tokio::main]
@@ -672,6 +701,16 @@ async fn main() -> Result<()> {
         } => {
             commands::feedback_eval_command(input, output, confidence_threshold, eval_report)
                 .await?;
+        }
+        Commands::Dag { command } => {
+            let graph = match command {
+                DagCommands::Review => review::describe_review_pipeline_graph(),
+                DagCommands::Postprocess {
+                    convention_store_path,
+                } => review::describe_review_postprocess_graph(&config, convention_store_path),
+                DagCommands::Eval { repro_validate } => describe_eval_fixture_graph(repro_validate),
+            };
+            println!("{}", serde_json::to_string_pretty(&graph)?);
         }
     }
 

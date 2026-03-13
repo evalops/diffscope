@@ -1,9 +1,12 @@
 use anyhow::Result;
-use std::collections::HashSet;
-use std::time::Instant;
+use futures::FutureExt;
+use tracing::debug;
 
 use crate::config;
 use crate::core;
+use crate::core::dag::{
+    describe_dag, execute_dag, DagGraphContract, DagNode, DagNodeContract, DagNodeKind, DagNodeSpec,
+};
 use crate::core::eval_benchmarks::FixtureResult as BenchmarkFixtureResult;
 use crate::review::review_diff_content_raw;
 
@@ -23,27 +26,23 @@ use super::result::{
 enum EvalFixtureStage {
     Review,
     ExpectationMatching,
+    CommentCountValidation,
+    BenchmarkMetrics,
     ReproductionValidation,
     ArtifactCapture,
 }
 
-#[cfg(test)]
-impl EvalFixtureStage {
-    fn as_str(self) -> &'static str {
+impl DagNode for EvalFixtureStage {
+    fn name(&self) -> &'static str {
         match self {
             Self::Review => "review",
             Self::ExpectationMatching => "expectation_matching",
+            Self::CommentCountValidation => "comment_count_validation",
+            Self::BenchmarkMetrics => "benchmark_metrics",
             Self::ReproductionValidation => "reproduction_validation",
             Self::ArtifactCapture => "artifact_capture",
         }
     }
-}
-
-#[derive(Debug, Clone)]
-struct EvalFixtureStageSpec {
-    stage: EvalFixtureStage,
-    dependencies: Vec<EvalFixtureStage>,
-    enabled: bool,
 }
 
 pub(super) struct EvalFixtureDagConfig<'a> {
@@ -119,60 +118,185 @@ pub(super) async fn execute_eval_fixture_dag(
     dag_config: EvalFixtureDagConfig<'_>,
 ) -> Result<EvalFixtureExecutionOutcome> {
     let specs = build_stage_specs(dag_config.repro_validate);
+    let dag_description = describe_dag(&specs);
+    debug!(?dag_description, "Executing eval fixture DAG");
     let mut context = EvalFixtureDagContext::new(prepared, dag_config);
-    let mut completed = HashSet::new();
-
-    while completed.len() < specs.len() {
-        let Some(spec) = specs
-            .iter()
-            .find(|candidate| {
-                !completed.contains(&candidate.stage)
-                    && candidate
-                        .dependencies
-                        .iter()
-                        .all(|dependency| completed.contains(dependency))
-            })
-            .cloned()
-        else {
-            anyhow::bail!("eval fixture DAG has unresolved stage dependencies");
-        };
-
-        let _started = Instant::now();
-        if spec.enabled {
-            execute_stage(spec.stage, config, &mut context).await?;
-        }
-        completed.insert(spec.stage);
-    }
+    let _records = execute_dag(&specs, &mut context, |stage, context| {
+        async move { execute_stage(stage, config, context).await }.boxed()
+    })
+    .await?;
 
     context.into_outcome()
 }
 
-fn build_stage_specs(repro_validate: bool) -> Vec<EvalFixtureStageSpec> {
+pub(in super::super::super) fn describe_eval_fixture_graph(
+    repro_validate: bool,
+) -> DagGraphContract {
+    let nodes = build_stage_specs(repro_validate)
+        .into_iter()
+        .map(|spec| match spec.id {
+            EvalFixtureStage::Review => DagNodeContract {
+                name: spec.id.name().to_string(),
+                description:
+                    "Run the review pipeline over fixture diff content and collect raw comments."
+                        .to_string(),
+                kind: DagNodeKind::Execution,
+                dependencies: vec![],
+                inputs: vec![
+                    "config".to_string(),
+                    "prepared_fixture".to_string(),
+                    "repo_path".to_string(),
+                ],
+                outputs: vec![
+                    "comments".to_string(),
+                    "warnings".to_string(),
+                    "verification_report".to_string(),
+                    "agent_activity".to_string(),
+                ],
+                enabled: spec.enabled,
+            },
+            EvalFixtureStage::ExpectationMatching => DagNodeContract {
+                name: spec.id.name().to_string(),
+                description:
+                    "Match emitted comments against expected and negative fixture findings."
+                        .to_string(),
+                kind: DagNodeKind::Validation,
+                dependencies: spec
+                    .dependencies
+                    .into_iter()
+                    .map(|dependency| dependency.name().to_string())
+                    .collect(),
+                inputs: vec!["comments".to_string(), "fixture_expectations".to_string()],
+                outputs: vec!["match_summary".to_string(), "failures".to_string()],
+                enabled: spec.enabled,
+            },
+            EvalFixtureStage::CommentCountValidation => DagNodeContract {
+                name: spec.id.name().to_string(),
+                description: "Check fixture-level minimum and maximum comment count expectations."
+                    .to_string(),
+                kind: DagNodeKind::Validation,
+                dependencies: spec
+                    .dependencies
+                    .into_iter()
+                    .map(|dependency| dependency.name().to_string())
+                    .collect(),
+                inputs: vec![
+                    "total_comments".to_string(),
+                    "fixture_expectations".to_string(),
+                    "failures".to_string(),
+                ],
+                outputs: vec!["failures".to_string()],
+                enabled: spec.enabled,
+            },
+            EvalFixtureStage::BenchmarkMetrics => DagNodeContract {
+                name: spec.id.name().to_string(),
+                description: "Build benchmark metrics and pass/fail signals from match outcomes."
+                    .to_string(),
+                kind: DagNodeKind::Analysis,
+                dependencies: spec
+                    .dependencies
+                    .into_iter()
+                    .map(|dependency| dependency.name().to_string())
+                    .collect(),
+                inputs: vec![
+                    "prepared_fixture".to_string(),
+                    "total_comments".to_string(),
+                    "match_summary".to_string(),
+                    "failures".to_string(),
+                ],
+                outputs: vec!["benchmark_metrics".to_string()],
+                enabled: spec.enabled,
+            },
+            EvalFixtureStage::ReproductionValidation => DagNodeContract {
+                name: spec.id.name().to_string(),
+                description:
+                    "Use bounded tool-backed reproduction checks to validate selected comments."
+                        .to_string(),
+                kind: DagNodeKind::Validation,
+                dependencies: spec
+                    .dependencies
+                    .into_iter()
+                    .map(|dependency| dependency.name().to_string())
+                    .collect(),
+                inputs: vec![
+                    "config".to_string(),
+                    "prepared_fixture".to_string(),
+                    "comments".to_string(),
+                ],
+                outputs: vec!["reproduction_summary".to_string(), "warnings".to_string()],
+                enabled: spec.enabled,
+            },
+            EvalFixtureStage::ArtifactCapture => DagNodeContract {
+                name: spec.id.name().to_string(),
+                description:
+                    "Persist fixture-level artifacts for debugging and offline inspection."
+                        .to_string(),
+                kind: DagNodeKind::Persistence,
+                dependencies: spec
+                    .dependencies
+                    .into_iter()
+                    .map(|dependency| dependency.name().to_string())
+                    .collect(),
+                inputs: vec![
+                    "prepared_fixture".to_string(),
+                    "comments".to_string(),
+                    "warnings".to_string(),
+                    "failures".to_string(),
+                    "benchmark_metrics".to_string(),
+                ],
+                outputs: vec!["artifact_path".to_string()],
+                enabled: spec.enabled,
+            },
+        })
+        .collect::<Vec<_>>();
+
+    DagGraphContract {
+        name: "eval_fixture_execution".to_string(),
+        description:
+            "Fixture-scoped evaluation DAG for review, matching, scoring, reproduction, and artifact capture."
+                .to_string(),
+        entry_nodes: vec!["review".to_string()],
+        terminal_nodes: vec!["artifact_capture".to_string()],
+        nodes,
+    }
+}
+
+fn build_stage_specs(repro_validate: bool) -> Vec<DagNodeSpec<EvalFixtureStage>> {
     vec![
-        EvalFixtureStageSpec {
-            stage: EvalFixtureStage::Review,
+        DagNodeSpec {
+            id: EvalFixtureStage::Review,
             dependencies: vec![],
             enabled: true,
         },
-        EvalFixtureStageSpec {
-            stage: EvalFixtureStage::ExpectationMatching,
+        DagNodeSpec {
+            id: EvalFixtureStage::ExpectationMatching,
             dependencies: vec![EvalFixtureStage::Review],
             enabled: true,
         },
-        EvalFixtureStageSpec {
-            stage: EvalFixtureStage::ReproductionValidation,
+        DagNodeSpec {
+            id: EvalFixtureStage::CommentCountValidation,
+            dependencies: vec![EvalFixtureStage::ExpectationMatching],
+            enabled: true,
+        },
+        DagNodeSpec {
+            id: EvalFixtureStage::BenchmarkMetrics,
+            dependencies: vec![EvalFixtureStage::CommentCountValidation],
+            enabled: true,
+        },
+        DagNodeSpec {
+            id: EvalFixtureStage::ReproductionValidation,
             dependencies: vec![EvalFixtureStage::Review],
             enabled: repro_validate,
         },
-        EvalFixtureStageSpec {
-            stage: EvalFixtureStage::ArtifactCapture,
+        DagNodeSpec {
+            id: EvalFixtureStage::ArtifactCapture,
             dependencies: if repro_validate {
                 vec![
-                    EvalFixtureStage::ExpectationMatching,
+                    EvalFixtureStage::BenchmarkMetrics,
                     EvalFixtureStage::ReproductionValidation,
                 ]
             } else {
-                vec![EvalFixtureStage::ExpectationMatching]
+                vec![EvalFixtureStage::BenchmarkMetrics]
             },
             enabled: true,
         },
@@ -187,6 +311,8 @@ async fn execute_stage(
     match stage {
         EvalFixtureStage::Review => execute_review_stage(config, context).await,
         EvalFixtureStage::ExpectationMatching => execute_expectation_stage(context),
+        EvalFixtureStage::CommentCountValidation => execute_comment_count_stage(context),
+        EvalFixtureStage::BenchmarkMetrics => execute_benchmark_metrics_stage(context),
         EvalFixtureStage::ReproductionValidation => {
             execute_reproduction_stage(config, context).await
         }
@@ -215,20 +341,33 @@ async fn execute_review_stage(
 fn execute_expectation_stage(context: &mut EvalFixtureDagContext<'_>) -> Result<()> {
     let match_summary =
         evaluate_fixture_expectations(&context.prepared.fixture.expect, &context.comments);
-    let mut failures = match_summary.failures.clone();
+    context.failures = match_summary.failures.clone();
+    context.match_summary = Some(match_summary);
+    Ok(())
+}
+
+fn execute_comment_count_stage(context: &mut EvalFixtureDagContext<'_>) -> Result<()> {
+    if context.match_summary.is_none() {
+        anyhow::bail!("comment count validation requires expectation matches");
+    }
     append_total_comment_failures(
-        &mut failures,
+        &mut context.failures,
         context.total_comments,
         &context.prepared.fixture.expect,
     );
+    Ok(())
+}
+
+fn execute_benchmark_metrics_stage(context: &mut EvalFixtureDagContext<'_>) -> Result<()> {
+    let Some(match_summary) = context.match_summary.as_ref() else {
+        anyhow::bail!("benchmark metrics require expectation matches");
+    };
     context.benchmark_metrics = build_benchmark_metrics(
         &context.prepared,
         context.total_comments,
-        &match_summary,
-        &failures,
+        match_summary,
+        &context.failures,
     );
-    context.match_summary = Some(match_summary);
-    context.failures = failures;
     Ok(())
 }
 
@@ -287,39 +426,45 @@ mod tests {
     #[test]
     fn build_stage_specs_links_artifact_to_reproduction_when_enabled() {
         let specs = build_stage_specs(true);
-        let artifact = specs
-            .iter()
-            .find(|spec| spec.stage == EvalFixtureStage::ArtifactCapture)
+        let artifact = describe_dag(&specs)
+            .into_iter()
+            .find(|spec| spec.name == "artifact_capture")
             .unwrap();
 
         assert!(artifact
             .dependencies
-            .contains(&EvalFixtureStage::ExpectationMatching));
+            .contains(&"benchmark_metrics".to_string()));
         assert!(artifact
             .dependencies
-            .contains(&EvalFixtureStage::ReproductionValidation));
+            .contains(&"reproduction_validation".to_string()));
     }
 
     #[test]
     fn build_stage_specs_keeps_reproduction_optional() {
         let specs = build_stage_specs(false);
-        let reproduction = specs
+        let descriptions = describe_dag(&specs);
+        let reproduction = descriptions
             .iter()
-            .find(|spec| spec.stage == EvalFixtureStage::ReproductionValidation)
+            .find(|spec| spec.name == "reproduction_validation")
             .unwrap();
-        let artifact = specs
+        let artifact = descriptions
             .iter()
-            .find(|spec| spec.stage == EvalFixtureStage::ArtifactCapture)
+            .find(|spec| spec.name == "artifact_capture")
             .unwrap();
 
         assert!(!reproduction.enabled);
-        assert_eq!(
-            artifact
-                .dependencies
-                .iter()
-                .map(|dependency| dependency.as_str())
-                .collect::<Vec<_>>(),
-            vec!["expectation_matching"]
-        );
+        assert_eq!(artifact.dependencies, vec!["benchmark_metrics"]);
+    }
+
+    #[test]
+    fn eval_fixture_graph_contract_exposes_reproduction_outputs() {
+        let graph = describe_eval_fixture_graph(true);
+
+        assert_eq!(graph.name, "eval_fixture_execution");
+        assert_eq!(graph.entry_nodes, vec!["review"]);
+        assert!(graph.nodes.iter().any(|node| {
+            node.name == "reproduction_validation"
+                && node.outputs.contains(&"reproduction_summary".to_string())
+        }));
     }
 }

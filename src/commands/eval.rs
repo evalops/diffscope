@@ -29,3 +29,9 @@ use types::{
     EvalRuleScoreSummary, EvalRunFilters, EvalSuiteResult, EvalVerificationHealth,
     LoadedEvalFixture,
 };
+
+pub(crate) fn describe_eval_fixture_graph(
+    repro_validate: bool,
+) -> crate::core::dag::DagGraphContract {
+    runner::describe_eval_fixture_graph(repro_validate)
+}

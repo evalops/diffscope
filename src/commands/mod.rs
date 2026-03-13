@@ -8,6 +8,7 @@ mod review;
 mod smart_review;
 
 pub use doctor::doctor_command;
+pub(crate) use eval::describe_eval_fixture_graph;
 pub use eval::{eval_command, EvalRunOptions};
 pub use feedback_eval::feedback_eval_command;
 pub use git::{git_command, GitCommands};
