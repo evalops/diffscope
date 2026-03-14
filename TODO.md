@@ -91,7 +91,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 52. [ ] Add comment grouping by unresolved, fixed, stale, and informational sections in `ReviewView`.
 53. [x] Add a "show only blockers" mode for large reviews.
 54. [ ] Add keyboard actions for thumbs, resolve, and jump-to-next-finding workflows.
-55. [ ] Add file-level readiness summaries in the diff sidebar.
+55. [x] Add file-level readiness summaries in the diff sidebar.
 56. [x] Add lifecycle-aware PR summaries that explain what still blocks merge.
 57. [ ] Add a "train the reviewer" callout when thumbs coverage on a review is low.
 58. [ ] Add review-change comparisons so users can diff one review run against the next on the same PR.
@@ -163,4 +163,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Surface lifecycle-aware PR readiness summaries in the GitHub PR detail workflow.
 - [x] Surface unresolved blocker counts in repo and PR GitHub discovery views.
 - [x] Add a blocker-only review mode that narrows large reviews to open Error and Warning findings.
+- [x] Add file-level readiness summaries to the review diff sidebar.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.
