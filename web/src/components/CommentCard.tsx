@@ -32,9 +32,11 @@ interface Props {
   variant?: 'card' | 'inline'
   onFeedback?: (action: 'accept' | 'reject') => void
   onLifecycleChange?: (status: 'open' | 'resolved' | 'dismissed') => void
+  isActive?: boolean
+  onActivate?: () => void
 }
 
-export function CommentCard({ comment, variant = 'card', onFeedback, onLifecycleChange }: Props) {
+export function CommentCard({ comment, variant = 'card', onFeedback, onLifecycleChange, isActive = false, onActivate }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const accepted = comment.feedback === 'accept'
@@ -56,7 +58,14 @@ export function CommentCard({ comment, variant = 'card', onFeedback, onLifecycle
     : 'border border-border rounded-md bg-surface-2'
 
   return (
-    <div className={rootClass}>
+    <div
+      className={`${rootClass} ${isActive ? 'ring-1 ring-accent/50' : ''} focus:outline-none focus-visible:ring-1 focus-visible:ring-accent/50`}
+      data-review-comment-card="true"
+      data-comment-id={comment.id}
+      tabIndex={0}
+      onFocus={() => onActivate?.()}
+      onMouseDown={() => onActivate?.()}
+    >
       {/* Header */}
       <div className={`flex items-center gap-2 px-3 ${isInline ? 'py-1.5 border-b border-border-subtle' : 'py-2'}`}>
         <SeverityBadge severity={comment.severity} />

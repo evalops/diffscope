@@ -1,5 +1,5 @@
 import { useParams } from 'react-router-dom'
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { Loader2, AlertTriangle, MessageSquare, FileCode, ChevronDown, Activity, Clock, Cpu, GitBranch } from 'lucide-react'
 import { useReview, useSubmitFeedback, useUpdateCommentLifecycle } from '../api/hooks'
 import { DiffViewer } from '../components/DiffViewer'
@@ -8,7 +8,7 @@ import { ScoreGauge } from '../components/ScoreGauge'
 import { SeverityBadge } from '../components/SeverityBadge'
 import { CommentCard } from '../components/CommentCard'
 import { parseDiff } from '../lib/parseDiff'
-import type { Comment, CommentLifecycleStatus, MergeReadiness, Severity, ReviewEvent } from '../api/types'
+import type { Comment, CommentLifecycleStatus, DiffFile, MergeReadiness, Severity, ReviewEvent } from '../api/types'
 
 type ViewMode = 'diff' | 'list'
 
@@ -66,8 +66,21 @@ const REVIEW_COMMENT_SECTION_META: Record<ReviewCommentSectionKey, Omit<ReviewCo
   },
 }
 
+const REVIEW_COMMENT_CARD_SELECTOR = '[data-review-comment-card="true"]'
+
 function normalizeCommentFilePath(filePath: string): string {
   return filePath.replace(/^\.\//, '')
+}
+
+function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+
+  const tagName = target.tagName.toLowerCase()
+  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
+    return true
+  }
+
+  return target.isContentEditable || target.closest('[contenteditable="true"]') !== null
 }
 
 function isBlockingComment(comment: Pick<Comment, 'severity' | 'status'>): boolean {
@@ -125,6 +138,62 @@ function buildReviewCommentSections(
   })
 }
 
+function buildVisibleCommentIds(
+  comments: Comment[],
+  viewMode: ViewMode,
+  visibleDiffFiles: DiffFile[],
+  commentSections: ReviewCommentSection[],
+): string[] {
+  if (viewMode === 'list' || visibleDiffFiles.length === 0) {
+    return commentSections.flatMap((section) =>
+      section.files.flatMap((file) => file.comments.map((comment) => comment.id)),
+    )
+  }
+
+  const commentsByFile = new Map<string, Map<number, Comment[]>>()
+  for (const comment of comments) {
+    const filePath = normalizeCommentFilePath(comment.file_path)
+    if (!commentsByFile.has(filePath)) {
+      commentsByFile.set(filePath, new Map())
+    }
+
+    const fileComments = commentsByFile.get(filePath)!
+    if (!fileComments.has(comment.line_number)) {
+      fileComments.set(comment.line_number, [])
+    }
+
+    fileComments.get(comment.line_number)!.push(comment)
+  }
+
+  const orderedCommentIds: string[] = []
+  const seenCommentIds = new Set<string>()
+
+  for (const file of visibleDiffFiles) {
+    const fileComments = commentsByFile.get(file.path)
+    if (!fileComments) continue
+
+    for (const hunk of file.hunks) {
+      for (const line of hunk.lines) {
+        const lineNumber = line.type === 'del' ? line.oldNumber : line.newNumber
+        if (!lineNumber) continue
+
+        for (const comment of fileComments.get(lineNumber) ?? []) {
+          if (seenCommentIds.has(comment.id)) continue
+          seenCommentIds.add(comment.id)
+          orderedCommentIds.push(comment.id)
+        }
+      }
+    }
+  }
+
+  for (const comment of comments) {
+    if (seenCommentIds.has(comment.id)) continue
+    orderedCommentIds.push(comment.id)
+  }
+
+  return orderedCommentIds
+}
+
 function filterReviewComments(
   comments: Comment[],
   {
@@ -161,8 +230,18 @@ export function ReviewView() {
   const [lifecycleFilter, setLifecycleFilter] = useState<CommentLifecycleStatus | 'All'>('All')
   const [showOnlyBlockers, setShowOnlyBlockers] = useState(false)
   const [showEvent, setShowEvent] = useState(false)
+  const [activeCommentId, setActiveCommentId] = useState<string | null>(null)
+  const reviewRootRef = useRef<HTMLDivElement | null>(null)
   const diffContent = review?.diff_content
   const comments = useMemo(() => review?.comments ?? [], [review?.comments])
+
+  const handleFeedback = useCallback((commentId: string, action: 'accept' | 'reject') => {
+    feedback.mutate({ commentId, action })
+  }, [feedback])
+
+  const handleLifecycleChange = useCallback((commentId: string, status: 'open' | 'resolved' | 'dismissed') => {
+    lifecycle.mutate({ commentId, status })
+  }, [lifecycle])
 
   const diffFiles = useMemo(() => {
     if (!diffContent) return []
@@ -190,6 +269,10 @@ export function ReviewView() {
     ? selectedFile
     : null
 
+  const visibleDiffFiles = activeSelectedFile
+    ? filteredDiffFiles.filter((file) => file.path === activeSelectedFile)
+    : filteredDiffFiles
+
   const filteredComments = useMemo(() => filterReviewComments(comments, {
     severityFilter,
     selectedFile: activeSelectedFile,
@@ -202,6 +285,108 @@ export function ReviewView() {
     () => buildReviewCommentSections(filteredComments, review?.summary?.merge_readiness),
     [filteredComments, review?.summary?.merge_readiness],
   )
+
+  const visibleCommentIds = useMemo(
+    () => buildVisibleCommentIds(filteredComments, viewMode, visibleDiffFiles, commentSections),
+    [commentSections, filteredComments, viewMode, visibleDiffFiles],
+  )
+
+  const activeVisibleCommentId = activeCommentId && visibleCommentIds.includes(activeCommentId)
+    ? activeCommentId
+    : null
+
+  const focusComment = useCallback((commentId: string) => {
+    if (!reviewRootRef.current) return
+
+    const element = Array.from(
+      reviewRootRef.current.querySelectorAll<HTMLElement>(REVIEW_COMMENT_CARD_SELECTOR),
+    ).find((candidate) => candidate.dataset.commentId === commentId)
+
+    if (!element) return
+
+    element.focus({ preventScroll: true })
+    element.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+  }, [])
+
+  const focusCommentSoon = useCallback((commentId: string) => {
+    queueMicrotask(() => focusComment(commentId))
+  }, [focusComment])
+
+  const focusNextVisibleComment = useCallback(() => {
+    if (visibleCommentIds.length === 0) return
+
+    const currentIndex = activeVisibleCommentId ? visibleCommentIds.indexOf(activeVisibleCommentId) : -1
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % visibleCommentIds.length : 0
+    const nextCommentId = visibleCommentIds[nextIndex]
+
+    setActiveCommentId(nextCommentId)
+    focusCommentSoon(nextCommentId)
+  }, [activeVisibleCommentId, focusCommentSoon, visibleCommentIds])
+
+  const runKeyboardAction = useCallback((action: 'accept' | 'reject' | 'resolve') => {
+    if (visibleCommentIds.length === 0) return
+
+    const currentCommentId = activeVisibleCommentId
+      ? activeVisibleCommentId
+      : visibleCommentIds[0]
+    const currentComment = filteredComments.find((comment) => comment.id === currentCommentId)
+    if (!currentComment) return
+
+    if (action === 'accept') {
+      handleFeedback(currentCommentId, 'accept')
+    } else if (action === 'reject') {
+      handleFeedback(currentCommentId, 'reject')
+    } else if ((currentComment.status ?? 'Open') === 'Open') {
+      handleLifecycleChange(currentCommentId, 'resolved')
+    } else {
+      return
+    }
+
+    if (visibleCommentIds.length > 1) {
+      const currentIndex = visibleCommentIds.indexOf(currentCommentId)
+      const nextCommentId = visibleCommentIds[(currentIndex + 1) % visibleCommentIds.length]
+      setActiveCommentId(nextCommentId)
+      focusCommentSoon(nextCommentId)
+      return
+    }
+
+    setActiveCommentId(currentCommentId)
+    focusCommentSoon(currentCommentId)
+  }, [activeVisibleCommentId, filteredComments, focusCommentSoon, handleFeedback, handleLifecycleChange, visibleCommentIds])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+      if (isEditableShortcutTarget(event.target)) return
+
+      const key = event.key.toLowerCase()
+      if (key === 'j' || key === 'n') {
+        event.preventDefault()
+        focusNextVisibleComment()
+        return
+      }
+
+      if (key === 'a') {
+        event.preventDefault()
+        runKeyboardAction('accept')
+        return
+      }
+
+      if (key === 'r') {
+        event.preventDefault()
+        runKeyboardAction('reject')
+        return
+      }
+
+      if (key === 'e') {
+        event.preventDefault()
+        runKeyboardAction('resolve')
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [focusNextVisibleComment, runKeyboardAction])
 
   // All hooks MUST be above this line — no hooks after early returns
 
@@ -278,18 +463,6 @@ export function ReviewView() {
 
   const categories = [...new Set(comments.map(c => c.category))]
 
-  const handleFeedback = (commentId: string, action: 'accept' | 'reject') => {
-    feedback.mutate({ commentId, action })
-  }
-
-  const handleLifecycleChange = (commentId: string, status: 'open' | 'resolved' | 'dismissed') => {
-    lifecycle.mutate({ commentId, status })
-  }
-
-  const visibleDiffFiles = activeSelectedFile
-    ? filteredDiffFiles.filter(f => f.path === activeSelectedFile)
-    : filteredDiffFiles
-
   const readinessStyles: Record<MergeReadiness, string> = {
     Ready: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
     NeedsAttention: 'bg-sev-warning/10 text-sev-warning border border-sev-warning/20',
@@ -311,7 +484,7 @@ export function ReviewView() {
     && feedbackCoverage < LOW_FEEDBACK_COVERAGE_THRESHOLD
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full" ref={reviewRootRef}>
       {/* File sidebar */}
       {filteredDiffFiles.length > 0 && (
         <FileSidebar
@@ -567,6 +740,15 @@ export function ReviewView() {
           <span className="ml-auto text-[11px] text-text-muted">
             {filteredComments.length}/{review.comments.length}
           </span>
+
+          {filteredComments.length > 0 && (
+            <span className="hidden xl:flex items-center gap-2 text-[10px] text-text-muted font-code">
+              <span>N/J next</span>
+              <span>A accept</span>
+              <span>R reject</span>
+              <span>E resolve</span>
+            </span>
+          )}
         </div>
 
         {/* Main content */}
@@ -577,6 +759,8 @@ export function ReviewView() {
               comments={filteredComments}
               onFeedback={handleFeedback}
               onLifecycleChange={handleLifecycleChange}
+              activeCommentId={activeVisibleCommentId}
+              onActivateComment={setActiveCommentId}
             />
           ) : (
             /* List view / fallback when no diff content */
@@ -611,6 +795,8 @@ export function ReviewView() {
                                 comment={comment}
                                 onFeedback={action => handleFeedback(comment.id, action)}
                                 onLifecycleChange={status => handleLifecycleChange(comment.id, status)}
+                                isActive={activeVisibleCommentId === comment.id}
+                                onActivate={() => setActiveCommentId(comment.id)}
                               />
                             </div>
                           ))}

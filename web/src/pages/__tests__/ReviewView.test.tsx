@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -210,6 +210,27 @@ describe('ReviewView blocker mode', () => {
     expect(screen.queryByRole('heading', { name: 'Unresolved' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Informational' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Fixed' })).toBeInTheDocument()
+  })
+
+  it('supports keyboard finding workflows for next, thumbs, and resolve actions', async () => {
+    const user = userEvent.setup()
+    useReviewMock.mockReturnValue({ data: makeReview(), isLoading: false })
+
+    const { container } = render(<ReviewView />)
+
+    await user.keyboard('n')
+    expect(container.querySelector('[data-comment-id="comment-1"]')).toHaveFocus()
+
+    await user.keyboard('a')
+    expect(feedbackMutate).toHaveBeenNthCalledWith(1, { commentId: 'comment-1', action: 'accept' })
+    await waitFor(() => expect(container.querySelector('[data-comment-id="comment-2"]')).toHaveFocus())
+
+    await user.keyboard('e')
+    expect(lifecycleMutate).toHaveBeenCalledWith({ commentId: 'comment-2', status: 'resolved' })
+    await waitFor(() => expect(container.querySelector('[data-comment-id="comment-3"]')).toHaveFocus())
+
+    await user.keyboard('r')
+    expect(feedbackMutate).toHaveBeenNthCalledWith(2, { commentId: 'comment-3', action: 'reject' })
   })
 
   it('shows a train-the-reviewer callout when thumbs coverage is low', () => {

@@ -11,6 +11,8 @@ interface Props {
   comments: Comment[]
   onFeedback?: (commentId: string, action: 'accept' | 'reject') => void
   onLifecycleChange?: (commentId: string, status: 'open' | 'resolved' | 'dismissed') => void
+  activeCommentId?: string | null
+  onActivateComment?: (commentId: string) => void
 }
 
 const statusIcon = {
@@ -27,7 +29,7 @@ const statusColor = {
   modified: 'text-text-secondary',
 }
 
-export function DiffViewer({ files, comments, onFeedback, onLifecycleChange }: Props) {
+export function DiffViewer({ files, comments, onFeedback, onLifecycleChange, activeCommentId = null, onActivateComment }: Props) {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
 
   const commentsByFile = useMemo(() => {
@@ -108,6 +110,8 @@ export function DiffViewer({ files, comments, onFeedback, onLifecycleChange }: P
                     commentsByLine={commentsByFile.get(file.path)}
                     onFeedback={onFeedback}
                     onLifecycleChange={onLifecycleChange}
+                    activeCommentId={activeCommentId}
+                    onActivateComment={onActivateComment}
                   />
                 ))}
                 {file.hunks.length === 0 && (
@@ -124,12 +128,14 @@ export function DiffViewer({ files, comments, onFeedback, onLifecycleChange }: P
   )
 }
 
-export function HunkView({ hunk, filePath, commentsByLine, onFeedback, onLifecycleChange }: {
+export function HunkView({ hunk, filePath, commentsByLine, onFeedback, onLifecycleChange, activeCommentId, onActivateComment }: {
   hunk: DiffHunk
   filePath: string
   commentsByLine?: Map<number, Comment[]>
   onFeedback?: (commentId: string, action: 'accept' | 'reject') => void
   onLifecycleChange?: (commentId: string, status: 'open' | 'resolved' | 'dismissed') => void
+  activeCommentId?: string | null
+  onActivateComment?: (commentId: string) => void
 }) {
   return (
     <div>
@@ -153,6 +159,8 @@ export function HunkView({ hunk, filePath, commentsByLine, onFeedback, onLifecyc
                 filePath={filePath}
                 onFeedback={onFeedback}
                 onLifecycleChange={onLifecycleChange}
+                activeCommentId={activeCommentId}
+                onActivateComment={onActivateComment}
               />
             )
           })}
@@ -162,12 +170,14 @@ export function HunkView({ hunk, filePath, commentsByLine, onFeedback, onLifecyc
   )
 }
 
-export function LineRow({ line, comments, filePath, onFeedback, onLifecycleChange }: {
+export function LineRow({ line, comments, filePath, onFeedback, onLifecycleChange, activeCommentId, onActivateComment }: {
   line: DiffLine
   comments?: Comment[]
   filePath: string
   onFeedback?: (commentId: string, action: 'accept' | 'reject') => void
   onLifecycleChange?: (commentId: string, status: 'open' | 'resolved' | 'dismissed') => void
+  activeCommentId?: string | null
+  onActivateComment?: (commentId: string) => void
 }) {
   const bgClass =
     line.type === 'add' ? 'bg-diff-add-bg' :
@@ -218,6 +228,8 @@ export function LineRow({ line, comments, filePath, onFeedback, onLifecycleChang
                 variant="inline"
                 onFeedback={onFeedback ? (action) => onFeedback(c.id, action) : undefined}
                 onLifecycleChange={onLifecycleChange ? (status) => onLifecycleChange(c.id, status) : undefined}
+                isActive={activeCommentId === c.id}
+                onActivate={onActivateComment ? () => onActivateComment(c.id) : undefined}
               />
             ))}
           </td>
