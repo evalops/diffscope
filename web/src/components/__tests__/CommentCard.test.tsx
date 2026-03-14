@@ -57,6 +57,21 @@ describe('CommentCard', () => {
     expect(screen.getByText('High')).toBeInTheDocument()
   })
 
+  it('renders a visible accepted badge when feedback is positive', () => {
+    render(<CommentCard comment={makeComment({ feedback: 'accept' })} />)
+    expect(screen.getByText('Accepted')).toBeInTheDocument()
+  })
+
+  it('renders a visible rejected badge when feedback is negative', () => {
+    render(<CommentCard comment={makeComment({ feedback: 'reject' })} />)
+    expect(screen.getByText('Rejected')).toBeInTheDocument()
+  })
+
+  it('renders a visible dismissed badge from lifecycle state', () => {
+    render(<CommentCard comment={makeComment({ status: 'Dismissed' })} />)
+    expect(screen.getByText('Dismissed')).toBeInTheDocument()
+  })
+
   it('shows "Suggested fix" toggle when code_suggestion is present', () => {
     const comment = makeComment({
       code_suggestion: {

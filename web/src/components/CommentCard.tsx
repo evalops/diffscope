@@ -16,6 +16,17 @@ const lifecycleBadge: Record<string, string> = {
   Dismissed: 'bg-text-muted/10 text-text-muted border border-border',
 }
 
+const feedbackBadge: Record<'accept' | 'reject', { label: string; className: string }> = {
+  accept: {
+    label: 'Accepted',
+    className: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
+  },
+  reject: {
+    label: 'Rejected',
+    className: 'bg-sev-error/10 text-sev-error border border-sev-error/20',
+  },
+}
+
 interface Props {
   comment: Comment
   variant?: 'card' | 'inline'
@@ -29,6 +40,7 @@ export function CommentCard({ comment, variant = 'card', onFeedback, onLifecycle
   const accepted = comment.feedback === 'accept'
   const rejected = comment.feedback === 'reject'
   const lifecycle = comment.status ?? 'Open'
+  const feedbackState = comment.feedback ? feedbackBadge[comment.feedback] : null
 
   const copyCode = () => {
     if (comment.code_suggestion?.suggested_code) {
@@ -55,6 +67,11 @@ export function CommentCard({ comment, variant = 'card', onFeedback, onLifecycle
         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${lifecycleBadge[lifecycle] ?? lifecycleBadge.Open}`}>
           {lifecycle}
         </span>
+        {feedbackState && (
+          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${feedbackState.className}`}>
+            {feedbackState.label}
+          </span>
+        )}
 
         <div className="ml-auto flex items-center gap-1">
           {comment.fix_effort && (

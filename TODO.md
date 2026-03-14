@@ -87,7 +87,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 
 ## 6. Review UX and Workflow Integration
 
-51. [ ] Add visible accepted/rejected/dismissed badges to comments throughout the UI, not just icon state.
+51. [x] Add visible accepted/rejected/dismissed badges to comments throughout the UI, not just icon state.
 52. [ ] Add comment grouping by unresolved, fixed, stale, and informational sections in `ReviewView`.
 53. [x] Add a "show only blockers" mode for large reviews.
 54. [ ] Add keyboard actions for thumbs, resolve, and jump-to-next-finding workflows.
@@ -164,4 +164,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Surface unresolved blocker counts in repo and PR GitHub discovery views.
 - [x] Add a blocker-only review mode that narrows large reviews to open Error and Warning findings.
 - [x] Add file-level readiness summaries to the review diff sidebar.
+- [x] Add visible feedback badges on comments so accepted and rejected states are not icon-only.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.
