@@ -57,6 +57,21 @@ describe('CommentCard', () => {
     expect(screen.getByText('High')).toBeInTheDocument()
   })
 
+  it('renders a visible accepted badge when feedback is positive', () => {
+    render(<CommentCard comment={makeComment({ feedback: 'accept' })} />)
+    expect(screen.getByText('Accepted')).toBeInTheDocument()
+  })
+
+  it('renders a visible rejected badge when feedback is negative', () => {
+    render(<CommentCard comment={makeComment({ feedback: 'reject' })} />)
+    expect(screen.getByText('Rejected')).toBeInTheDocument()
+  })
+
+  it('renders a visible dismissed badge from lifecycle state', () => {
+    render(<CommentCard comment={makeComment({ status: 'Dismissed' })} />)
+    expect(screen.getByText('Dismissed')).toBeInTheDocument()
+  })
+
   it('shows "Suggested fix" toggle when code_suggestion is present', () => {
     const comment = makeComment({
       code_suggestion: {
@@ -123,6 +138,21 @@ describe('CommentCard', () => {
     render(<CommentCard comment={makeComment()} />)
     expect(screen.queryByTitle('Accept finding')).not.toBeInTheDocument()
     expect(screen.queryByTitle('Dismiss finding')).not.toBeInTheDocument()
+  })
+
+  it('renders lifecycle status and actions when lifecycle controls are provided', () => {
+    render(<CommentCard comment={makeComment({ status: 'Resolved' })} onLifecycleChange={() => {}} />)
+    expect(screen.getByText('Resolved')).toBeInTheDocument()
+    expect(screen.getByTitle('Reopen finding')).toBeInTheDocument()
+  })
+
+  it('calls onLifecycleChange when resolving an open finding', async () => {
+    const user = userEvent.setup()
+    const onLifecycleChange = vi.fn()
+    render(<CommentCard comment={makeComment({ status: 'Open' })} onLifecycleChange={onLifecycleChange} />)
+
+    await user.click(screen.getByTitle('Mark finding as resolved'))
+    expect(onLifecycleChange).toHaveBeenCalledWith('resolved')
   })
 
   it('does not show suggestion text when not provided', () => {

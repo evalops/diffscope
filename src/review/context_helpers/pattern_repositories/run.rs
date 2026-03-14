@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tracing::warn;
 
@@ -13,6 +13,17 @@ pub fn resolve_pattern_repositories(
     config: &config::Config,
     repo_root: &Path,
 ) -> PatternRepositoryMap {
+    resolve_pattern_repositories_with(config, repo_root, prepare_pattern_repository_checkout)
+}
+
+pub(super) fn resolve_pattern_repositories_with<F>(
+    config: &config::Config,
+    repo_root: &Path,
+    mut prepare_checkout: F,
+) -> PatternRepositoryMap
+where
+    F: FnMut(&str) -> Option<PathBuf>,
+{
     let mut resolved = PatternRepositoryMap::new();
     if config.pattern_repositories.is_empty() {
         return resolved;
@@ -29,7 +40,7 @@ pub fn resolve_pattern_repositories(
         }
 
         if is_git_source(&repo.source) {
-            if let Some(path) = prepare_pattern_repository_checkout(&repo.source) {
+            if let Some(path) = prepare_checkout(&repo.source) {
                 resolved.insert(repo.source.clone(), path);
                 continue;
             }

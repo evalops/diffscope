@@ -38,6 +38,8 @@ mod tests {
             tags: vec![],
             fix_effort: FixEffort::Low,
             feedback: feedback.map(str::to_string),
+            status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         }
     }
 
@@ -46,6 +48,8 @@ mod tests {
             id: "review-1".to_string(),
             status: ReviewStatus::Complete,
             diff_source: "raw".to_string(),
+            github_head_sha: None,
+            github_post_results_requested: None,
             started_at: 1,
             completed_at: Some(2),
             comments,

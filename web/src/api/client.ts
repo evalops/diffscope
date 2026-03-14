@@ -31,6 +31,16 @@ export const api = {
       body: JSON.stringify({ comment_id: commentId, action }),
     }),
 
+  updateCommentLifecycle: (
+    reviewId: string,
+    commentId: string,
+    status: import('./types').CommentLifecycleAction,
+  ) =>
+    request<{ ok: boolean }>(`/review/${reviewId}/lifecycle`, {
+      method: 'POST',
+      body: JSON.stringify({ comment_id: commentId, status }),
+    }),
+
   getDoctor: () => request<import('./types').DoctorResponse>('/doctor'),
 
   getAgentTools: () => request<import('./types').AgentToolInfo[]>('/agent/tools'),
@@ -81,6 +91,11 @@ export const api = {
     return request<import('./types').GhPullRequest[]>(`/gh/prs?${qs}`)
   },
 
+  getGhPrReadiness: (repo: string, prNumber: number) => {
+    const qs = new URLSearchParams({ repo, pr_number: String(prNumber) })
+    return request<import('./types').PrReadinessSnapshot>(`/gh/pr-readiness?${qs}`)
+  },
+
   startPrReview: (body: import('./types').StartPrReviewRequest) =>
     request<{ id: string; status: string }>('/gh/review', {
       method: 'POST',
@@ -119,4 +134,7 @@ export const api = {
     const suffix = qs.toString() ? `?${qs}` : ''
     return request<import('./types').EventStats>(`/events/stats${suffix}`)
   },
+
+  getAnalyticsTrends: () =>
+    request<import('./types').AnalyticsTrendsResponse>('/analytics/trends'),
 }

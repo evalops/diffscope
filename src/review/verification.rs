@@ -56,6 +56,41 @@ pub struct VerificationReport {
     pub judges: Vec<VerificationJudgeRun>,
 }
 
+pub(crate) fn summarize_review_verification(
+    report: Option<&VerificationReport>,
+    warnings: &[String],
+) -> crate::core::comment::ReviewVerificationSummary {
+    let warning_count = warnings.len();
+    match report {
+        Some(report) => crate::core::comment::ReviewVerificationSummary {
+            state: if warning_count > 0 {
+                crate::core::comment::ReviewVerificationState::Inconclusive
+            } else {
+                crate::core::comment::ReviewVerificationState::Verified
+            },
+            judge_count: report.judge_count,
+            required_votes: report.required_votes,
+            warning_count,
+            filtered_comments: report
+                .judges
+                .iter()
+                .map(|judge| judge.filtered_comments)
+                .sum(),
+            abstained_comments: report
+                .judges
+                .iter()
+                .map(|judge| judge.abstained_comments)
+                .sum(),
+        },
+        None if warning_count > 0 => crate::core::comment::ReviewVerificationSummary {
+            state: crate::core::comment::ReviewVerificationState::Inconclusive,
+            warning_count,
+            ..Default::default()
+        },
+        None => crate::core::comment::ReviewVerificationSummary::default(),
+    }
+}
+
 const VERIFICATION_BATCH_SIZE: usize = 6;
 
 #[derive(Debug, Clone)]
@@ -90,6 +125,7 @@ For each finding, assess:
 5. Cross-file findings are valid when the changed line introduces a call path or tainted data flow into a vulnerable helper shown in supporting context.
 6. Mark `line_correct=true` when the changed line is the introduction point or risky call site, even if the sink or flawed helper implementation is in another file shown in supporting context.
 7. Treat supporting context with graph or semantic provenance as first-class evidence, not as a weak hint.
+8. Trust the diff evidence as authoritative for changed lines. Nearby file context may reflect a checkout before or after the patch, especially for deletions.
 If the evidence is missing, ambiguous, or the file/line cannot be confirmed, return a result anyway with accurate=false, line_correct=false, and a low score.
 
 Score each finding 0-10:

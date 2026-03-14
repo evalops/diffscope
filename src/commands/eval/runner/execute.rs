@@ -40,7 +40,7 @@ pub(in super::super) async fn run_eval_fixture(
         EvalFixtureDagConfig {
             repro_validate,
             repro_max_comments,
-            artifact_context,
+            artifact_context: artifact_context.cloned(),
         },
     )
     .await?;

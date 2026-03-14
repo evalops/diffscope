@@ -32,6 +32,15 @@ pub async fn output_comments(
     Ok(())
 }
 
+fn format_completeness(summary: &core::comment::ReviewSummary) -> String {
+    format!(
+        "{} acknowledged · {} fixed · {} stale",
+        summary.completeness.acknowledged_findings,
+        summary.completeness.fixed_findings,
+        summary.completeness.stale_findings
+    )
+}
+
 pub fn format_as_patch(comments: &[core::Comment]) -> String {
     let mut output = String::new();
     for comment in comments {
@@ -79,6 +88,46 @@ pub fn format_as_markdown(comments: &[core::Comment], rule_priority: &[String]) 
         "📁 **Files Reviewed:** {}\n\n",
         summary.files_reviewed
     ));
+    output.push_str(&format!(
+        "🚦 **Merge Readiness:** {}\n",
+        summary.merge_readiness
+    ));
+    output.push_str(&format!(
+        "📌 **Lifecycle:** {} open · {} resolved · {} dismissed\n\n",
+        summary.open_comments, summary.resolved_comments, summary.dismissed_comments
+    ));
+    output.push_str(&format!(
+        "📎 **Completeness:** {}\n\n",
+        format_completeness(&summary)
+    ));
+    output.push_str(&format!(
+        "⛔ **Open Blockers:** {}\n\n",
+        summary.open_blockers
+    ));
+    output.push_str(&format!(
+        "🚧 **Blocking Open:** {} | 💡 **Informational Open:** {}\n\n",
+        summary.open_blocking_comments, summary.open_informational_comments
+    ));
+    output.push_str(&format!(
+        "🧪 **Verification:** {}",
+        summary.verification.state
+    ));
+    if summary.verification.judge_count > 0 {
+        output.push_str(&format!(
+            " (votes {}/{}, warnings {})",
+            summary.verification.required_votes,
+            summary.verification.judge_count,
+            summary.verification.warning_count
+        ));
+    }
+    output.push_str("\n\n");
+    if !summary.readiness_reasons.is_empty() {
+        output.push_str("### Review State\n\n");
+        for reason in &summary.readiness_reasons {
+            output.push_str(&format!("- {}\n", reason));
+        }
+        output.push('\n');
+    }
 
     // Severity breakdown
     output.push_str("### Issues by Severity\n\n");
@@ -263,6 +312,46 @@ pub fn format_smart_review_output(
         "📁 **Files Analyzed:** {}\n\n",
         summary.files_reviewed
     ));
+    output.push_str(&format!(
+        "🚦 **Merge Readiness:** {}\n",
+        summary.merge_readiness
+    ));
+    output.push_str(&format!(
+        "📌 **Lifecycle:** {} open · {} resolved · {} dismissed\n\n",
+        summary.open_comments, summary.resolved_comments, summary.dismissed_comments
+    ));
+    output.push_str(&format!(
+        "📎 **Completeness:** {}\n\n",
+        format_completeness(summary)
+    ));
+    output.push_str(&format!(
+        "⛔ **Open Blockers:** {}\n\n",
+        summary.open_blockers
+    ));
+    output.push_str(&format!(
+        "🚧 **Blocking Open:** {} | 💡 **Informational Open:** {}\n\n",
+        summary.open_blocking_comments, summary.open_informational_comments
+    ));
+    output.push_str(&format!(
+        "🧪 **Verification:** {}",
+        summary.verification.state
+    ));
+    if summary.verification.judge_count > 0 {
+        output.push_str(&format!(
+            " (votes {}/{}, warnings {})",
+            summary.verification.required_votes,
+            summary.verification.judge_count,
+            summary.verification.warning_count
+        ));
+    }
+    output.push_str("\n\n");
+    if !summary.readiness_reasons.is_empty() {
+        output.push_str("### 🔁 Review State\n\n");
+        for reason in &summary.readiness_reasons {
+            output.push_str(&format!("- {}\n", reason));
+        }
+        output.push('\n');
+    }
 
     if let Some(pr_summary) = pr_summary {
         output.push_str(&format_pr_summary_section(pr_summary));
@@ -600,6 +689,8 @@ mod tests {
             tags: Vec::new(),
             fix_effort: core::comment::FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         }
     }
 
@@ -833,6 +924,25 @@ mod tests {
             ]),
             by_category: std::collections::HashMap::from([("Bug".to_string(), 2)]),
             recommendations: vec!["Fix bugs".to_string()],
+            open_comments: 2,
+            open_by_severity: std::collections::HashMap::from([
+                ("Error".to_string(), 1),
+                ("Warning".to_string(), 1),
+            ]),
+            open_blocking_comments: 2,
+            open_informational_comments: 0,
+            resolved_comments: 0,
+            dismissed_comments: 0,
+            open_blockers: 2,
+            completeness: crate::core::comment::ReviewCompletenessSummary {
+                total_findings: 2,
+                acknowledged_findings: 0,
+                fixed_findings: 0,
+                stale_findings: 0,
+            },
+            merge_readiness: crate::core::comment::MergeReadiness::NeedsAttention,
+            verification: crate::core::comment::ReviewVerificationSummary::default(),
+            readiness_reasons: Vec::new(),
         };
         let comments = vec![
             build_test_comment(
@@ -853,6 +963,7 @@ mod tests {
         assert!(output.contains("Executive Summary"));
         assert!(output.contains("7.5/10"));
         assert!(output.contains("Critical Issues"));
+        assert!(output.contains("Completeness"));
         assert!(output.contains("Fix bugs"));
     }
 

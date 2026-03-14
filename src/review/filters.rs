@@ -49,6 +49,8 @@ mod tests {
             tags: Vec::new(),
             fix_effort: core::comment::FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         }
     }
 
@@ -385,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn feedback_confidence_zero_acceptance_halves() {
+    fn feedback_confidence_zero_acceptance_demotes() {
         let mut feedback = FeedbackStore::default();
         for _ in 0..10 {
             feedback.record_feedback("Bug", None, false);
@@ -398,16 +400,16 @@ mod tests {
             0.8,
         )];
         let result = apply_feedback_confidence_adjustment(comments, &feedback, 5);
-        // 0% acceptance → 0.5 * 0.8 = 0.4
+        // 0% acceptance now demotes confidence to 75% of the original score.
         assert!(
-            (result[0].confidence - 0.4).abs() < 0.01,
+            (result[0].confidence - 0.6).abs() < 0.01,
             "Got: {}",
             result[0].confidence
         );
     }
 
     #[test]
-    fn feedback_confidence_full_acceptance_unchanged() {
+    fn feedback_confidence_full_acceptance_boosts() {
         let mut feedback = FeedbackStore::default();
         for _ in 0..10 {
             feedback.record_feedback("Bug", None, true);
@@ -420,9 +422,9 @@ mod tests {
             0.8,
         )];
         let result = apply_feedback_confidence_adjustment(comments, &feedback, 5);
-        // 100% acceptance → 1.0 * 0.8 = 0.8
+        // 100% acceptance boosts confidence by 25%.
         assert!(
-            (result[0].confidence - 0.8).abs() < 0.01,
+            (result[0].confidence - 1.0).abs() < 0.01,
             "Got: {}",
             result[0].confidence
         );
@@ -447,16 +449,40 @@ mod tests {
             0.8,
         )];
         let result = apply_feedback_confidence_adjustment(comments, &feedback, 5);
-        // Composite key should take precedence: 0% → 0.5 * 0.8 = 0.4
+        // Composite key should take precedence over broad category stats.
         // Note: the composite stats include the category-only accepts too,
         // so composite has accepted=0, rejected=10. Category has accepted=10+0=10, rejected=0+10=10
         // Actually record_feedback("Bug", Some("*.rs"), false) adds to by_category too
         // So by_category["Bug"] = accepted:10, rejected:10 = 50% acceptance
         // by_category_file_pattern["Bug|*.rs"] = accepted:0, rejected:10 = 0%
-        // Composite wins: 0.5 * 0.8 = 0.4
+        // Composite wins and applies the stronger demotion.
         assert!(
-            (result[0].confidence - 0.4).abs() < 0.01,
+            (result[0].confidence - 0.6).abs() < 0.01,
             "Got: {}",
+            result[0].confidence
+        );
+    }
+
+    #[test]
+    fn feedback_confidence_prefers_path_scoped_buckets() {
+        let mut feedback = FeedbackStore::default();
+        for _ in 0..10 {
+            feedback.record_feedback("Bug", None, true);
+            feedback.record_feedback_patterns("Bug", &["tests/**"], false);
+        }
+
+        let mut comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.8,
+        );
+        comment.file_path = PathBuf::from("tests/unit/parser.rs");
+
+        let result = apply_feedback_confidence_adjustment(vec![comment], &feedback, 5);
+        assert!(
+            (result[0].confidence - 0.6).abs() < 0.01,
+            "Expected path-scoped rejection history to win, got {}",
             result[0].confidence
         );
     }
@@ -497,8 +523,51 @@ mod tests {
 
         let result = apply_feedback_confidence_adjustment(vec![comment], &feedback, 5);
         assert!(
-            (result[0].confidence - 0.4).abs() < 0.01,
-            "Expected file-pattern fallback to halve confidence, got {}",
+            (result[0].confidence - 0.6).abs() < 0.01,
+            "Expected file-pattern fallback to demote confidence, got {}",
+            result[0].confidence
+        );
+    }
+
+    #[test]
+    fn feedback_confidence_uses_rule_specific_stats_before_category_stats() {
+        let mut feedback = FeedbackStore::default();
+        for _ in 0..10 {
+            feedback.record_feedback("Security", None, true);
+            feedback.record_rule_feedback_patterns("sec.sql.injection", &["*.rs"], false);
+        }
+
+        let mut comment = build_comment(
+            "c1",
+            core::comment::Category::Security,
+            core::comment::Severity::Error,
+            0.8,
+        );
+        comment.rule_id = Some("sec.sql.injection".to_string());
+
+        let result = apply_feedback_confidence_adjustment(vec![comment], &feedback, 5);
+        assert!(
+            (result[0].confidence - 0.6).abs() < 0.01,
+            "Expected rule-level rejection history to win, got {}",
+            result[0].confidence
+        );
+    }
+
+    #[test]
+    fn feedback_confidence_boosts_exactly_accepted_comment_ids() {
+        let mut feedback = FeedbackStore::default();
+        feedback.accept.insert("c1".to_string());
+
+        let comments = vec![build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Warning,
+            0.8,
+        )];
+        let result = apply_feedback_confidence_adjustment(comments, &feedback, 5);
+        assert!(
+            (result[0].confidence - 0.92).abs() < 0.01,
+            "Expected exact accepted comment ids to get a boost, got {}",
             result[0].confidence
         );
     }

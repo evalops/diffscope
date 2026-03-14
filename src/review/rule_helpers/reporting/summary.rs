@@ -17,6 +17,38 @@ pub fn build_pr_summary_comment_body(
         "- Overall score: {:.1}/10\n",
         summary.overall_score
     ));
+    body.push_str(&format!("- Merge readiness: {}\n", summary.merge_readiness));
+    body.push_str(&format!(
+        "- Lifecycle: {} open / {} resolved / {} dismissed\n",
+        summary.open_comments, summary.resolved_comments, summary.dismissed_comments
+    ));
+    body.push_str(&format!(
+        "- Completeness: {} acknowledged / {} fixed / {} stale\n",
+        summary.completeness.acknowledged_findings,
+        summary.completeness.fixed_findings,
+        summary.completeness.stale_findings
+    ));
+    body.push_str(&format!("- Open blockers: {}\n", summary.open_blockers));
+    body.push_str(&format!(
+        "- Blocking open: {} | Informational open: {}\n",
+        summary.open_blocking_comments, summary.open_informational_comments
+    ));
+    body.push_str(&format!("- Verification: {}", summary.verification.state));
+    if summary.verification.judge_count > 0 {
+        body.push_str(&format!(
+            " (votes {}/{}, warnings {})",
+            summary.verification.required_votes,
+            summary.verification.judge_count,
+            summary.verification.warning_count
+        ));
+    }
+    body.push('\n');
+    if !summary.readiness_reasons.is_empty() {
+        body.push_str("- Review state:\n");
+        for reason in &summary.readiness_reasons {
+            body.push_str(&format!("  - {}\n", reason));
+        }
+    }
 
     if summary.total_comments == 0 {
         body.push_str("\nNo issues detected in this PR by DiffScope.\n");

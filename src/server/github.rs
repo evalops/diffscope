@@ -421,6 +421,8 @@ pub async fn handle_webhook(
                     id: review_id.clone(),
                     status: ReviewStatus::Pending,
                     diff_source: diff_source.clone(),
+                    github_head_sha: Some(head_sha.clone()),
+                    github_post_results_requested: None,
                     started_at: current_timestamp(),
                     completed_at: None,
                     comments: Vec::new(),
@@ -691,13 +693,21 @@ async fn create_check_run(
     let has_errors = comments
         .iter()
         .any(|c| matches!(c.severity, crate::core::comment::Severity::Error));
-    let conclusion = if has_errors { "failure" } else { "success" };
+    let conclusion = match summary.merge_readiness {
+        crate::core::comment::MergeReadiness::NeedsReReview => "neutral",
+        _ if has_errors || summary.open_blockers > 0 => "failure",
+        _ => "success",
+    };
 
     let summary_text = format!(
-        "**Score:** {:.1}/10 | **Findings:** {} | **Files:** {}\n\n{}",
+        "**Score:** {:.1}/10 | **Findings:** {} | **Files:** {} | **Readiness:** {}\n**Completeness:** {} acknowledged | {} fixed | {} stale\n\n{}{}",
         summary.overall_score,
         summary.total_comments,
         summary.files_reviewed,
+        summary.merge_readiness,
+        summary.completeness.acknowledged_findings,
+        summary.completeness.fixed_findings,
+        summary.completeness.stale_findings,
         if summary.recommendations.is_empty() {
             String::new()
         } else {
@@ -707,6 +717,19 @@ async fn create_check_run(
                     .recommendations
                     .iter()
                     .map(|r| format!("- {r}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        },
+        if summary.readiness_reasons.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n\n**Review State:**\n{}",
+                summary
+                    .readiness_reasons
+                    .iter()
+                    .map(|reason| format!("- {}", reason))
                     .collect::<Vec<_>>()
                     .join("\n")
             )
@@ -928,7 +951,13 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
     match result {
         Ok(Ok(review_result)) => {
             let comments = review_result.comments;
-            let summary = CommentSynthesizer::generate_summary(&comments);
+            let summary = CommentSynthesizer::apply_verification(
+                CommentSynthesizer::generate_summary(&comments),
+                crate::review::summarize_review_verification(
+                    review_result.verification_report.as_ref(),
+                    &review_result.warnings,
+                ),
+            );
             let files_reviewed = count_reviewed_files(&comments);
 
             // Post inline review comments to PR

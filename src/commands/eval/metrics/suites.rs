@@ -254,6 +254,7 @@ mod tests {
             reproduction_summary: None,
             artifact_path: None,
             failures: vec!["missing finding".to_string()],
+            dag_traces: vec![],
         }];
 
         let suites = build_suite_results(&results);
@@ -291,6 +292,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec![],
+                dag_traces: vec![],
             },
             EvalFixtureResult {
                 fixture: "suite/b".to_string(),
@@ -316,6 +318,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec![],
+                dag_traces: vec![],
             },
         ];
 
@@ -366,6 +369,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec![],
+                dag_traces: vec![],
             },
             EvalFixtureResult {
                 fixture: "suite/b".to_string(),
@@ -386,6 +390,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec!["missing".to_string()],
+                dag_traces: vec![],
             },
         ];
 

@@ -30,11 +30,27 @@
       "diff_content": "diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml\nindex 1111111..2222222 100644\n--- a/.github/workflows/build.yml\n+++ b/.github/workflows/build.yml\n@@ -6,4 +6,5 @@ jobs:\n   build:\n     runs-on: ubuntu-latest\n     steps:\n-      - uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608\n+      - uses: actions/checkout@v4\n+      - uses: docker/setup-buildx-action@v3\n",
       "expected_findings": [
         {
-          "description": "GitHub Actions are no longer pinned to immutable commit SHAs.",
+          "description": "actions/checkout is no longer pinned to an immutable commit SHA.",
           "severity": "Warning",
           "category": "Security",
           "file_pattern": ".github/workflows/build.yml",
           "line_hint": 9,
+          "contains_any": [
+            "unpinned action",
+            "pin github action to a commit sha",
+            "supply chain risk",
+            "mutable action tag"
+          ],
+          "tags_any": [
+            "supply-chain"
+          ]
+        },
+        {
+          "description": "docker/setup-buildx-action is also introduced with a mutable tag instead of a commit SHA.",
+          "severity": "Warning",
+          "category": "Security",
+          "file_pattern": ".github/workflows/build.yml",
+          "line_hint": 10,
           "contains_any": [
             "unpinned action",
             "pin github action to a commit sha",
@@ -91,6 +107,61 @@
       "min_total": 1,
       "max_total": 8,
       "description": "Build pipelines should not execute unverified remote scripts.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "yaml-pull-request-target-script-injection",
+      "category": "security",
+      "language": "yaml",
+      "difficulty": "Expert",
+      "diff_content": "diff --git a/.github/workflows/pr-check.yml b/.github/workflows/pr-check.yml\nindex 1111111..2222222 100644\n--- a/.github/workflows/pr-check.yml\n+++ b/.github/workflows/pr-check.yml\n@@ -1,5 +1,8 @@\n name: PR Check\n-on: pull_request\n+on: pull_request_target\n jobs:\n   test:\n     runs-on: ubuntu-latest\n+    steps:\n+      - run: echo \"${{ github.event.pull_request.title }}\" | bash\n",
+      "expected_findings": [
+        {
+          "description": "pull_request_target can expose write-scoped credentials to untrusted PR code.",
+          "severity": "Warning",
+          "category": "Security",
+          "file_pattern": ".github/workflows/pr-check.yml",
+          "line_hint": 2,
+          "contains_any": [
+            "pull_request_target",
+            "untrusted code with write permissions",
+            "elevated github token",
+            "ci injection"
+          ],
+          "tags_any": [
+            "supply-chain"
+          ],
+          "rule_id": "sec.supply-chain.ci-injection"
+        },
+        {
+          "description": "Attacker-controlled GitHub event data is piped into bash.",
+          "severity": "Error",
+          "category": "Security",
+          "file_pattern": ".github/workflows/pr-check.yml",
+          "line_hint": 7,
+          "contains_any": [
+            "script injection via github.event",
+            "attacker-controlled pr title",
+            "piped into bash",
+            "untrusted github event context",
+            "pr title is piped directly to bash",
+            "arbitrary command execution"
+          ],
+          "tags_any": [
+            "supply-chain"
+          ],
+          "rule_id": "sec.supply-chain.ci-injection"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "CI workflows should not combine pull_request_target with attacker-controlled shell input.",
       "source": "deep-review-suite"
     }
   ]

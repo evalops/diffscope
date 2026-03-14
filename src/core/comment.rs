@@ -21,17 +21,24 @@ mod types;
 use classify::{determine_category, determine_fix_effort, determine_severity};
 use confidence::calculate_confidence;
 use ordering::{
-    deduplicate_comments as deduplicate_comment_list, sort_by_priority as sort_comments_by_priority,
+    deduplicate_comments as deduplicate_comment_list,
+    sort_by_priority as order_comments_by_priority,
 };
 #[cfg(test)]
 use std::path::PathBuf;
 use suggestions::generate_code_suggestion;
-use summary::generate_summary as build_review_summary;
+use summary::{
+    apply_review_runtime_state as apply_review_runtime_summary_state,
+    apply_verification as apply_verification_summary, generate_summary as build_review_summary,
+    inherit_review_state as inherit_review_summary_state,
+};
 use tags::extract_tags;
 
 pub use identity::compute_comment_id;
 pub use types::{
-    Category, CodeSuggestion, Comment, FixEffort, RawComment, ReviewSummary, Severity,
+    Category, CodeSuggestion, Comment, CommentStatus, FixEffort, MergeReadiness, RawComment,
+    ReviewCompletenessSummary, ReviewSummary, ReviewVerificationState, ReviewVerificationSummary,
+    Severity,
 };
 
 pub struct CommentSynthesizer;
@@ -52,6 +59,24 @@ impl CommentSynthesizer {
 
     pub fn generate_summary(comments: &[Comment]) -> ReviewSummary {
         build_review_summary(comments)
+    }
+
+    pub fn inherit_review_state(
+        summary: ReviewSummary,
+        previous: Option<&ReviewSummary>,
+    ) -> ReviewSummary {
+        inherit_review_summary_state(summary, previous)
+    }
+
+    pub fn apply_verification(
+        summary: ReviewSummary,
+        verification: ReviewVerificationSummary,
+    ) -> ReviewSummary {
+        apply_verification_summary(summary, verification)
+    }
+
+    pub fn apply_runtime_review_state(summary: ReviewSummary, stale_review: bool) -> ReviewSummary {
+        apply_review_runtime_summary_state(summary, stale_review)
     }
 
     fn process_raw_comment(raw: RawComment) -> Result<Comment> {
@@ -94,8 +119,14 @@ impl CommentSynthesizer {
             tags,
             fix_effort,
             feedback: None,
+            status: CommentStatus::Open,
+            resolved_at: None,
         })
     }
+}
+
+pub fn sort_comments_by_priority(comments: &mut [Comment]) {
+    order_comments_by_priority(comments);
 }
 
 #[cfg(test)]

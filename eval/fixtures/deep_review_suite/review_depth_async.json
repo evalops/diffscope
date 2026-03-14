@@ -31,7 +31,7 @@
       "diff_content": "diff --git a/src/sync.rs b/src/sync.rs\nindex 1111111..2222222 100644\n--- a/src/sync.rs\n+++ b/src/sync.rs\n@@ -1,5 +1,6 @@\n pub async fn refresh_user(user_id: String) -> anyhow::Result<()> {\n-    sync_user(user_id).await?;\n+    tokio::spawn(async move {\n+        sync_user(user_id).await.unwrap();\n+    });\n     Ok(())\n }\n",
       "expected_findings": [
         {
-          "description": "Background task errors are detached from the caller and can fail silently.",
+          "description": "Detached background task cannot be awaited or monitored by the caller.",
           "severity": "Warning",
           "category": "Bug",
           "file_pattern": "src/sync.rs",
@@ -40,7 +40,32 @@
             "fire and forget",
             "spawned task is not awaited",
             "detached task error",
-            "background task may fail silently"
+            "background task may fail silently",
+            "no join handle",
+            "cannot await completion",
+            "errors are never returned to the caller",
+            "errors can never be returned to the caller",
+            "caller always receives ok",
+            "function contract is broken",
+            "contract violation",
+            "return type is misleading"
+          ]
+        },
+        {
+          "description": "Background task unwrap discards sync failures instead of propagating or logging them.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "src/sync.rs",
+          "line_hint": 3,
+          "contains_any": [
+            "unwrap",
+            "panic in background task",
+            "error propagation",
+            "breaking error contract",
+            "discarded sync_user errors",
+            "returns ok even when sync_user fails",
+            "without propagating the failure",
+            "silently lost"
           ]
         }
       ],
@@ -89,6 +114,46 @@
       "min_total": 1,
       "max_total": 8,
       "description": "Awaiting async permission checks is required before destructive actions.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "typescript-async-foreach-not-awaited",
+      "category": "bug",
+      "language": "typescript",
+      "difficulty": "Hard",
+      "diff_content": "diff --git a/src/notify.ts b/src/notify.ts\nindex 1111111..2222222 100644\n--- a/src/notify.ts\n+++ b/src/notify.ts\n@@ -1,5 +1,7 @@\n export async function sendNotifications(users) {\n-  await Promise.all(users.map((user) => sendNotification(user)));\n+  users.forEach(async (user) => {\n+    await sendNotification(user);\n+  });\n   return { sent: true };\n }\n",
+      "expected_findings": [
+        {
+          "description": "Async work launched inside forEach is not awaited before the function returns.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "src/notify.ts",
+          "line_hint": 2,
+          "contains_any": [
+            "foreach does not await",
+            "async callbacks are not awaited",
+            "returns before sendnotification completes",
+            "fire and forget",
+            "promise is ignored",
+            "map result is ignored",
+            "does not await promises",
+            "return before all notifications complete",
+            "breaks the async contract"
+          ],
+          "tags_any": [
+            "async"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Notification fan-out should keep awaiting all spawned async work.",
       "source": "deep-review-suite"
     }
   ]

@@ -16,7 +16,12 @@ pub use run::resolve_pattern_repositories;
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
+    use crate::config;
+
     use super::git::{is_git_source, is_safe_git_url};
+    use super::run::resolve_pattern_repositories_with;
 
     #[test]
     fn test_is_git_source_https() {
@@ -80,5 +85,81 @@ mod tests {
     #[test]
     fn test_is_safe_git_url_rejects_http_without_git_suffix() {
         assert!(!is_safe_git_url("http://example.com/repo"));
+    }
+
+    #[test]
+    fn test_resolve_pattern_repositories_accepts_repo_relative_local_paths() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let repo_root = tempdir.path();
+        let local_repo = repo_root.join("patterns/local-rules");
+        std::fs::create_dir_all(&local_repo).unwrap();
+
+        let mut config = config::Config::default();
+        config.pattern_repositories = vec![config::PatternRepositoryConfig {
+            source: "patterns/local-rules".to_string(),
+            ..Default::default()
+        }];
+
+        let resolved = resolve_pattern_repositories_with(&config, repo_root, |_| None);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved.get("patterns/local-rules"),
+            Some(&local_repo.canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn test_resolve_pattern_repositories_accepts_git_sources_via_checkout_helper() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let repo_root = tempdir.path();
+        let checkout_path = repo_root.join("cloned-rules");
+        std::fs::create_dir_all(&checkout_path).unwrap();
+
+        let mut config = config::Config::default();
+        let source = "https://github.com/example/rules.git".to_string();
+        config.pattern_repositories = vec![config::PatternRepositoryConfig {
+            source: source.clone(),
+            ..Default::default()
+        }];
+
+        let checkout_calls = RefCell::new(Vec::new());
+        let resolved = resolve_pattern_repositories_with(&config, repo_root, |candidate| {
+            checkout_calls.borrow_mut().push(candidate.to_string());
+            Some(checkout_path.clone())
+        });
+
+        assert_eq!(checkout_calls.into_inner(), vec![source.clone()]);
+        assert_eq!(resolved.get(&source), Some(&checkout_path));
+    }
+
+    #[test]
+    fn test_resolve_pattern_repositories_skips_broken_sources() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let repo_root = tempdir.path();
+
+        let mut config = config::Config::default();
+        config.pattern_repositories = vec![
+            config::PatternRepositoryConfig {
+                source: "missing/local-rules".to_string(),
+                ..Default::default()
+            },
+            config::PatternRepositoryConfig {
+                source: "https://github.com/example/broken.git".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let checkout_calls = RefCell::new(Vec::new());
+        let resolved = resolve_pattern_repositories_with(&config, repo_root, |candidate| {
+            checkout_calls.borrow_mut().push(candidate.to_string());
+            None
+        });
+
+        assert!(resolved.is_empty());
+        assert_eq!(
+            checkout_calls.into_inner(),
+            vec!["https://github.com/example/broken.git".to_string()]
+        );
     }
 }

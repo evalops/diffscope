@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 use crate::core::{Comment, LLMContextChunk, UnifiedDiff};
 
-use super::evidence::{diff_snippet_for_comment, source_context_for_line};
+use super::evidence::{
+    diff_snippet_for_comment, line_is_removed_only_in_diff, source_context_for_line,
+};
 use super::support::supporting_context_for_comment;
 
 pub(super) fn render_comment_section(
@@ -30,9 +32,15 @@ pub(super) fn render_comment_section(
         append_code_block(&mut section, "- Diff evidence:\n", "diff", &diff_snippet);
     }
 
-    if let Some(content) = source_files.get(&comment.file_path) {
-        let file_context = source_context_for_line(content, comment.line_number, 6);
-        append_code_block(&mut section, "- Nearby file context:\n", "", &file_context);
+    let include_source_context = diff
+        .map(|current_diff| !line_is_removed_only_in_diff(current_diff, comment.line_number))
+        .unwrap_or(true);
+
+    if include_source_context {
+        if let Some(content) = source_files.get(&comment.file_path) {
+            let file_context = source_context_for_line(content, comment.line_number, 6);
+            append_code_block(&mut section, "- Nearby file context:\n", "", &file_context);
+        }
     }
 
     let supporting_context = supporting_context_for_comment(comment, extra_context);

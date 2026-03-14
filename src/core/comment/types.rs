@@ -20,6 +20,10 @@ pub struct Comment {
     pub fix_effort: FixEffort,
     #[serde(default)]
     pub feedback: Option<String>,
+    #[serde(default)]
+    pub status: CommentStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +43,121 @@ pub struct ReviewSummary {
     pub files_reviewed: usize,
     pub overall_score: f32,
     pub recommendations: Vec<String>,
+    #[serde(default)]
+    pub open_comments: usize,
+    #[serde(default)]
+    pub open_by_severity: HashMap<String, usize>,
+    #[serde(default)]
+    pub open_blocking_comments: usize,
+    #[serde(default)]
+    pub open_informational_comments: usize,
+    #[serde(default)]
+    pub resolved_comments: usize,
+    #[serde(default)]
+    pub dismissed_comments: usize,
+    #[serde(default)]
+    pub open_blockers: usize,
+    #[serde(default)]
+    pub completeness: ReviewCompletenessSummary,
+    #[serde(default)]
+    pub merge_readiness: MergeReadiness,
+    #[serde(default)]
+    pub verification: ReviewVerificationSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub readiness_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ReviewCompletenessSummary {
+    #[serde(default)]
+    pub total_findings: usize,
+    #[serde(default)]
+    pub acknowledged_findings: usize,
+    #[serde(default)]
+    pub fixed_findings: usize,
+    #[serde(default)]
+    pub stale_findings: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum CommentStatus {
+    #[default]
+    Open,
+    Resolved,
+    Dismissed,
+}
+
+impl std::fmt::Display for CommentStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommentStatus::Open => write!(f, "Open"),
+            CommentStatus::Resolved => write!(f, "Resolved"),
+            CommentStatus::Dismissed => write!(f, "Dismissed"),
+        }
+    }
+}
+
+impl CommentStatus {
+    pub fn from_api_str(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "open" => Some(Self::Open),
+            "resolved" => Some(Self::Resolved),
+            "dismissed" => Some(Self::Dismissed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum MergeReadiness {
+    Ready,
+    NeedsAttention,
+    #[default]
+    NeedsReReview,
+}
+
+impl std::fmt::Display for MergeReadiness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MergeReadiness::Ready => write!(f, "Ready"),
+            MergeReadiness::NeedsAttention => write!(f, "Needs attention"),
+            MergeReadiness::NeedsReReview => write!(f, "Needs re-review"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ReviewVerificationSummary {
+    #[serde(default)]
+    pub state: ReviewVerificationState,
+    #[serde(default)]
+    pub judge_count: usize,
+    #[serde(default)]
+    pub required_votes: usize,
+    #[serde(default)]
+    pub warning_count: usize,
+    #[serde(default)]
+    pub filtered_comments: usize,
+    #[serde(default)]
+    pub abstained_comments: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum ReviewVerificationState {
+    #[default]
+    NotApplicable,
+    Verified,
+    Inconclusive,
+}
+
+impl std::fmt::Display for ReviewVerificationState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReviewVerificationState::NotApplicable => write!(f, "Not applicable"),
+            ReviewVerificationState::Verified => write!(f, "Verified"),
+            ReviewVerificationState::Inconclusive => write!(f, "Inconclusive"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -69,6 +188,14 @@ impl Severity {
             Severity::Info => "info",
             Severity::Suggestion => "suggestion",
         }
+    }
+
+    pub fn is_blocking(&self) -> bool {
+        matches!(self, Severity::Error | Severity::Warning)
+    }
+
+    pub fn is_informational(&self) -> bool {
+        matches!(self, Severity::Info | Severity::Suggestion)
     }
 }
 

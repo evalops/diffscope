@@ -52,6 +52,23 @@ export function useSubmitFeedback(reviewId: string) {
   })
 }
 
+export function useUpdateCommentLifecycle(reviewId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      commentId,
+      status,
+    }: {
+      commentId: string
+      status: import('./types').CommentLifecycleAction
+    }) => api.updateCommentLifecycle(reviewId, commentId, status),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['review', reviewId] })
+      queryClient.invalidateQueries({ queryKey: ['reviews'] })
+    },
+  })
+}
+
 export function useDoctor() {
   return useQuery({
     queryKey: ['doctor'],
@@ -101,6 +118,14 @@ export function useGhPrs(repo: string | undefined, state?: string) {
   })
 }
 
+export function useGhPrReadiness(repo: string | undefined, prNumber: number | undefined) {
+  return useQuery({
+    queryKey: ['gh-pr-readiness', repo, prNumber],
+    queryFn: () => api.getGhPrReadiness(repo!, prNumber!),
+    enabled: !!repo && !!prNumber,
+  })
+}
+
 export function useEvents(params?: {
   source?: string; model?: string; status?: string;
   time_from?: string; time_to?: string;
@@ -116,6 +141,14 @@ export function useEventStats(params?: { time_from?: string; time_to?: string })
   return useQuery({
     queryKey: ['event-stats', params],
     queryFn: () => api.getEventStats(params),
+    refetchInterval: REFETCH.reviews,
+  })
+}
+
+export function useAnalyticsTrends() {
+  return useQuery({
+    queryKey: ['analytics-trends'],
+    queryFn: api.getAnalyticsTrends,
     refetchInterval: REFETCH.reviews,
   })
 }

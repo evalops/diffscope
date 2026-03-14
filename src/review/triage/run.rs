@@ -22,10 +22,6 @@ pub fn triage_diff(diff: &UnifiedDiff) -> TriageResult {
         return TriageResult::NeedsReview;
     }
 
-    if is_deletion_only_change(&all_changes) {
-        return TriageResult::SkipDeletionOnly;
-    }
-
     if is_whitespace_only_change(&all_changes) {
         return TriageResult::SkipWhitespaceOnly;
     }
@@ -35,6 +31,11 @@ pub fn triage_diff(diff: &UnifiedDiff) -> TriageResult {
         .all(|change| is_comment_line(&change.content))
     {
         return TriageResult::SkipCommentOnly;
+    }
+
+    if is_deletion_only_change(&all_changes) {
+        // Pure deletions can still remove required fields, checks, or error handling.
+        return TriageResult::NeedsReview;
     }
 
     TriageResult::NeedsReview

@@ -305,6 +305,12 @@ pub struct Config {
     #[serde(default = "default_feedback_path")]
     pub feedback_path: PathBuf,
 
+    #[serde(default = "default_eval_trend_path")]
+    pub eval_trend_path: PathBuf,
+
+    #[serde(default = "default_feedback_eval_trend_path")]
+    pub feedback_eval_trend_path: PathBuf,
+
     /// Path to the convention store file for learned review patterns.
     /// Defaults to ~/.local/share/diffscope/conventions.json if not set.
     #[serde(default)]
@@ -512,6 +518,10 @@ pub struct PluginConfig {
     /// Supply-chain risk analysis for dependency manifest changes.
     #[serde(default = "default_true")]
     pub supply_chain: bool,
+
+    /// Rust compile-regression analysis for high-confidence struct initializer removals.
+    #[serde(default = "default_true")]
+    pub rust_compile: bool,
 }
 
 impl Default for PluginConfig {
@@ -522,6 +532,7 @@ impl Default for PluginConfig {
             duplicate_filter: true,
             secret_scanner: true,
             supply_chain: true,
+            rust_compile: true,
         }
     }
 }
@@ -558,6 +569,8 @@ impl Default for Config {
             symbol_index_lsp_command: None,
             symbol_index_lsp_languages: default_symbol_index_lsp_languages(),
             feedback_path: default_feedback_path(),
+            eval_trend_path: default_eval_trend_path(),
+            feedback_eval_trend_path: default_feedback_eval_trend_path(),
             convention_store_path: None,
             system_prompt: None,
             api_key: None,
@@ -855,6 +868,15 @@ impl Config {
             self.symbol_index_provider = default_symbol_index_provider();
         } else {
             self.symbol_index_provider = provider;
+        }
+        if self.feedback_path.as_os_str().is_empty() {
+            self.feedback_path = default_feedback_path();
+        }
+        if self.eval_trend_path.as_os_str().is_empty() {
+            self.eval_trend_path = default_eval_trend_path();
+        }
+        if self.feedback_eval_trend_path.as_os_str().is_empty() {
+            self.feedback_eval_trend_path = default_feedback_eval_trend_path();
         }
 
         if let Some(command) = &self.symbol_index_lsp_command {
@@ -1392,6 +1414,14 @@ fn default_symbol_index_lsp_languages() -> HashMap<String, String> {
 
 fn default_feedback_path() -> PathBuf {
     PathBuf::from(".diffscope.feedback.json")
+}
+
+fn default_eval_trend_path() -> PathBuf {
+    PathBuf::from(".diffscope.eval-trend.json")
+}
+
+fn default_feedback_eval_trend_path() -> PathBuf {
+    PathBuf::from(".diffscope.feedback-eval-trend.json")
 }
 
 fn default_pattern_repo_max_files() -> usize {

@@ -1010,7 +1010,14 @@ Enable the repository-managed git hooks after cloning:
 bash scripts/install-hooks.sh
 ```
 
-The hooks validate GitHub Actions workflows and run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` before code leaves your machine. Install `actionlint` if you want full local workflow linting; otherwise the fallback check still blocks invalid `secrets.*` usage inside workflow `if:` expressions.
+**Pre-commit** runs only when relevant files are staged:
+- Rejects merge conflict markers and requires text files to end with exactly one newline
+- Validates GitHub Actions workflows (install `actionlint` for full workflow linting)
+- When Rust files are staged: `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`
+- When `web/` is staged: `npm run lint`, `tsc -b`, and `npm run test` in `web/`
+- When `scripts/` or `.githooks/` change: `shellcheck` (if installed)
+
+**Pre-push** runs the full gate: workflow check, version sync (`Cargo.toml` vs git tags), `cargo fmt`, `cargo clippy`, `cargo audit` (if installed), `npm ci && npm run build && npm run test` in `web/`, and `cargo test`. The first push after clone may take longer due to `npm ci`. Mutation testing runs in CI only (see `docs/mutation-testing.md`), not on pre-push, to keep pushes fast. For a quick push without full checks use `git push --no-verify` (use sparingly).
 
 ## Supported Platforms
 

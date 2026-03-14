@@ -79,9 +79,6 @@
             "unsafe sql",
             "query built from user input",
             "interpolates user-controlled"
-          ],
-          "tags_any": [
-            "sql-injection"
           ]
         }
       ],

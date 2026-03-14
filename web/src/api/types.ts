@@ -2,6 +2,11 @@ export type Severity = 'Error' | 'Warning' | 'Info' | 'Suggestion'
 export type Category = 'Bug' | 'Security' | 'Performance' | 'Style' | 'Documentation' | 'BestPractice' | 'Maintainability' | 'Testing' | 'Architecture'
 export type FixEffort = 'Low' | 'Medium' | 'High'
 export type ReviewStatus = 'Pending' | 'Running' | 'Complete' | 'Failed'
+export type FeedbackAction = 'accept' | 'reject'
+export type CommentLifecycleStatus = 'Open' | 'Resolved' | 'Dismissed'
+export type CommentLifecycleAction = 'open' | 'resolved' | 'dismissed'
+export type MergeReadiness = 'Ready' | 'NeedsAttention' | 'NeedsReReview'
+export type ReviewVerificationState = 'NotApplicable' | 'Verified' | 'Inconclusive'
 
 export interface CodeSuggestion {
   original_code: string
@@ -23,6 +28,9 @@ export interface Comment {
   code_suggestion?: CodeSuggestion
   tags: string[]
   fix_effort: FixEffort
+  feedback?: FeedbackAction
+  status?: CommentLifecycleStatus
+  resolved_at?: string | number
 }
 
 export interface ReviewSummary {
@@ -33,6 +41,29 @@ export interface ReviewSummary {
   files_reviewed: number
   overall_score: number
   recommendations: string[]
+  open_comments: number
+  open_by_severity: Record<string, number>
+  open_blocking_comments: number
+  open_informational_comments: number
+  resolved_comments: number
+  dismissed_comments: number
+  open_blockers: number
+  completeness: {
+    total_findings: number
+    acknowledged_findings: number
+    fixed_findings: number
+    stale_findings: number
+  }
+  merge_readiness: MergeReadiness
+  verification: {
+    state: ReviewVerificationState
+    judge_count: number
+    required_votes: number
+    warning_count: number
+    filtered_comments: number
+    abstained_comments: number
+  }
+  readiness_reasons: string[]
 }
 
 export interface FileMetricEvent {
@@ -74,6 +105,7 @@ export interface ReviewEvent {
   tokens_prompt?: number
   tokens_completion?: number
   tokens_total?: number
+  cost_estimate_usd?: number
   file_metrics?: FileMetricEvent[]
   hotspot_details?: HotspotDetail[]
   convention_suppressed?: number
@@ -145,8 +177,8 @@ export interface ReviewSession {
   id: string
   status: ReviewStatus
   diff_source: string
-  started_at: string
-  completed_at?: string
+  started_at: string | number
+  completed_at?: string | number
   comments: Comment[]
   summary?: ReviewSummary
   files_reviewed: number
@@ -154,6 +186,68 @@ export interface ReviewSession {
   diff_content?: string
   event?: ReviewEvent
   progress?: ReviewProgress
+}
+
+export interface EvalTrendEntry {
+  timestamp: string
+  micro_f1: number
+  micro_precision: number
+  micro_recall: number
+  fixture_count: number
+  label?: string
+  weighted_score?: number
+  model?: string
+  provider?: string
+  suite_micro_f1: Record<string, number>
+  category_micro_f1: Record<string, number>
+  language_micro_f1: Record<string, number>
+  verification_warning_count?: number
+  verification_fail_open_count?: number
+  verification_parse_failure_count?: number
+  verification_request_failure_count?: number
+}
+
+export interface EvalQualityTrend {
+  entries: EvalTrendEntry[]
+}
+
+export interface FeedbackEvalTrendGap {
+  name: string
+  feedback_total: number
+  high_confidence_total: number
+  high_confidence_acceptance_rate: number
+  eval_score?: number
+  gap?: number
+}
+
+export interface FeedbackEvalTrendEntry {
+  timestamp: string
+  labeled_comments: number
+  accepted: number
+  rejected: number
+  acceptance_rate: number
+  confidence_threshold: number
+  confidence_agreement_rate?: number
+  confidence_precision?: number
+  confidence_recall?: number
+  confidence_f1?: number
+  eval_label?: string
+  eval_model?: string
+  eval_provider?: string
+  attention_by_category: FeedbackEvalTrendGap[]
+  attention_by_rule: FeedbackEvalTrendGap[]
+}
+
+export interface FeedbackEvalTrend {
+  entries: FeedbackEvalTrendEntry[]
+}
+
+export interface AnalyticsTrendsResponse {
+  eval_trend_path: string
+  feedback_eval_trend_path: string
+  eval_trend: EvalQualityTrend
+  feedback_eval_trend: FeedbackEvalTrend
+  warnings: string[]
 }
 
 export interface StatusResponse {
@@ -270,6 +364,8 @@ export interface GhRepo {
   language: string | null
   updated_at: string
   open_prs: number
+  open_blockers?: number
+  blocking_prs?: number
   default_branch: string
   stargazers_count: number
   private: boolean
@@ -289,6 +385,29 @@ export interface GhPullRequest {
   base_branch: string
   labels: string[]
   draft: boolean
+  open_blockers?: number
+  merge_readiness?: MergeReadiness
+}
+
+export interface PrReadinessReview {
+  id: string
+  status: ReviewStatus
+  started_at: string | number
+  completed_at?: string | number
+  reviewed_head_sha?: string
+  summary?: ReviewSummary
+  files_reviewed: number
+  comment_count: number
+  error?: string
+}
+
+export interface PrReadinessSnapshot {
+  repo: string
+  pr_number: number
+  diff_source: string
+  current_head_sha?: string
+  latest_review?: PrReadinessReview
+  timeline?: PrReadinessReview[]
 }
 
 export interface StartPrReviewRequest {

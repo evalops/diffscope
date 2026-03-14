@@ -23,9 +23,12 @@ pub async fn eval_command(
     mut config: config::Config,
     fixtures_dir: PathBuf,
     output_path: Option<PathBuf>,
-    options: EvalRunOptions,
+    mut options: EvalRunOptions,
 ) -> Result<()> {
     config.verification.fail_open = true;
+    if options.trend_file.is_none() {
+        options.trend_file = Some(config.eval_trend_path.clone());
+    }
     ensure_frontier_eval_models(&config, &options)?;
     if options.repeat > 1 || !options.matrix_models.is_empty() {
         return run_eval_batch(config, &fixtures_dir, output_path.as_deref(), &options).await;

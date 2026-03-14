@@ -1,20 +1,15 @@
 use crate::core;
 use crate::review;
 
-use super::stats::record_accepted_feedback;
-
 pub(in super::super) fn apply_feedback_accept(
     store: &mut review::FeedbackStore,
     comments: &[core::Comment],
 ) -> usize {
     let mut updated = 0;
     for comment in comments {
-        let is_new = store.accept.insert(comment.id.clone());
-        if is_new {
+        if review::apply_comment_feedback_signal(store, comment, true) {
             updated += 1;
-            record_accepted_feedback(store, comment);
         }
-        store.suppress.remove(&comment.id);
     }
     updated
 }
@@ -41,6 +36,8 @@ mod tests {
             tags: vec![],
             fix_effort: core::comment::FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let comments = vec![comment];

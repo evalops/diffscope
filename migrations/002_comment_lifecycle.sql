@@ -1,0 +1,2 @@
+ALTER TABLE comments
+ADD COLUMN IF NOT EXISTS lifecycle_status TEXT NOT NULL DEFAULT 'Open';

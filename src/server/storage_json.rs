@@ -83,6 +83,16 @@ impl JsonStorageBackend {
             let _ = tokio::fs::remove_file(&tmp_path).await;
         }
     }
+
+    fn refresh_summary(session: &mut ReviewSession) {
+        if session.summary.is_some() || !session.comments.is_empty() {
+            let previous_summary = session.summary.clone();
+            session.summary = Some(crate::core::CommentSynthesizer::inherit_review_state(
+                crate::core::CommentSynthesizer::generate_summary(&session.comments),
+                previous_summary.as_ref(),
+            ));
+        }
+    }
 }
 
 #[async_trait]
@@ -98,7 +108,10 @@ impl StorageBackend for JsonStorageBackend {
 
     async fn get_review(&self, id: &str) -> anyhow::Result<Option<ReviewSession>> {
         let reviews = self.reviews.read().await;
-        Ok(reviews.get(id).cloned())
+        Ok(reviews.get(id).cloned().map(|mut session| {
+            Self::refresh_summary(&mut session);
+            session
+        }))
     }
 
     async fn list_reviews(&self, limit: i64, offset: i64) -> anyhow::Result<Vec<ReviewSession>> {
@@ -107,7 +120,16 @@ impl StorageBackend for JsonStorageBackend {
         list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
         let offset = offset.max(0) as usize;
         let limit = limit.max(0) as usize;
-        Ok(list.into_iter().skip(offset).take(limit).cloned().collect())
+        Ok(list
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .cloned()
+            .map(|mut session| {
+                Self::refresh_summary(&mut session);
+                session
+            })
+            .collect())
     }
 
     async fn delete_review(&self, id: &str) -> anyhow::Result<()> {
@@ -304,6 +326,31 @@ impl StorageBackend for JsonStorageBackend {
             }
         }
 
+        // Daily counts (group by created_at date)
+        let mut daily_map: HashMap<String, (i64, i64)> = HashMap::new();
+        for e in &events {
+            if let Some(created) = e.created_at {
+                let date_str = created.format("%Y-%m-%d").to_string();
+                let entry = daily_map.entry(date_str).or_insert((0, 0));
+                if e.event_type == "review.completed" {
+                    entry.0 += 1;
+                } else if e.event_type == "review.failed" {
+                    entry.1 += 1;
+                }
+            }
+        }
+        let mut daily_counts: Vec<super::storage::DailyCount> = daily_map
+            .into_iter()
+            .map(|(date, (completed, failed))| super::storage::DailyCount {
+                date,
+                completed,
+                failed,
+            })
+            .collect();
+        daily_counts.sort_by(|a, b| a.date.cmp(&b.date));
+
+        let total_cost_estimate: f64 = events.iter().filter_map(|e| e.cost_estimate_usd).sum();
+
         Ok(EventStats {
             total_reviews: total,
             completed_count: completed,
@@ -320,8 +367,8 @@ impl StorageBackend for JsonStorageBackend {
             by_repo,
             severity_totals,
             category_totals,
-            daily_counts: Vec::new(), // No date grouping for JSON backend
-            total_cost_estimate: 0.0,
+            daily_counts,
+            total_cost_estimate,
         })
     }
 
@@ -343,16 +390,28 @@ impl StorageBackend for JsonStorageBackend {
     }
 
     async fn prune(&self, max_age_secs: i64, max_count: usize) -> anyhow::Result<usize> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        self.prune_at(max_age_secs, max_count, now).await
+    }
+}
+
+impl JsonStorageBackend {
+    /// Prune with a fixed "now" timestamp. Used by the trait implementation and by tests to avoid race conditions.
+    pub(crate) async fn prune_at(
+        &self,
+        max_age_secs: i64,
+        max_count: usize,
+        now_secs: i64,
+    ) -> anyhow::Result<usize> {
         let removed = {
             let mut reviews = self.reviews.write().await;
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
 
             let expired: Vec<String> = reviews
                 .iter()
-                .filter(|(_, r)| now - r.started_at > max_age_secs)
+                .filter(|(_, r)| now_secs - r.started_at > max_age_secs)
                 .map(|(id, _)| id.clone())
                 .collect();
             let mut removed = expired.len();
@@ -402,6 +461,8 @@ mod tests {
             id: id.to_string(),
             status,
             diff_source: "head".to_string(),
+            github_head_sha: None,
+            github_post_results_requested: None,
             started_at,
             completed_at: None,
             comments: vec![],
@@ -450,6 +511,8 @@ mod tests {
             tags: vec![],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         }
     }
 
@@ -500,6 +563,8 @@ mod tests {
             make_comment("c1", "src/main.rs"),
             make_comment("c2", "src/lib.rs"),
         ];
+        session.comments[1].status = crate::core::comment::CommentStatus::Resolved;
+        session.comments[1].resolved_at = Some(123);
         session.summary = Some(ReviewSummary {
             total_comments: 2,
             by_severity: HashMap::from([("Warning".to_string(), 2)]),
@@ -508,11 +573,28 @@ mod tests {
             files_reviewed: 2,
             overall_score: 8.0,
             recommendations: vec!["Fix bugs".to_string()],
+            open_comments: 2,
+            open_by_severity: HashMap::from([("Warning".to_string(), 2)]),
+            open_blocking_comments: 2,
+            open_informational_comments: 0,
+            resolved_comments: 0,
+            dismissed_comments: 0,
+            open_blockers: 2,
+            completeness: crate::core::comment::ReviewCompletenessSummary {
+                total_findings: 2,
+                acknowledged_findings: 0,
+                fixed_findings: 0,
+                stale_findings: 0,
+            },
+            merge_readiness: crate::core::comment::MergeReadiness::NeedsAttention,
+            verification: crate::core::comment::ReviewVerificationSummary::default(),
+            readiness_reasons: Vec::new(),
         });
 
         backend.save_review(&session).await.unwrap();
         let loaded = backend.get_review("r-full").await.unwrap().unwrap();
         assert_eq!(loaded.comments.len(), 2);
+        assert_eq!(loaded.comments[1].resolved_at, Some(123));
         assert!(loaded.summary.is_some());
         assert_eq!(loaded.summary.unwrap().overall_score, 8.0);
     }
@@ -1029,6 +1111,79 @@ mod tests {
         assert!(stats.avg_score.is_none());
         assert_eq!(stats.error_rate, 0.0);
         assert_eq!(stats.p50_latency_ms, 0);
+        assert_eq!(stats.p95_latency_ms, 0);
+        assert_eq!(stats.p99_latency_ms, 0);
+        assert!(stats.by_model.is_empty());
+        assert!(stats.by_source.is_empty());
+        assert!(stats.by_repo.is_empty());
+        assert!(stats.daily_counts.is_empty());
+        assert_eq!(stats.total_cost_estimate, 0.0);
+    }
+
+    /// Single event: percentiles and avg must equal that single value (catches percentile/division mutants).
+    #[tokio::test]
+    async fn test_get_event_stats_single_event_exact_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let mut s = make_session_with_event(
+            "r1",
+            now_ts(),
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "head",
+            150,
+        );
+        s.event.as_mut().unwrap().overall_score = Some(7.0);
+        backend.save_review(&s).await.unwrap();
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+
+        assert_eq!(stats.total_reviews, 1);
+        assert_eq!(stats.avg_duration_ms, 150.0);
+        assert_eq!(stats.p50_latency_ms, 150, "single value is p50/p95/p99");
+        assert_eq!(stats.p95_latency_ms, 150);
+        assert_eq!(stats.p99_latency_ms, 150);
+        assert_eq!(stats.avg_score, Some(7.0));
+    }
+
+    /// By-repo avg_score: two events same repo (4.0 + 6.0) / 2 = 5.0.
+    #[tokio::test]
+    async fn test_get_event_stats_by_repo_avg_score_exact() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        for (i, &score) in [4.0_f32, 6.0_f32].iter().enumerate() {
+            let mut s = make_session_with_event(
+                &format!("r{}", i),
+                now + i as i64,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "head",
+                100,
+            );
+            if let Some(ref mut e) = s.event {
+                e.github_repo = Some("org/same-repo".to_string());
+                e.overall_score = Some(score);
+            }
+            backend.save_review(&s).await.unwrap();
+        }
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+
+        assert_eq!(stats.by_repo.len(), 1);
+        assert_eq!(stats.by_repo[0].repo, "org/same-repo");
+        assert_eq!(stats.by_repo[0].count, 2);
+        assert_eq!(stats.by_repo[0].avg_score, Some(5.0), " (4+6)/2 ");
     }
 
     #[tokio::test]
@@ -1147,6 +1302,257 @@ mod tests {
         assert_eq!(stats.by_repo[0].repo, "owner/repo");
         assert_eq!(stats.by_repo[0].count, 1);
         assert_eq!(stats.by_repo[0].avg_score, Some(9.0_f64));
+    }
+
+    #[tokio::test]
+    async fn test_get_event_stats_daily_counts_and_total_cost() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let day1 = chrono::NaiveDate::from_ymd_opt(2025, 3, 1)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap()
+            .and_utc();
+        let day2 = chrono::NaiveDate::from_ymd_opt(2025, 3, 2)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap()
+            .and_utc();
+
+        let mut s1 = make_session_with_event(
+            "r1",
+            0,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "head",
+            100,
+        );
+        if let Some(ref mut e) = s1.event {
+            e.created_at = Some(day1);
+            e.cost_estimate_usd = Some(1.5);
+        }
+        let mut s2 = make_session_with_event(
+            "r2",
+            1,
+            ReviewStatus::Failed,
+            "review.failed",
+            "gpt-4o",
+            "head",
+            200,
+        );
+        if let Some(ref mut e) = s2.event {
+            e.created_at = Some(day1);
+            e.cost_estimate_usd = Some(0.5);
+        }
+        let mut s3 = make_session_with_event(
+            "r3",
+            2,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "staged",
+            300,
+        );
+        if let Some(ref mut e) = s3.event {
+            e.created_at = Some(day2);
+            e.cost_estimate_usd = Some(2.0);
+        }
+
+        backend.save_review(&s1).await.unwrap();
+        backend.save_review(&s2).await.unwrap();
+        backend.save_review(&s3).await.unwrap();
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+
+        assert_eq!(stats.daily_counts.len(), 2, "expected two distinct days");
+        let day1_entry = stats
+            .daily_counts
+            .iter()
+            .find(|d| d.date == "2025-03-01")
+            .unwrap();
+        assert_eq!(day1_entry.completed, 1);
+        assert_eq!(day1_entry.failed, 1);
+        let day2_entry = stats
+            .daily_counts
+            .iter()
+            .find(|d| d.date == "2025-03-02")
+            .unwrap();
+        assert_eq!(day2_entry.completed, 1);
+        assert_eq!(day2_entry.failed, 0);
+
+        assert_eq!(stats.total_cost_estimate, 4.0, "1.5 + 0.5 + 2.0");
+    }
+
+    /// Exact aggregate values so mutations in get_event_stats (avg, percentile formula) are caught.
+    #[tokio::test]
+    async fn test_get_event_stats_exact_aggregates() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        for (i, &dur) in [100_u64, 200, 300].iter().enumerate() {
+            let mut s = make_session_with_event(
+                &format!("r{}", i),
+                now + i as i64,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "head",
+                dur,
+            );
+            if let Some(ref mut e) = s.event {
+                e.overall_score = Some((i as f32 + 1.0) * 2.0); // 2.0, 4.0, 6.0 -> avg 4.0
+            }
+            backend.save_review(&s).await.unwrap();
+        }
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+
+        assert_eq!(stats.total_reviews, 3);
+        assert_eq!(stats.avg_duration_ms, 200.0, " (100+200+300)/3 ");
+        assert_eq!(
+            stats.p50_latency_ms, 200,
+            " percentile 50 of [100,200,300] "
+        );
+        assert_eq!(stats.p95_latency_ms, 300, " percentile 95 ");
+        assert_eq!(stats.p99_latency_ms, 300, " percentile 99 ");
+        assert_eq!(stats.avg_score, Some(4.0), " (2+4+6)/3 ");
+        assert_eq!(stats.by_model.len(), 1);
+        assert_eq!(stats.by_model[0].model, "gpt-4o");
+        assert_eq!(stats.by_model[0].count, 3);
+        assert_eq!(stats.by_model[0].avg_duration_ms, 200.0);
+    }
+
+    /// refresh_summary: get_review with comments but no summary produces synthesized summary.
+    #[tokio::test]
+    async fn test_get_review_refreshes_summary_when_comments_no_summary() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let mut session = make_session("ref-sum", now_ts(), ReviewStatus::Complete);
+        session.comments = vec![
+            make_comment("c1", "src/a.rs"),
+            make_comment("c2", "src/b.rs"),
+        ];
+        session.summary = None;
+        backend.save_review(&session).await.unwrap();
+
+        let loaded = backend.get_review("ref-sum").await.unwrap().unwrap();
+        assert!(
+            loaded.summary.is_some(),
+            "refresh_summary should synthesize summary when comments exist"
+        );
+        let sum = loaded.summary.unwrap();
+        assert_eq!(sum.total_comments, 2);
+    }
+
+    /// refresh_summary: list_reviews returns sessions with refreshed summary when comments exist.
+    #[tokio::test]
+    async fn test_list_reviews_refreshes_summary_for_sessions_with_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let mut with_comments = make_session("with-c", now_ts(), ReviewStatus::Complete);
+        with_comments.comments = vec![make_comment("c1", "src/main.rs")];
+        with_comments.summary = None;
+        backend.save_review(&with_comments).await.unwrap();
+
+        backend
+            .save_review(&make_session("no-c", now_ts() - 1, ReviewStatus::Complete))
+            .await
+            .unwrap();
+
+        let list = backend.list_reviews(10, 0).await.unwrap();
+        let with_c = list.iter().find(|s| s.id == "with-c").unwrap();
+        assert!(
+            with_c.summary.is_some(),
+            "list_reviews should refresh summary for session with comments"
+        );
+    }
+
+    /// Prune age boundary: review with started_at exactly (now - max_age_secs) must NOT be expired (> not >=).
+    /// Uses prune_at with a single timestamp to avoid race (Sentry feedback).
+    #[tokio::test]
+    async fn test_prune_age_boundary_not_expired() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        let max_age = 100_i64;
+        let session = make_session("boundary", now - max_age, ReviewStatus::Complete);
+        backend.save_review(&session).await.unwrap();
+
+        let removed = backend.prune_at(max_age, 1000, now).await.unwrap();
+        assert_eq!(
+            removed, 0,
+            "exactly at boundary (now - max_age) should not be pruned"
+        );
+
+        let list = backend.list_reviews(10, 0).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "boundary");
+    }
+
+    /// Prune max_count: keep newest max_count completed, remove oldest.
+    #[tokio::test]
+    async fn test_prune_max_count_removes_oldest() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let base = now_ts() - 10_000;
+        for i in 0..5 {
+            let s = make_session(&format!("r{}", i), base + i as i64, ReviewStatus::Complete);
+            backend.save_review(&s).await.unwrap();
+        }
+
+        let removed = backend.prune(1_000_000, 3).await.unwrap();
+        assert_eq!(removed, 2, "5 - 3 = 2 removed by count limit");
+
+        let list = backend.list_reviews(10, 0).await.unwrap();
+        assert_eq!(list.len(), 3);
+        let ids: Vec<_> = list.iter().map(|s| s.id.as_str()).collect();
+        let want = ["r2", "r3", "r4"];
+        assert!(
+            want.iter().all(|w| ids.contains(w)),
+            "newest 3 (r2,r3,r4) kept; r0,r1 removed, got {:?}",
+            ids
+        );
+    }
+
+    /// time_to filter: event with created_at == time_to must be included (<=).
+    #[tokio::test]
+    async fn test_list_events_time_to_inclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let t = chrono::Utc::now();
+        let mut s = make_session_with_event(
+            "r1",
+            0,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "head",
+            100,
+        );
+        s.event.as_mut().unwrap().created_at = Some(t);
+        backend.save_review(&s).await.unwrap();
+
+        let filters = EventFilters {
+            time_from: Some(t - chrono::Duration::hours(1)),
+            time_to: Some(t),
+            ..EventFilters::default()
+        };
+        let events = backend.list_events(&filters).await.unwrap();
+        assert_eq!(events.len(), 1, "event at exactly time_to must be included");
     }
 
     // ---------------------------------------------------------------

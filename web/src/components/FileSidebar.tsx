@@ -10,6 +10,15 @@ interface Props {
   onSelectFile: (file: string | null) => void
 }
 
+type FileStats = {
+  total: number
+  worst: number
+  openBlockers: number
+  openInformational: number
+  resolved: number
+  dismissed: number
+}
+
 const statusIcon = {
   added: FilePlus,
   deleted: FileX,
@@ -26,14 +35,71 @@ const statusDot = {
 
 const sevRank: Record<Severity, number> = { Error: 0, Warning: 1, Info: 2, Suggestion: 3 }
 
+function buildReadinessLabel(stats: FileStats): { label: string; tone: string } {
+  if (stats.openBlockers > 0) {
+    return {
+      label: `${stats.openBlockers} blocker${stats.openBlockers === 1 ? '' : 's'}`,
+      tone: 'text-sev-warning',
+    }
+  }
+
+  if (stats.openInformational > 0) {
+    return {
+      label: 'Info only',
+      tone: 'text-accent',
+    }
+  }
+
+  return {
+    label: 'Clear',
+    tone: 'text-sev-suggestion',
+  }
+}
+
+function buildReadinessDetails(stats: FileStats): string | null {
+  const details: string[] = []
+
+  if (stats.openBlockers > 0 && stats.openInformational > 0) {
+    details.push(`${stats.openInformational} info`)
+  }
+  if (stats.resolved > 0) {
+    details.push(`${stats.resolved} resolved`)
+  }
+  if (stats.dismissed > 0) {
+    details.push(`${stats.dismissed} dismissed`)
+  }
+
+  return details.length > 0 ? details.join(' • ') : null
+}
+
 export function FileSidebar({ files, comments, selectedFile, onSelectFile }: Props) {
   const fileStats = useMemo(() => {
-    const stats = new Map<string, { count: number; worst: number }>()
+    const stats = new Map<string, FileStats>()
     for (const c of comments) {
       const path = c.file_path.replace(/^\.\//, '')
-      const existing = stats.get(path) || { count: 0, worst: 4 }
-      existing.count++
+      const existing = stats.get(path) || {
+        total: 0,
+        worst: 4,
+        openBlockers: 0,
+        openInformational: 0,
+        resolved: 0,
+        dismissed: 0,
+      }
+      const lifecycle = c.status ?? 'Open'
+
+      existing.total++
       existing.worst = Math.min(existing.worst, sevRank[c.severity])
+
+      if (lifecycle === 'Resolved') {
+        existing.resolved++
+      } else if (lifecycle === 'Dismissed') {
+        existing.dismissed++
+      } else if (c.severity === 'Error' || c.severity === 'Warning') {
+        existing.openBlockers++
+      } else {
+        existing.openInformational++
+      }
+
       stats.set(path, existing)
     }
     return stats
@@ -95,12 +161,14 @@ export function FileSidebar({ files, comments, selectedFile, onSelectFile }: Pro
               const Icon = statusIcon[file.status]
               const stats = fileStats.get(file.path)
               const isSelected = selectedFile === file.path
+              const readiness = stats ? buildReadinessLabel(stats) : null
+              const readinessDetails = stats ? buildReadinessDetails(stats) : null
 
               return (
                 <button
                   key={file.path}
                   onClick={() => onSelectFile(file.path)}
-                  className={`w-full text-left px-3 py-1 flex items-center gap-1.5 text-[12px] transition-colors ${
+                  className={`w-full text-left px-3 py-1.5 flex items-start gap-1.5 text-[12px] transition-colors ${
                     isSelected
                       ? 'bg-accent/10 text-accent'
                       : 'text-text-secondary hover:bg-surface-2 hover:text-text-primary'
@@ -108,10 +176,20 @@ export function FileSidebar({ files, comments, selectedFile, onSelectFile }: Pro
                 >
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDot[file.status]}`} />
                   <Icon size={12} className="shrink-0 text-text-muted" />
-                  <span className="truncate font-code">{getFileName(file.path)}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-code">{getFileName(file.path)}</div>
+                    {readiness && (
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px]">
+                        <span className={`font-medium ${readiness.tone}`}>{readiness.label}</span>
+                        {readinessDetails && (
+                          <span className="text-text-muted">{readinessDetails}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   {stats && (
                     <span className={`ml-auto shrink-0 text-[10px] text-white px-1 py-0 rounded ${countColor(stats.worst)}`}>
-                      {stats.count}
+                      {stats.total}
                     </span>
                   )}
                 </button>

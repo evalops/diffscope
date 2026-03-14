@@ -61,6 +61,8 @@ fn make_comment(id: &str, content: &str, line: usize) -> Comment {
         tags: Vec::new(),
         fix_effort: FixEffort::Low,
         feedback: None,
+        status: crate::core::comment::CommentStatus::Open,
+        resolved_at: None,
     }
 }
 
@@ -190,6 +192,53 @@ fn test_build_verification_prompt_includes_source_context() {
 }
 
 #[test]
+fn test_build_verification_prompt_marks_deleted_lines_and_skips_source_context() {
+    let comment = make_comment("c1", "Removing this field breaks struct initialization", 20);
+    let diff = UnifiedDiff {
+        old_content: None,
+        new_content: None,
+        file_path: PathBuf::from("src/lib.rs"),
+        is_new: false,
+        is_deleted: false,
+        is_binary: false,
+        hunks: vec![DiffHunk {
+            old_start: 19,
+            old_lines: 2,
+            new_start: 19,
+            new_lines: 1,
+            context: String::new(),
+            changes: vec![
+                DiffLine {
+                    old_line_no: Some(19),
+                    new_line_no: Some(19),
+                    change_type: ChangeType::Context,
+                    content: "before();".to_string(),
+                },
+                DiffLine {
+                    old_line_no: Some(20),
+                    new_line_no: None,
+                    change_type: ChangeType::Removed,
+                    content: "rule_id,".to_string(),
+                },
+            ],
+        }],
+    };
+    let prompt = build_verification_prompt(
+        &[comment],
+        &[diff],
+        &HashMap::from([(
+            PathBuf::from("src/lib.rs"),
+            "before();\nrule_id,\nafter();".to_string(),
+        )]),
+        &HashMap::new(),
+    );
+
+    assert!(prompt.contains("- Diff evidence:"));
+    assert!(prompt.contains("-  20: rule_id,"));
+    assert!(!prompt.contains("Nearby file context"));
+}
+
+#[test]
 fn test_build_verification_prompt_handles_multiple_findings() {
     let comments = vec![make_comment("c1", "issue", 10)];
     let prompt = build_prompt_for_tests(&comments);
@@ -241,6 +290,7 @@ fn test_verification_system_prompt_allows_cross_file_findings() {
     );
     assert!(VERIFICATION_SYSTEM_PROMPT.contains("supporting cross-file context"));
     assert!(VERIFICATION_SYSTEM_PROMPT.contains("related supporting-context file"));
+    assert!(VERIFICATION_SYSTEM_PROMPT.contains("Trust the diff evidence as authoritative"));
 }
 
 #[tokio::test]

@@ -10,15 +10,39 @@ const severityBorder: Record<string, string> = {
   Suggestion: 'border-l-sev-suggestion',
 }
 
+const lifecycleBadge: Record<string, string> = {
+  Open: 'bg-accent/10 text-accent border border-accent/20',
+  Resolved: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
+  Dismissed: 'bg-text-muted/10 text-text-muted border border-border',
+}
+
+const feedbackBadge: Record<'accept' | 'reject', { label: string; className: string }> = {
+  accept: {
+    label: 'Accepted',
+    className: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
+  },
+  reject: {
+    label: 'Rejected',
+    className: 'bg-sev-error/10 text-sev-error border border-sev-error/20',
+  },
+}
+
 interface Props {
   comment: Comment
   variant?: 'card' | 'inline'
   onFeedback?: (action: 'accept' | 'reject') => void
+  onLifecycleChange?: (status: 'open' | 'resolved' | 'dismissed') => void
+  isActive?: boolean
+  onActivate?: () => void
 }
 
-export function CommentCard({ comment, variant = 'card', onFeedback }: Props) {
+export function CommentCard({ comment, variant = 'card', onFeedback, onLifecycleChange, isActive = false, onActivate }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const accepted = comment.feedback === 'accept'
+  const rejected = comment.feedback === 'reject'
+  const lifecycle = comment.status ?? 'Open'
+  const feedbackState = comment.feedback ? feedbackBadge[comment.feedback] : null
 
   const copyCode = () => {
     if (comment.code_suggestion?.suggested_code) {
@@ -34,7 +58,14 @@ export function CommentCard({ comment, variant = 'card', onFeedback }: Props) {
     : 'border border-border rounded-md bg-surface-2'
 
   return (
-    <div className={rootClass}>
+    <div
+      className={`${rootClass} ${isActive ? 'ring-1 ring-accent/50' : ''} focus:outline-none focus-visible:ring-1 focus-visible:ring-accent/50`}
+      data-review-comment-card="true"
+      data-comment-id={comment.id}
+      tabIndex={0}
+      onFocus={() => onActivate?.()}
+      onMouseDown={() => onActivate?.()}
+    >
       {/* Header */}
       <div className={`flex items-center gap-2 px-3 ${isInline ? 'py-1.5 border-b border-border-subtle' : 'py-2'}`}>
         <SeverityBadge severity={comment.severity} />
@@ -42,6 +73,14 @@ export function CommentCard({ comment, variant = 'card', onFeedback }: Props) {
         <span className="text-[10px] text-text-muted/60">
           {Math.round(comment.confidence * 100)}%
         </span>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${lifecycleBadge[lifecycle] ?? lifecycleBadge.Open}`}>
+          {lifecycle}
+        </span>
+        {feedbackState && (
+          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${feedbackState.className}`}>
+            {feedbackState.label}
+          </span>
+        )}
 
         <div className="ml-auto flex items-center gap-1">
           {comment.fix_effort && (
@@ -57,15 +96,25 @@ export function CommentCard({ comment, variant = 'card', onFeedback }: Props) {
             <>
               <button
                 onClick={() => onFeedback('accept')}
-                className="p-1 rounded hover:bg-sev-suggestion/10 text-text-muted hover:text-sev-suggestion transition-colors"
-                title="Accept finding"
+                className={`p-1 rounded transition-colors ${
+                  accepted
+                    ? 'bg-sev-suggestion/15 text-sev-suggestion'
+                    : 'text-text-muted hover:bg-sev-suggestion/10 hover:text-sev-suggestion'
+                }`}
+                title={accepted ? 'Accepted finding' : 'Accept finding'}
+                aria-pressed={accepted}
               >
                 <Check size={13} />
               </button>
               <button
                 onClick={() => onFeedback('reject')}
-                className="p-1 rounded hover:bg-sev-error/10 text-text-muted hover:text-sev-error transition-colors"
-                title="Dismiss finding"
+                className={`p-1 rounded transition-colors ${
+                  rejected
+                    ? 'bg-sev-error/15 text-sev-error'
+                    : 'text-text-muted hover:bg-sev-error/10 hover:text-sev-error'
+                }`}
+                title={rejected ? 'Dismissed finding' : 'Dismiss finding'}
+                aria-pressed={rejected}
               >
                 <X size={13} />
               </button>
@@ -89,6 +138,38 @@ export function CommentCard({ comment, variant = 'card', onFeedback }: Props) {
                 {tag}
               </span>
             ))}
+          </div>
+        )}
+
+        {onLifecycleChange && (
+          <div className="mt-3 pt-2 border-t border-border-subtle flex items-center gap-2">
+            <span className="text-[10px] text-text-muted font-code">Workflow</span>
+            {lifecycle === 'Open' ? (
+              <>
+                <button
+                  onClick={() => onLifecycleChange('resolved')}
+                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20 hover:bg-sev-suggestion/15 transition-colors"
+                  title="Mark finding as resolved"
+                >
+                  Resolve
+                </button>
+                <button
+                  onClick={() => onLifecycleChange('dismissed')}
+                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-surface-3 text-text-muted border border-border hover:text-text-primary transition-colors"
+                  title="Dismiss finding from merge readiness"
+                >
+                  Dismiss
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => onLifecycleChange('open')}
+                className="px-2 py-0.5 rounded text-[10px] font-medium bg-accent/10 text-accent border border-accent/20 hover:bg-accent/15 transition-colors"
+                title="Reopen finding"
+              >
+                Reopen
+              </button>
+            )}
           </div>
         )}
       </div>

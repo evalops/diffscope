@@ -1,5 +1,7 @@
 pub mod api;
+pub mod cost;
 pub mod github;
+pub mod pr_readiness;
 pub mod state;
 pub mod storage;
 pub mod storage_json;
@@ -99,9 +101,26 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .route("/reviews", get(api::list_reviews))
         .route("/events", get(api::list_events))
         .route("/events/stats", get(api::get_event_stats))
+        .route("/analytics/trends", get(api::get_analytics_trends))
+        .route(
+            "/analytics/learned-rules",
+            get(api::get_analytics_learned_rules),
+        )
+        .route(
+            "/analytics/attention-gaps",
+            get(api::get_analytics_attention_gaps),
+        )
+        .route(
+            "/analytics/rejected-patterns",
+            get(api::get_analytics_rejected_patterns),
+        )
         .route("/review/{id}", get(api::get_review))
         .route("/review/{id}", delete(api::delete_review))
         .route("/review/{id}/feedback", post(api::submit_feedback))
+        .route(
+            "/review/{id}/lifecycle",
+            post(api::update_comment_lifecycle),
+        )
         .route("/reviews/prune", post(api::prune_reviews))
         .route("/doctor", get(api::get_doctor))
         .route("/config", get(api::get_config))
@@ -110,7 +129,11 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .route("/gh/status", get(api::get_gh_status))
         .route("/gh/repos", get(api::get_gh_repos))
         .route("/gh/prs", get(api::get_gh_prs))
+        .route("/gh/pr-readiness", get(api::get_gh_pr_readiness))
+        .route("/gh/pr-comments", get(api::get_gh_pr_comments))
+        .route("/gh/pr-findings", get(api::get_gh_pr_findings))
         .route("/gh/review", post(api::start_pr_review))
+        .route("/gh/review/rerun", post(api::rerun_pr_review))
         .route("/agent/tools", get(api::get_agent_tools))
         .route("/gh/auth/device", post(github::start_device_flow))
         .route("/gh/auth/poll", post(github::poll_device_flow))

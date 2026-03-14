@@ -11,7 +11,7 @@ function parsePricePerMillion(price: string): number {
 // Build a lookup: normalized model fragment -> price per million tokens
 const priceLookup: [string[], number][] = MODEL_PRESETS.map(p => {
   // Extract recognizable fragments from the preset ID
-  // e.g. "anthropic/claude-sonnet-4.6" -> ["claude-sonnet-4.6", "claude-sonnet", "sonnet-4.6"]
+  // e.g. "anthropic/claude-sonnet-4.5" -> ["claude-sonnet-4.5", "claude-sonnet", "sonnet-4.5"]
   const parts = p.id.split('/')
   const modelPart = parts[parts.length - 1].toLowerCase()
   const fragments = [modelPart]
@@ -21,8 +21,9 @@ const priceLookup: [string[], number][] = MODEL_PRESETS.map(p => {
   return [fragments, parsePricePerMillion(p.price)]
 })
 
-/** Estimate cost in USD for a review event based on total tokens and model pricing. */
+/** Estimate cost in USD for a review event. Prefer server-side cost_estimate_usd when present. */
 export function estimateCost(event: ReviewEvent): number {
+  if (event.cost_estimate_usd != null && event.cost_estimate_usd >= 0) return event.cost_estimate_usd
   const tokens = event.tokens_total ?? 0
   if (tokens === 0) return 0
 

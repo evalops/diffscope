@@ -11,6 +11,7 @@ import { Doctor } from './pages/Doctor'
 import { Repos } from './pages/Repos'
 import { Events } from './pages/Events'
 import { Admin } from './pages/Admin'
+import { Docs } from './pages/Docs'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,21 +38,7 @@ export default function App() {
               <Route path="/events" element={<Events />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="/doctor" element={<Doctor />} />
-              <Route path="/docs" element={
-                <div className="p-6 max-w-3xl mx-auto">
-                  <h1 className="text-xl font-semibold text-text-primary mb-4">Documentation</h1>
-                  <div className="bg-surface-1 border border-border rounded-lg p-4 space-y-3 text-[13px] text-text-secondary">
-                    <p><span className="font-code text-accent">diffscope review</span> — Review code changes with AI</p>
-                    <p><span className="font-code text-accent">diffscope serve</span> — Start the web UI server</p>
-                    <p><span className="font-code text-accent">diffscope doctor</span> — Check your setup</p>
-                    <p><span className="font-code text-accent">diffscope smart-review</span> — Generate PR summaries</p>
-                    <p className="text-[11px] text-text-muted pt-2 border-t border-border-subtle">
-                      Set your API key via <span className="font-code">DIFFSCOPE_API_KEY</span> or in Settings.
-                      OpenRouter models use <span className="font-code">vendor/model-name</span> format.
-                    </p>
-                  </div>
-                </div>
-              } />
+              <Route path="/docs" element={<Docs />} />
             </Route>
           </Routes>
         </BrowserRouter>

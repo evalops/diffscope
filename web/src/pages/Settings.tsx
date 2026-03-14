@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Save, RefreshCw, Check, ChevronDown, ChevronRight, Eye, EyeOff, GitPullRequestDraft } from 'lucide-react'
+import { Save, RefreshCw, Check, ChevronDown, ChevronRight, Eye, EyeOff, GitPullRequestDraft, Plus, Trash2 } from 'lucide-react'
 import { useConfig, useUpdateConfig, useAgentTools } from '../api/hooks'
 import { api } from '../api/client'
 import { MODEL_PRESETS } from '../lib/models'
@@ -90,6 +90,109 @@ interface ProviderFormState {
   enabled: boolean
 }
 
+interface PatternRepositoryFormState {
+  source: string
+  scope?: string
+  include_patterns?: string[]
+  max_files?: number
+  max_lines?: number
+  rule_patterns?: string[]
+  max_rules?: number
+}
+
+interface PathInstructionFormState {
+  path: string
+  review_instructions: string
+  preserved: Record<string, unknown>
+}
+
+interface CustomContextFormState {
+  scope: string
+  notesText: string
+  filesText: string
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function splitLines(value: string): string[] {
+  return value
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+}
+
+function parsePathInstructionEntries(form: Record<string, unknown>): PathInstructionFormState[] {
+  const paths = asRecord(form.paths)
+
+  return Object.entries(paths).flatMap(([path, candidate]): PathInstructionFormState[] => {
+    const preserved = asRecord(candidate)
+    return [{
+      path,
+      review_instructions: typeof preserved.review_instructions === 'string' ? preserved.review_instructions : '',
+      preserved,
+    }]
+  })
+}
+
+function buildPathsValue(entries: PathInstructionFormState[]): Record<string, unknown> {
+  const next: Record<string, unknown> = {}
+
+  for (const entry of entries) {
+    const path = entry.path.trim()
+    if (!path) continue
+
+    const value = { ...entry.preserved }
+    const reviewInstructions = entry.review_instructions.trim()
+    if (reviewInstructions) value.review_instructions = reviewInstructions
+    else delete value.review_instructions
+
+    if (Object.keys(value).length > 0) {
+      next[path] = value
+    }
+  }
+
+  return next
+}
+
+function parseCustomContextEntries(form: Record<string, unknown>): CustomContextFormState[] {
+  const value = Array.isArray(form.custom_context) ? form.custom_context : []
+
+  return value.flatMap((entry): CustomContextFormState[] => {
+    const candidate = asRecord(entry)
+    return [{
+      scope: typeof candidate.scope === 'string' ? candidate.scope : '',
+      notesText: Array.isArray(candidate.notes)
+        ? candidate.notes.filter((item): item is string => typeof item === 'string').join('\n')
+        : '',
+      filesText: Array.isArray(candidate.files)
+        ? candidate.files.filter((item): item is string => typeof item === 'string').join('\n')
+        : '',
+    }]
+  })
+}
+
+function buildCustomContextValue(entries: CustomContextFormState[]): Record<string, unknown>[] {
+  return entries.flatMap((entry): Record<string, unknown>[] => {
+    const scope = entry.scope.trim()
+    const notes = splitLines(entry.notesText)
+    const files = splitLines(entry.filesText)
+
+    if (!scope && notes.length === 0 && files.length === 0) {
+      return []
+    }
+
+    return [{
+      scope: scope || undefined,
+      notes,
+      files,
+    }]
+  })
+}
+
 type ProvidersMap = Record<string, ProviderFormState>
 
 function getProviders(form: Record<string, unknown>): ProvidersMap {
@@ -122,6 +225,20 @@ function setProviders(form: Record<string, unknown>, providers: ProvidersMap): R
 
 type ConnStatus = 'untested' | 'ok' | 'failed'
 
+const MODEL_ROLE_OPTIONS = [
+  { value: 'primary', label: 'Primary' },
+  { value: 'weak', label: 'Weak' },
+  { value: 'fast', label: 'Fast' },
+  { value: 'reasoning', label: 'Reasoning' },
+  { value: 'embedding', label: 'Embedding' },
+]
+
+const VERIFICATION_CONSENSUS_OPTIONS = [
+  { value: 'any', label: 'Any judge passes' },
+  { value: 'majority', label: 'Majority vote' },
+  { value: 'all', label: 'All judges must pass' },
+]
+
 // --------------- main component ---------------
 
 export function Settings() {
@@ -129,6 +246,8 @@ export function Settings() {
   const updateConfig = useUpdateConfig()
   const { data: agentTools } = useAgentTools()
   const [form, setForm] = useState<Record<string, unknown>>({})
+  const [pathInstructionEntries, setPathInstructionEntries] = useState<PathInstructionFormState[]>([])
+  const [customContextEntries, setCustomContextEntries] = useState<CustomContextFormState[]>([])
   const [saved, setSaved] = useState(false)
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     const hash = window.location.hash.replace('#', '') as TabId
@@ -146,7 +265,11 @@ export function Settings() {
   const [ghLoading, setGhLoading] = useState(false)
 
   useEffect(() => {
-    if (config) setForm(config)
+    if (config) {
+      setForm(config)
+      setPathInstructionEntries(parsePathInstructionEntries(config))
+      setCustomContextEntries(parseCustomContextEntries(config))
+    }
   }, [config])
 
   useEffect(() => {
@@ -154,7 +277,14 @@ export function Settings() {
   }, [activeTab])
 
   const handleSave = () => {
-    updateConfig.mutate(form, {
+    const nextForm = {
+      ...form,
+      paths: buildPathsValue(pathInstructionEntries),
+      custom_context: buildCustomContextValue(customContextEntries),
+    }
+
+    setForm(nextForm)
+    updateConfig.mutate(nextForm, {
       onSuccess: () => {
         setSaved(true)
         setTimeout(() => setSaved(false), 2000)
@@ -209,6 +339,136 @@ export function Settings() {
       {help && <p className="text-[10px] text-text-muted mt-1">{help}</p>}
     </div>
   )
+
+  const optionalTextField = (label: string, key: string, placeholder?: string, help?: string) => (
+    <div>
+      <label className="block text-[12px] font-medium text-text-secondary mb-1">{label}</label>
+      <input
+        type="text"
+        value={typeof form[key] === 'string' ? String(form[key]) : ''}
+        onChange={(e) => setForm({ ...form, [key]: e.target.value || null })}
+        placeholder={placeholder}
+        className="w-full bg-surface border border-border rounded px-3 py-1.5 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code"
+      />
+      {help && <p className="text-[10px] text-text-muted mt-1">{help}</p>}
+    </div>
+  )
+
+  const textareaListField = (label: string, key: string, placeholder?: string, help?: string) => (
+    <div>
+      <label className="block text-[12px] font-medium text-text-secondary mb-1">{label}</label>
+      <textarea
+        value={Array.isArray(form[key]) ? (form[key] as string[]).join('\n') : ''}
+        onChange={(e) => {
+          const values = e.target.value
+            .split('\n')
+            .map(value => value.trim())
+            .filter(Boolean)
+          setForm({ ...form, [key]: values })
+        }}
+        placeholder={placeholder}
+        rows={4}
+        className="w-full bg-surface border border-border rounded px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code resize-y"
+      />
+      {help && <p className="text-[10px] text-text-muted mt-1">{help}</p>}
+    </div>
+  )
+
+  const stringArrayField = (key: string): string[] =>
+    Array.isArray(form[key])
+      ? (form[key] as unknown[]).filter((value): value is string => typeof value === 'string')
+      : []
+
+  const patternRepositoriesField = (): PatternRepositoryFormState[] => {
+    const value = form.pattern_repositories
+    if (!Array.isArray(value)) {
+      return []
+    }
+
+    return value.flatMap((entry): PatternRepositoryFormState[] => {
+      if (!entry || typeof entry !== 'object') {
+        return []
+      }
+
+      const candidate = entry as Record<string, unknown>
+      const source = typeof candidate.source === 'string' ? candidate.source.trim() : ''
+      if (!source) {
+        return []
+      }
+
+      return [{
+        source,
+        scope: typeof candidate.scope === 'string' ? candidate.scope : undefined,
+        include_patterns: Array.isArray(candidate.include_patterns)
+          ? candidate.include_patterns.filter((item): item is string => typeof item === 'string')
+          : undefined,
+        max_files: typeof candidate.max_files === 'number' ? candidate.max_files : undefined,
+        max_lines: typeof candidate.max_lines === 'number' ? candidate.max_lines : undefined,
+        rule_patterns: Array.isArray(candidate.rule_patterns)
+          ? candidate.rule_patterns.filter((item): item is string => typeof item === 'string')
+          : undefined,
+        max_rules: typeof candidate.max_rules === 'number' ? candidate.max_rules : undefined,
+      }]
+    })
+  }
+
+  const setPatternRepositorySources = (value: string) => {
+    const nextSources = value
+      .split('\n')
+      .map(source => source.trim())
+      .filter(Boolean)
+
+    const existingBySource = new Map(
+      patternRepositoriesField().map(repo => [repo.source, repo] as const),
+    )
+
+    const nextRepositories = nextSources.map(source => existingBySource.get(source) ?? { source })
+    setForm({ ...form, pattern_repositories: nextRepositories })
+  }
+
+  const updatePathInstructionEntry = (index: number, patch: Partial<PathInstructionFormState>) => {
+    setPathInstructionEntries(entries => entries.map((entry, entryIndex) => (
+      entryIndex === index ? { ...entry, ...patch } : entry
+    )))
+  }
+
+  const addPathInstructionEntry = () => {
+    setPathInstructionEntries(entries => [...entries, {
+      path: '',
+      review_instructions: '',
+      preserved: {},
+    }])
+  }
+
+  const removePathInstructionEntry = (index: number) => {
+    setPathInstructionEntries(entries => entries.filter((_, entryIndex) => entryIndex !== index))
+  }
+
+  const updateCustomContextEntry = (index: number, patch: Partial<CustomContextFormState>) => {
+    setCustomContextEntries(entries => entries.map((entry, entryIndex) => (
+      entryIndex === index ? { ...entry, ...patch } : entry
+    )))
+  }
+
+  const addCustomContextEntry = () => {
+    setCustomContextEntries(entries => [...entries, {
+      scope: '',
+      notesText: '',
+      filesText: '',
+    }])
+  }
+
+  const removeCustomContextEntry = (index: number) => {
+    setCustomContextEntries(entries => entries.filter((_, entryIndex) => entryIndex !== index))
+  }
+
+  const toggleStringArrayField = (key: string, value: string) => {
+    const current = stringArrayField(key)
+    const next = current.includes(value)
+      ? current.filter(item => item !== value)
+      : [...current, value]
+    setForm({ ...form, [key]: next })
+  }
 
   // --------------- provider helpers ---------------
 
@@ -444,12 +704,183 @@ export function Settings() {
 
         {textareaField('Review Instructions', 'review_instructions', 'Custom instructions for the reviewer (e.g., "Focus on security issues in auth code")', 'Additional context passed to the LLM for every review')}
       </Section>
+
+      <Section title="REPOSITORY CONTEXT" defaultOpen={false}>
+        <p className="text-[10px] text-text-muted mb-3">
+          Shared rule packs and repository context help DiffScope behave more like a learned reviewer instead of a stateless diff bot.
+        </p>
+        <div className="space-y-3">
+          {textareaListField('Rule Files', 'rules_files', '.diffscope-rules.yml\nrules/**/*.yaml', 'One file or glob per line. These repository-local rule sources are loaded on each review run.')}
+          {textareaListField('Rule Priority', 'rule_priority', 'sec.authz.tenant-scope\nbug.async.missing-await', 'Optional rule IDs to prioritize when multiple rules match the same change.')}
+          <div>
+            <label className="block text-[12px] font-medium text-text-secondary mb-1">Pattern Repository Sources</label>
+            <textarea
+              value={patternRepositoriesField().map(repo => repo.source).join('\n')}
+              onChange={(e) => setPatternRepositorySources(e.target.value)}
+              placeholder={'../shared-patterns\ngit@github.com:org/security-patterns.git'}
+              rows={4}
+              className="w-full bg-surface border border-border rounded px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code resize-y"
+            />
+            <p className="text-[10px] text-text-muted mt-1">
+              One source per line. Existing scope and rule-pattern settings are preserved for matching sources; newly added sources use default limits until advanced editing is surfaced.
+            </p>
+          </div>
+          <div className="rounded-lg border border-border-subtle bg-surface p-3">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <div className="text-[12px] font-medium text-text-secondary">Per-path Review Instructions</div>
+                <p className="text-[10px] text-text-muted mt-1">
+                  Override reviewer guidance for common repo areas like `tests/**`, `scripts/**`, or `src/auth/**`.
+                </p>
+              </div>
+              <button
+                onClick={addPathInstructionEntry}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium bg-accent/10 text-accent border border-accent/20 hover:bg-accent/15 transition-colors"
+              >
+                <Plus size={12} />
+                Add path
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {pathInstructionEntries.length === 0 ? (
+                <div className="text-[11px] text-text-muted border border-dashed border-border rounded px-3 py-3">
+                  No path-specific instructions yet.
+                </div>
+              ) : pathInstructionEntries.map((entry, index) => {
+                const preservesExtraFields = Object.keys(entry.preserved).some(key => key !== 'review_instructions')
+
+                return (
+                  <div key={`path-instruction-${index}`} className="rounded border border-border bg-surface-1 p-3 space-y-3">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1 space-y-1.5">
+                        <label className="block text-[11px] font-medium text-text-secondary">Path Pattern</label>
+                        <input
+                          type="text"
+                          value={entry.path}
+                          onChange={(e) => updatePathInstructionEntry(index, { path: e.target.value })}
+                          placeholder="tests/**"
+                          className="w-full bg-surface border border-border rounded px-3 py-1.5 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code"
+                        />
+                      </div>
+                      <button
+                        onClick={() => removePathInstructionEntry(index)}
+                        className="mt-6 p-1.5 rounded text-text-muted hover:text-sev-error hover:bg-sev-error/10 transition-colors"
+                        title="Remove path instruction"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-medium text-text-secondary mb-1">Review Instructions</label>
+                      <textarea
+                        value={entry.review_instructions}
+                        onChange={(e) => updatePathInstructionEntry(index, { review_instructions: e.target.value })}
+                        placeholder="Focus on flaky tests, auth boundaries, and tenant isolation."
+                        rows={3}
+                        className="w-full bg-surface border border-border rounded px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code resize-y"
+                      />
+                      <p className="text-[10px] text-text-muted mt-1">
+                        Applied only when changed files match this path expression.
+                      </p>
+                    </div>
+
+                    {preservesExtraFields && (
+                      <div className="text-[10px] text-text-muted font-code">
+                        Existing focus/context overrides for this path will be preserved.
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border-subtle bg-surface p-3">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <div className="text-[12px] font-medium text-text-secondary">Custom Context</div>
+                <p className="text-[10px] text-text-muted mt-1">
+                  Attach scoped notes and reference files so repeat guidance can be reused without editing raw config.
+                </p>
+              </div>
+              <button
+                onClick={addCustomContextEntry}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium bg-accent/10 text-accent border border-accent/20 hover:bg-accent/15 transition-colors"
+              >
+                <Plus size={12} />
+                Add context
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {customContextEntries.length === 0 ? (
+                <div className="text-[11px] text-text-muted border border-dashed border-border rounded px-3 py-3">
+                  No scoped context notes configured yet.
+                </div>
+              ) : customContextEntries.map((entry, index) => (
+                <div key={`custom-context-${index}`} className="rounded border border-border bg-surface-1 p-3 space-y-3">
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 space-y-1.5">
+                      <label className="block text-[11px] font-medium text-text-secondary">Scope</label>
+                      <input
+                        type="text"
+                        value={entry.scope}
+                        onChange={(e) => updateCustomContextEntry(index, { scope: e.target.value })}
+                        placeholder="auth|payments|docs/**"
+                        className="w-full bg-surface border border-border rounded px-3 py-1.5 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code"
+                      />
+                    </div>
+                    <button
+                      onClick={() => removeCustomContextEntry(index)}
+                      className="mt-6 p-1.5 rounded text-text-muted hover:text-sev-error hover:bg-sev-error/10 transition-colors"
+                      title="Remove custom context"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-text-secondary mb-1">Notes</label>
+                    <textarea
+                      value={entry.notesText}
+                      onChange={(e) => updateCustomContextEntry(index, { notesText: e.target.value })}
+                      placeholder={'Prefer tenant-safe queries\nKeep auth audit logs intact'}
+                      rows={3}
+                      className="w-full bg-surface border border-border rounded px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code resize-y"
+                    />
+                    <p className="text-[10px] text-text-muted mt-1">One reusable note per line.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-text-secondary mb-1">Files</label>
+                    <textarea
+                      value={entry.filesText}
+                      onChange={(e) => updateCustomContextEntry(index, { filesText: e.target.value })}
+                      placeholder={'docs/auth.md\nrfc/tenant-isolation.md'}
+                      rows={3}
+                      className="w-full bg-surface border border-border rounded px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code resize-y"
+                    />
+                    <p className="text-[10px] text-text-muted mt-1">Reference files or globs to pull into the scoped context.</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {field('Max Active Rules', 'max_active_rules', 'number', '32', 'Upper bound for active rule loading across repository-local and shared rule sources')}
+        </div>
+      </Section>
     </div>
   )
 
   const renderModelTab = () => (
     <div className="space-y-3">
       <Section title="MODEL">
+        <p className="text-[10px] text-text-muted mb-3">
+          Default frontier stack: <code className="font-code text-accent">anthropic/claude-opus-4.5</code> for primary review and <code className="font-code text-accent">anthropic/claude-sonnet-4.5</code> for weaker and fast roles.
+        </p>
         {/* Quick select grid */}
         <div className="mb-4">
           <div className="text-[11px] text-text-secondary mb-2">Quick Select (via OpenRouter)</div>
@@ -475,7 +906,7 @@ export function Settings() {
         </div>
 
         <div className="space-y-3 border-t border-border-subtle pt-3">
-          {field('Model name', 'model', 'text', 'claude-sonnet-4-6', 'Direct: claude-*, gpt-* | OpenRouter: vendor/model')}
+          {field('Model name', 'model', 'text', 'anthropic/claude-opus-4.5', 'Direct: claude-*, gpt-* | OpenRouter: vendor/model')}
           {selectField('Adapter', 'adapter', [
             { value: '', label: 'Auto-detect' },
             { value: 'openai', label: 'OpenAI (direct)' },
@@ -483,6 +914,16 @@ export function Settings() {
             { value: 'ollama', label: 'Ollama (local)' },
             { value: 'openrouter', label: 'OpenRouter' },
           ])}
+        </div>
+      </Section>
+
+      <Section title="MODEL ROLES" defaultOpen={false}>
+        <div className="space-y-3">
+          {optionalTextField('Weak / Verification Model', 'model_weak', 'anthropic/claude-sonnet-4.5', 'Used for verification, triage, and cheaper supporting work when configured')}
+          {optionalTextField('Fast Utility Model', 'model_fast', 'anthropic/claude-sonnet-4.5', 'Used for lightweight helper tasks such as summaries and titles')}
+          {optionalTextField('Reasoning Model', 'model_reasoning', 'anthropic/claude-opus-4.5', 'Used when the pipeline asks for a deeper reasoning pass')}
+          {optionalTextField('Embedding Model', 'model_embedding', 'text-embedding-3-small', 'Optional embedding model for semantic retrieval and feedback memory')}
+          {textareaListField('Fallback Models', 'fallback_models', 'anthropic/claude-sonnet-4.5\nopenai/gpt-5.4', 'One model per line. These are tried in order when the primary request fails.')}
         </div>
       </Section>
 
@@ -618,8 +1059,91 @@ export function Settings() {
           onChange={v => setForm({ ...form, verification_pass: v })}
         />
         <div className="space-y-3 mt-3">
+          {selectField('Primary Judge Role', 'verification_model_role', MODEL_ROLE_OPTIONS, 'Which configured model role should run the first verification pass')}
+          <div>
+            <label className="block text-[12px] font-medium text-text-secondary mb-1">Additional Judge Roles</label>
+            <div className="flex gap-2 flex-wrap">
+              {MODEL_ROLE_OPTIONS
+                .filter(option => option.value !== String(form.verification_model_role ?? 'weak'))
+                .map(option => {
+                  const active = stringArrayField('verification_additional_model_roles').includes(option.value)
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => toggleStringArrayField('verification_additional_model_roles', option.value)}
+                      className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+                        active
+                          ? 'bg-accent/15 text-accent border border-accent/30'
+                          : 'bg-surface text-text-muted border border-border hover:text-text-secondary'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  )
+                })}
+            </div>
+            <p className="text-[10px] text-text-muted mt-1">Extra judges vote alongside the primary verification role.</p>
+          </div>
+          {selectField('Consensus Mode', 'verification_consensus_mode', VERIFICATION_CONSENSUS_OPTIONS, 'How multiple verification judges should agree before a comment is kept')}
           {field('Min Score', 'verification_min_score', 'number', '5', 'Minimum verification score (0-10) to keep a comment')}
           {field('Max Comments', 'verification_max_comments', 'number', '20', 'Maximum comments to send through verification (cost control)')}
+        </div>
+        <div className="mt-3">
+          <Toggle
+            label="Fail Open on Judge Errors"
+            description="Keep the original comments if the verification step errors or returns unparseable output"
+            checked={!!form.verification_fail_open}
+            onChange={v => setForm({ ...form, verification_fail_open: v })}
+          />
+        </div>
+      </Section>
+
+      <Section title="PIPELINE MODES" defaultOpen={false}>
+        <Toggle
+          label="Multi-pass Specialized Review"
+          description="Run separate security, correctness, and style passes instead of one monolithic review prompt"
+          checked={!!form.multi_pass_specialized}
+          onChange={v => setForm({ ...form, multi_pass_specialized: v })}
+        />
+        <Toggle
+          label="Enable Symbol Index"
+          description="Index repository symbols so review and retrieval can follow call chains more effectively"
+          checked={form.symbol_index !== false}
+          onChange={v => setForm({ ...form, symbol_index: v })}
+        />
+        <Toggle
+          label="Enable Semantic RAG"
+          description="Retrieve related code context using embeddings and similarity search"
+          checked={!!form.semantic_rag}
+          onChange={v => setForm({ ...form, semantic_rag: v })}
+        />
+        <Toggle
+          label="Enable Enhanced Feedback"
+          description="Track richer acceptance and rejection calibration across categories and rules"
+          checked={!!form.enhanced_feedback}
+          onChange={v => setForm({ ...form, enhanced_feedback: v })}
+        />
+        <Toggle
+          label="Enable Semantic Feedback Memory"
+          description="Use embedding-backed accepted and rejected examples to calibrate similar future findings"
+          checked={!!form.semantic_feedback}
+          onChange={v => setForm({ ...form, semantic_feedback: v })}
+        />
+      </Section>
+
+      <Section title="SEMANTIC CONTEXT & MEMORY" defaultOpen={false}>
+        <div className="space-y-3">
+          {selectField('Symbol Index Provider', 'symbol_index_provider', [
+            { value: 'regex', label: 'Regex' },
+            { value: 'lsp', label: 'LSP' },
+          ], 'Regex is simpler and faster; LSP can provide richer symbol results when available')}
+          {field('Feedback Min Observations', 'feedback_min_observations', 'number', '5', 'Minimum accepted/rejected examples before confidence calibration shifts')}
+          {field('Semantic RAG Max Files', 'semantic_rag_max_files', 'number', '500', 'Maximum files indexed for semantic retrieval')}
+          {field('Semantic RAG Top K', 'semantic_rag_top_k', 'number', '5', 'Maximum nearby semantic matches to inject into the prompt')}
+          {field('Semantic RAG Min Similarity', 'semantic_rag_min_similarity', 'number', '0.25', 'Minimum similarity score (0.0 - 1.0) for semantic retrieval')}
+          {field('Semantic Feedback Similarity', 'semantic_feedback_similarity', 'number', '0.82', 'Minimum similarity score (0.0 - 1.0) to reuse prior feedback examples')}
+          {field('Semantic Feedback Min Examples', 'semantic_feedback_min_examples', 'number', '3', 'Minimum nearby examples required before semantic feedback is applied')}
+          {field('Semantic Feedback Max Neighbors', 'semantic_feedback_max_neighbors', 'number', '8', 'Maximum neighboring feedback examples to consult')}
         </div>
       </Section>
 
@@ -630,6 +1154,17 @@ export function Settings() {
         </div>
         <p className="text-[10px] text-text-muted mt-2">
           When you reject findings, DiffScope learns to suppress similar patterns. These settings control how aggressively it adapts.
+        </p>
+      </Section>
+
+      <Section title="DATA PATHS" defaultOpen={false}>
+        <div className="space-y-3">
+          {field('Feedback Store Path', 'feedback_path', 'text', '.diffscope.feedback.json', 'Accepted/rejected review feedback is persisted here for suppression and reranking')}
+          {field('Eval Trend Path', 'eval_trend_path', 'text', '.diffscope.eval-trend.json', 'The eval command appends quality trend snapshots here by default')}
+          {field('Feedback Eval Trend Path', 'feedback_eval_trend_path', 'text', '.diffscope.feedback-eval-trend.json', 'The feedback-eval command appends calibration snapshots here by default')}
+        </div>
+        <p className="text-[10px] text-text-muted mt-2">
+          The Analytics view reads these files directly through the server, so keeping them configured gives you a continuous quality history in the UI.
         </p>
       </Section>
 

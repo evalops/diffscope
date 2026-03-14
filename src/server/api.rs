@@ -3,16 +3,23 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use super::pr_readiness::{
+    apply_dynamic_review_state, build_pr_readiness_snapshot, build_repo_blocker_rollups,
+    get_pr_readiness_snapshot, latest_pr_review_session, latest_review_head_by_source,
+    load_review_inventory, parse_pr_diff_source, pr_diff_source, PrReadinessSnapshot,
+};
 use super::state::{
     build_progress_callback, count_diff_files, count_reviewed_files, current_timestamp,
     emit_wide_event, AppState, FileMetricEvent, HotspotDetail, ReviewEventBuilder, ReviewListItem,
     ReviewSession, ReviewStatus, MAX_DIFF_SIZE,
 };
-use crate::core::comment::CommentSynthesizer;
+use crate::core::comment::{CommentStatus, CommentSynthesizer, MergeReadiness};
 use crate::core::convention_learner::ConventionStore;
 use tracing::{info, warn};
 
@@ -65,6 +72,173 @@ pub struct FeedbackRequest {
 #[derive(Serialize)]
 pub struct FeedbackResponse {
     pub ok: bool,
+}
+
+#[derive(Deserialize)]
+pub struct CommentLifecycleRequest {
+    pub comment_id: String,
+    pub status: String,
+}
+
+#[derive(Serialize)]
+pub struct CommentLifecycleResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FeedbackEvalTrendGapResponse {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub feedback_total: usize,
+    #[serde(default)]
+    pub high_confidence_total: usize,
+    #[serde(default)]
+    pub high_confidence_acceptance_rate: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_score: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FeedbackEvalTrendEntryResponse {
+    #[serde(default)]
+    pub timestamp: String,
+    #[serde(default)]
+    pub labeled_comments: usize,
+    #[serde(default)]
+    pub accepted: usize,
+    #[serde(default)]
+    pub rejected: usize,
+    #[serde(default)]
+    pub acceptance_rate: f32,
+    #[serde(default)]
+    pub confidence_threshold: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_agreement_rate: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_precision: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_recall: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_f1: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attention_by_category: Vec<FeedbackEvalTrendGapResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attention_by_rule: Vec<FeedbackEvalTrendGapResponse>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FeedbackEvalTrendResponse {
+    #[serde(default)]
+    pub entries: Vec<FeedbackEvalTrendEntryResponse>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AnalyticsTrendsResponse {
+    pub eval_trend_path: String,
+    pub feedback_eval_trend_path: String,
+    #[serde(default)]
+    pub eval_trend: crate::core::eval_benchmarks::QualityTrend,
+    #[serde(default)]
+    pub feedback_eval_trend: FeedbackEvalTrendResponse,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LearnedRuleResponse {
+    #[serde(default)]
+    pub pattern_text: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub accepted_count: usize,
+    #[serde(default)]
+    pub rejected_count: usize,
+    #[serde(default)]
+    pub total_observations: usize,
+    #[serde(default)]
+    pub acceptance_rate: f32,
+    #[serde(default)]
+    pub confidence: f32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_patterns: Vec<String>,
+    #[serde(default)]
+    pub first_seen: String,
+    #[serde(default)]
+    pub last_seen: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LearnedRulesResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub convention_store_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boost: Vec<LearnedRuleResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suppress: Vec<LearnedRuleResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AttentionGapSnapshotResponse {
+    #[serde(default)]
+    pub timestamp: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_category: Vec<FeedbackEvalTrendGapResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_rule: Vec<FeedbackEvalTrendGapResponse>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AttentionGapsResponse {
+    pub feedback_eval_trend_path: String,
+    #[serde(default)]
+    pub latest: AttentionGapSnapshotResponse,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RejectedPatternResponse {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub accepted: usize,
+    #[serde(default)]
+    pub rejected: usize,
+    #[serde(default)]
+    pub total: usize,
+    #[serde(default)]
+    pub acceptance_rate: f32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RejectedPatternsResponse {
+    pub feedback_path: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_category: Vec<RejectedPatternResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_rule: Vec<RejectedPatternResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_file_pattern: Vec<RejectedPatternResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -140,6 +314,258 @@ pub async fn get_event_stats(
             Json(EventStats::default())
         }
     }
+}
+
+pub async fn get_analytics_trends(
+    State(state): State<Arc<AppState>>,
+) -> Json<AnalyticsTrendsResponse> {
+    let config = state.config.read().await.clone();
+    let mut warnings = Vec::new();
+    let eval_trend = load_optional_json_artifact::<crate::core::eval_benchmarks::QualityTrend>(
+        &config.eval_trend_path,
+        "eval trend",
+        &mut warnings,
+    );
+    let feedback_eval_trend = load_optional_json_artifact::<FeedbackEvalTrendResponse>(
+        &config.feedback_eval_trend_path,
+        "feedback-eval trend",
+        &mut warnings,
+    );
+
+    Json(AnalyticsTrendsResponse {
+        eval_trend_path: config.eval_trend_path.display().to_string(),
+        feedback_eval_trend_path: config.feedback_eval_trend_path.display().to_string(),
+        eval_trend,
+        feedback_eval_trend,
+        warnings,
+    })
+}
+
+pub async fn get_analytics_learned_rules(
+    State(state): State<Arc<AppState>>,
+) -> Json<LearnedRulesResponse> {
+    let config = state.config.read().await.clone();
+    let mut warnings = Vec::new();
+    let Some(convention_store_path) = resolve_convention_store_path(&config) else {
+        warnings.push("Failed to resolve convention store path".to_string());
+        return Json(LearnedRulesResponse {
+            convention_store_path: None,
+            boost: Vec::new(),
+            suppress: Vec::new(),
+            warnings,
+        });
+    };
+
+    let convention_store = load_optional_json_artifact::<ConventionStore>(
+        &convention_store_path,
+        "convention store",
+        &mut warnings,
+    );
+
+    Json(LearnedRulesResponse {
+        convention_store_path: Some(convention_store_path.display().to_string()),
+        boost: summarize_learned_rule_patterns(convention_store.boost_patterns()),
+        suppress: summarize_learned_rule_patterns(convention_store.suppression_patterns()),
+        warnings,
+    })
+}
+
+pub async fn get_analytics_attention_gaps(
+    State(state): State<Arc<AppState>>,
+) -> Json<AttentionGapsResponse> {
+    let config = state.config.read().await.clone();
+    let mut warnings = Vec::new();
+    let feedback_eval_trend = load_optional_json_artifact::<FeedbackEvalTrendResponse>(
+        &config.feedback_eval_trend_path,
+        "feedback-eval trend",
+        &mut warnings,
+    );
+
+    Json(AttentionGapsResponse {
+        feedback_eval_trend_path: config.feedback_eval_trend_path.display().to_string(),
+        latest: latest_attention_gap_snapshot(&feedback_eval_trend),
+        warnings,
+    })
+}
+
+pub async fn get_analytics_rejected_patterns(
+    State(state): State<Arc<AppState>>,
+) -> Json<RejectedPatternsResponse> {
+    let config = state.config.read().await.clone();
+    let mut warnings = Vec::new();
+    let feedback_store = load_optional_json_artifact::<crate::review::FeedbackStore>(
+        &config.feedback_path,
+        "feedback store",
+        &mut warnings,
+    );
+    let (by_category, by_rule, by_file_pattern) = summarize_rejected_patterns(&feedback_store);
+
+    Json(RejectedPatternsResponse {
+        feedback_path: config.feedback_path.display().to_string(),
+        by_category,
+        by_rule,
+        by_file_pattern,
+        warnings,
+    })
+}
+
+fn load_optional_json_artifact<T>(
+    path: &std::path::Path,
+    label: &str,
+    warnings: &mut Vec<String>,
+) -> T
+where
+    T: DeserializeOwned + Default,
+{
+    match std::fs::read_to_string(path) {
+        Ok(content) => match serde_json::from_str::<T>(&content) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "Failed to parse {} at {}: {}",
+                    label,
+                    path.display(),
+                    err
+                ));
+                T::default()
+            }
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => T::default(),
+        Err(err) => {
+            warnings.push(format!(
+                "Failed to read {} at {}: {}",
+                label,
+                path.display(),
+                err
+            ));
+            T::default()
+        }
+    }
+}
+
+fn resolve_convention_store_path(config: &crate::config::Config) -> Option<std::path::PathBuf> {
+    config
+        .convention_store_path
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            dirs::data_local_dir().map(|dir| dir.join("diffscope").join("conventions.json"))
+        })
+}
+
+fn summarize_learned_rule_patterns(
+    patterns: Vec<&crate::core::convention_learner::ConventionPattern>,
+) -> Vec<LearnedRuleResponse> {
+    let mut summaries = patterns
+        .into_iter()
+        .map(|pattern| LearnedRuleResponse {
+            pattern_text: pattern.pattern_text.clone(),
+            category: pattern.category.clone(),
+            accepted_count: pattern.accepted_count,
+            rejected_count: pattern.rejected_count,
+            total_observations: pattern.total_observations(),
+            acceptance_rate: pattern.acceptance_rate(),
+            confidence: pattern.confidence(),
+            file_patterns: pattern.file_patterns.clone(),
+            first_seen: pattern.first_seen.clone(),
+            last_seen: pattern.last_seen.clone(),
+        })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .total_observations
+            .cmp(&left.total_observations)
+            .then_with(|| right.confidence.total_cmp(&left.confidence))
+            .then_with(|| left.pattern_text.cmp(&right.pattern_text))
+    });
+    summaries
+}
+
+fn latest_attention_gap_snapshot(
+    trend: &FeedbackEvalTrendResponse,
+) -> AttentionGapSnapshotResponse {
+    trend
+        .entries
+        .iter()
+        .rev()
+        .find(|entry| {
+            !entry.attention_by_category.is_empty() || !entry.attention_by_rule.is_empty()
+        })
+        .map(|entry| AttentionGapSnapshotResponse {
+            timestamp: entry.timestamp.clone(),
+            eval_label: entry.eval_label.clone(),
+            eval_model: entry.eval_model.clone(),
+            eval_provider: entry.eval_provider.clone(),
+            by_category: entry.attention_by_category.clone(),
+            by_rule: entry.attention_by_rule.clone(),
+        })
+        .unwrap_or_default()
+}
+
+fn summarize_rejected_patterns(
+    store: &crate::review::FeedbackStore,
+) -> (
+    Vec<RejectedPatternResponse>,
+    Vec<RejectedPatternResponse>,
+    Vec<RejectedPatternResponse>,
+) {
+    let by_category = sort_rejected_pattern_summaries(
+        store
+            .by_category
+            .iter()
+            .filter(|(_, stats)| stats.rejected > 0)
+            .map(|(name, stats)| RejectedPatternResponse {
+                name: name.clone(),
+                accepted: stats.accepted,
+                rejected: stats.rejected,
+                total: stats.total(),
+                acceptance_rate: stats.acceptance_rate(),
+            })
+            .collect(),
+    );
+    let by_rule = sort_rejected_pattern_summaries(
+        store
+            .by_rule
+            .iter()
+            .filter(|(_, stats)| stats.rejected > 0)
+            .map(|(name, stats)| RejectedPatternResponse {
+                name: name.clone(),
+                accepted: stats.accepted,
+                rejected: stats.rejected,
+                total: stats.total(),
+                acceptance_rate: stats.acceptance_rate(),
+            })
+            .collect(),
+    );
+    let by_file_pattern = sort_rejected_pattern_summaries(
+        store
+            .by_file_pattern
+            .iter()
+            .filter(|(_, stats)| stats.rejected > 0)
+            .map(|(name, stats)| RejectedPatternResponse {
+                name: name.clone(),
+                accepted: stats.accepted,
+                rejected: stats.rejected,
+                total: stats.total(),
+                acceptance_rate: stats.acceptance_rate(),
+            })
+            .collect(),
+    );
+
+    (by_category, by_rule, by_file_pattern)
+}
+
+fn sort_rejected_pattern_summaries(
+    mut summaries: Vec<RejectedPatternResponse>,
+) -> Vec<RejectedPatternResponse> {
+    summaries.sort_by(|left, right| {
+        right
+            .rejected
+            .cmp(&left.rejected)
+            .then_with(|| right.total.cmp(&left.total))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    summaries
 }
 
 // === Handlers ===
@@ -241,6 +667,8 @@ pub async fn start_review(
         id: id.clone(),
         status: ReviewStatus::Pending,
         diff_source: display_source,
+        github_head_sha: None,
+        github_post_results_requested: None,
         started_at: current_timestamp(),
         completed_at: None,
         comments: Vec::new(),
@@ -420,7 +848,13 @@ async fn run_review_task(
     match result {
         Ok(Ok(review_result)) => {
             let comments = review_result.comments;
-            let summary = CommentSynthesizer::generate_summary(&comments);
+            let summary = CommentSynthesizer::apply_verification(
+                CommentSynthesizer::generate_summary(&comments),
+                crate::review::summarize_review_verification(
+                    review_result.verification_report.as_ref(),
+                    &review_result.warnings,
+                ),
+            );
             let files_reviewed = count_reviewed_files(&comments);
             let file_metric_events: Vec<FileMetricEvent> = review_result
                 .file_metrics
@@ -564,18 +998,25 @@ pub async fn get_review(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ReviewSession>, StatusCode> {
-    // Check in-memory first (active reviews with progress tracking)
-    {
+    let session = if let Some(session) = {
         let reviews = state.reviews.read().await;
-        if let Some(session) = reviews.get(&id) {
-            return Ok(Json(session.clone()));
+        reviews.get(&id).cloned()
+    } {
+        session
+    } else {
+        match state.storage.get_review(&id).await {
+            Ok(Some(session)) => session,
+            _ => return Err(StatusCode::NOT_FOUND),
         }
-    }
-    // Fall back to storage backend (historical reviews in PostgreSQL)
-    match state.storage.get_review(&id).await {
-        Ok(Some(session)) => Ok(Json(session)),
-        _ => Err(StatusCode::NOT_FOUND),
-    }
+    };
+
+    let inventory = load_review_inventory(&state).await;
+    let latest_by_source = latest_review_head_by_source(&inventory);
+    Ok(Json(apply_dynamic_review_state(
+        session,
+        &latest_by_source,
+        None,
+    )))
 }
 
 pub async fn list_reviews(
@@ -585,35 +1026,61 @@ pub async fn list_reviews(
     let page = params.page.unwrap_or(1).clamp(1, 10_000);
     let per_page = params.per_page.unwrap_or(20).clamp(1, 100);
 
-    // Check in-memory first
-    let mut list: Vec<ReviewListItem> = {
-        let reviews = state.reviews.read().await;
-        reviews.values().map(ReviewListItem::from_session).collect()
-    };
-
-    // Fall back to storage backend for historical reviews not in memory
-    let limit = (page * per_page + per_page) as i64; // fetch enough to cover requested page
-    if let Ok(stored) = state.storage.list_reviews(limit, 0).await {
-        let in_memory_ids: std::collections::HashSet<String> =
-            list.iter().map(|r| r.id.clone()).collect();
-        for session in &stored {
-            if !in_memory_ids.contains(&session.id) {
-                list.push(ReviewListItem::from_session(session));
-            }
-        }
-    }
-
-    list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    let mut reviews = load_review_inventory(&state).await;
+    let latest_by_source = latest_review_head_by_source(&reviews);
+    reviews = reviews
+        .into_iter()
+        .map(|session| apply_dynamic_review_state(session, &latest_by_source, None))
+        .collect();
+    reviews.sort_by(|a, b| b.started_at.cmp(&a.started_at));
 
     let start = (page - 1).saturating_mul(per_page);
-    let list = if start < list.len() {
-        let end = list.len().min(start.saturating_add(per_page));
-        list[start..end].to_vec()
+    let list = if start < reviews.len() {
+        let end = reviews.len().min(start.saturating_add(per_page));
+        reviews[start..end]
+            .iter()
+            .map(ReviewListItem::from_session)
+            .collect()
     } else {
         Vec::new()
     };
 
     Json(list)
+}
+
+async fn load_review_session_for_update(
+    state: &Arc<AppState>,
+    review_id: &str,
+) -> Result<ReviewSession, StatusCode> {
+    {
+        let reviews = state.reviews.read().await;
+        if let Some(session) = reviews.get(review_id) {
+            return Ok(session.clone());
+        }
+    }
+
+    match state.storage.get_review(review_id).await {
+        Ok(Some(session)) => Ok(session),
+        _ => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+async fn persist_updated_review_session(state: &Arc<AppState>, session: ReviewSession) {
+    let review_id = session.id.clone();
+    {
+        let mut reviews = state.reviews.write().await;
+        reviews.insert(review_id.clone(), session.clone());
+    }
+
+    AppState::save_reviews_async(state);
+
+    if let Err(err) = state.storage.save_review(&session).await {
+        warn!(
+            review_id = %review_id,
+            "Failed to persist updated review session: {}",
+            err
+        );
+    }
 }
 
 pub async fn delete_review(
@@ -670,52 +1137,84 @@ pub async fn submit_feedback(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let comment_id_for_storage = request.comment_id.clone();
+    let mut session = load_review_session_for_update(&state, &id).await?;
 
-    let mut reviews = state.reviews.write().await;
-    let session = reviews.get_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
-
-    let comment = session
-        .comments
-        .iter_mut()
-        .find(|c| c.id == request.comment_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // Capture comment data for convention store before mutating
-    let semantic_comment = comment.clone();
-    let comment_content = comment.content.clone();
-    let comment_category = comment.category.to_string();
-    let file_patterns = crate::review::derive_file_patterns(&comment.file_path);
-    let primary_file_pattern = file_patterns.first().map(String::as_str);
     let is_accepted = request.action == "accept";
+    let (
+        semantic_comment,
+        comment_content,
+        comment_category,
+        primary_file_pattern,
+        feedback_changed,
+    ) = {
+        let comment = session
+            .comments
+            .iter_mut()
+            .find(|c| c.id == request.comment_id)
+            .ok_or(StatusCode::NOT_FOUND)?;
 
-    comment.feedback = Some(request.action);
-    drop(reviews);
+        // Capture comment data for convention store before mutating
+        let semantic_comment = comment.clone();
+        let comment_content = comment.content.clone();
+        let comment_category = comment.category.to_string();
+        let file_patterns = crate::review::derive_file_patterns(&comment.file_path);
+        let primary_file_pattern = file_patterns.first().cloned();
+        let feedback_changed = comment.feedback.as_deref() != Some(request.action.as_str());
+        if feedback_changed {
+            comment.feedback = Some(request.action.clone());
+        }
 
-    AppState::save_reviews_async(&state);
-
-    // Persist feedback to storage backend
-    let _ = state
-        .storage
-        .update_comment_feedback(
-            &id,
-            &comment_id_for_storage,
-            if is_accepted { "accept" } else { "reject" },
+        (
+            semantic_comment,
+            comment_content,
+            comment_category,
+            primary_file_pattern,
+            feedback_changed,
         )
-        .await;
+    };
+
+    if feedback_changed {
+        {
+            let mut reviews = state.reviews.write().await;
+            reviews.insert(id.clone(), session);
+        }
+        AppState::save_reviews_async(&state);
+
+        if let Err(err) = state
+            .storage
+            .update_comment_feedback(
+                &id,
+                &request.comment_id,
+                if is_accepted { "accept" } else { "reject" },
+            )
+            .await
+        {
+            warn!(
+                review_id = %id,
+                comment_id = %request.comment_id,
+                "Failed to persist comment feedback: {}",
+                err
+            );
+        }
+    }
 
     // Record enhanced feedback pattern stats
-    {
+    if feedback_changed {
         let config = state.config.read().await.clone();
         let mut feedback_store = crate::review::load_feedback_store(&config);
-        feedback_store.record_feedback_patterns(&comment_category, &file_patterns, is_accepted);
-        let _ = crate::review::save_feedback_store(&config.feedback_path, &feedback_store);
-        let _ = crate::review::record_semantic_feedback_examples(
-            &config,
-            std::slice::from_ref(&semantic_comment),
+        if crate::review::apply_comment_feedback_signal(
+            &mut feedback_store,
+            &semantic_comment,
             is_accepted,
-        )
-        .await;
+        ) {
+            let _ = crate::review::save_feedback_store(&config.feedback_path, &feedback_store);
+            let _ = crate::review::record_semantic_feedback_examples(
+                &config,
+                std::slice::from_ref(&semantic_comment),
+                is_accepted,
+            )
+            .await;
+        }
     }
 
     // Record in convention store for learned patterns
@@ -738,7 +1237,7 @@ pub async fn submit_feedback(
             &comment_content,
             &comment_category,
             is_accepted,
-            primary_file_pattern,
+            primary_file_pattern.as_deref(),
             &now,
         );
         if let Ok(out_json) = cstore.to_json() {
@@ -750,6 +1249,55 @@ pub async fn submit_feedback(
     }
 
     Ok(Json(FeedbackResponse { ok: true }))
+}
+
+fn apply_comment_lifecycle_transition(
+    comment: &mut crate::core::comment::Comment,
+    next_status: CommentStatus,
+    timestamp: i64,
+) -> bool {
+    if comment.status == next_status {
+        return false;
+    }
+
+    comment.status = next_status;
+    comment.resolved_at = match next_status {
+        CommentStatus::Resolved => Some(timestamp),
+        _ => None,
+    };
+    true
+}
+
+pub async fn update_comment_lifecycle(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(request): Json<CommentLifecycleRequest>,
+) -> Result<Json<CommentLifecycleResponse>, StatusCode> {
+    let next_status = crate::core::comment::CommentStatus::from_api_str(&request.status)
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let mut session = load_review_session_for_update(&state, &id).await?;
+
+    let status_changed = {
+        let comment = session
+            .comments
+            .iter_mut()
+            .find(|c| c.id == request.comment_id)
+            .ok_or(StatusCode::NOT_FOUND)?;
+
+        apply_comment_lifecycle_transition(comment, next_status, current_timestamp())
+    };
+
+    if status_changed {
+        let previous_summary = session.summary.clone();
+        session.summary = Some(CommentSynthesizer::inherit_review_state(
+            CommentSynthesizer::generate_summary(&session.comments),
+            previous_summary.as_ref(),
+        ));
+        persist_updated_review_session(&state, session).await;
+    }
+
+    Ok(Json(CommentLifecycleResponse { ok: true }))
 }
 
 pub async fn get_doctor(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
@@ -884,6 +1432,7 @@ fn mask_config_secrets(obj: &mut serde_json::Map<String, serde_json::Value>) {
         "github_client_secret",
         "github_private_key",
         "github_webhook_secret",
+        "vault_token",
     ] {
         if obj.get(*key).and_then(|v| v.as_str()).is_some() {
             obj.insert(key.to_string(), serde_json::json!("***"));
@@ -1198,6 +1747,31 @@ async fn github_api_get_diff(
     Ok(text)
 }
 
+async fn fetch_github_pr_head_sha(
+    client: &reqwest::Client,
+    token: &str,
+    repo: &str,
+    pr_number: u32,
+) -> Result<String, String> {
+    let pr_url = format!("https://api.github.com/repos/{}/pulls/{}", repo, pr_number);
+    let pr_resp = github_api_get(client, token, &pr_url).await?;
+    if !pr_resp.status().is_success() {
+        let status = pr_resp.status();
+        let body = pr_resp.text().await.unwrap_or_default();
+        return Err(format!("Failed to get PR info {}: {}", status, body));
+    }
+    let pr_data: serde_json::Value = pr_resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse PR response: {}", e))?;
+    pr_data
+        .get("head")
+        .and_then(|head| head.get("sha"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "No head SHA in PR response".to_string())
+}
+
 // === GitHub integration types and handlers ===
 
 #[derive(Serialize)]
@@ -1302,6 +1876,10 @@ pub struct GhRepo {
     pub language: Option<String>,
     pub updated_at: String,
     pub open_prs: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_blockers: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocking_prs: Option<usize>,
     pub default_branch: String,
     pub stargazers_count: u32,
     pub private: bool,
@@ -1372,6 +1950,9 @@ pub async fn get_gh_repos(
             .cloned()
             .unwrap_or_default();
 
+        let inventory = load_review_inventory(&state).await;
+        let blocker_rollups = build_repo_blocker_rollups(&inventory);
+
         let repos: Vec<GhRepo> = items
             .into_iter()
             .map(|item| GhRepo {
@@ -1394,6 +1975,16 @@ pub async fn get_gh_repos(
                     .unwrap_or("")
                     .to_string(),
                 open_prs: 0,
+                open_blockers: item
+                    .get("full_name")
+                    .and_then(|v| v.as_str())
+                    .and_then(|repo| blocker_rollups.get(repo))
+                    .map(|rollup| rollup.open_blockers),
+                blocking_prs: item
+                    .get("full_name")
+                    .and_then(|v| v.as_str())
+                    .and_then(|repo| blocker_rollups.get(repo))
+                    .map(|rollup| rollup.blocking_prs),
                 default_branch: item
                     .get("default_branch")
                     .and_then(|v| v.as_str())
@@ -1436,6 +2027,9 @@ pub async fn get_gh_repos(
             )
         })?;
 
+        let inventory = load_review_inventory(&state).await;
+        let blocker_rollups = build_repo_blocker_rollups(&inventory);
+
         let repos: Vec<GhRepo> = items
             .into_iter()
             .map(|item| GhRepo {
@@ -1458,6 +2052,16 @@ pub async fn get_gh_repos(
                     .unwrap_or("")
                     .to_string(),
                 open_prs: 0,
+                open_blockers: item
+                    .get("full_name")
+                    .and_then(|v| v.as_str())
+                    .and_then(|repo| blocker_rollups.get(repo))
+                    .map(|rollup| rollup.open_blockers),
+                blocking_prs: item
+                    .get("full_name")
+                    .and_then(|v| v.as_str())
+                    .and_then(|repo| blocker_rollups.get(repo))
+                    .map(|rollup| rollup.blocking_prs),
                 default_branch: item
                     .get("default_branch")
                     .and_then(|v| v.as_str())
@@ -1522,6 +2126,195 @@ pub struct GhPrsParams {
     pub state: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct PrReadinessParams {
+    pub repo: String,
+    pub pr_number: u32,
+}
+
+#[derive(Deserialize)]
+pub struct PrCommentSearchParams {
+    pub repo: String,
+    pub pr_number: u32,
+    pub status: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct PrFindingsParams {
+    pub repo: String,
+    pub pr_number: u32,
+    pub group_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommentSearchFilter {
+    All,
+    Unresolved,
+    Resolved,
+    Dismissed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FindingsGroupBy {
+    Severity,
+    File,
+    Lifecycle,
+}
+
+impl FindingsGroupBy {
+    fn from_api_value(value: Option<&str>) -> Option<Self> {
+        match value.map(|value| value.trim().to_ascii_lowercase()) {
+            None => Some(Self::Severity),
+            Some(value) if value.is_empty() || value == "severity" => Some(Self::Severity),
+            Some(value) if value == "file" => Some(Self::File),
+            Some(value) if value == "lifecycle" || value == "status" => Some(Self::Lifecycle),
+            _ => None,
+        }
+    }
+
+    fn as_api_str(self) -> &'static str {
+        match self {
+            Self::Severity => "severity",
+            Self::File => "file",
+            Self::Lifecycle => "lifecycle",
+        }
+    }
+}
+
+impl CommentSearchFilter {
+    fn from_api_value(value: Option<&str>) -> Option<Self> {
+        match value.map(|value| value.trim().to_ascii_lowercase()) {
+            None => Some(Self::All),
+            Some(value) if value.is_empty() || value == "all" => Some(Self::All),
+            Some(value) if value == "open" || value == "unresolved" => Some(Self::Unresolved),
+            Some(value) if value == "resolved" => Some(Self::Resolved),
+            Some(value) if value == "dismissed" => Some(Self::Dismissed),
+            _ => None,
+        }
+    }
+
+    fn as_api_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Unresolved => "unresolved",
+            Self::Resolved => "resolved",
+            Self::Dismissed => "dismissed",
+        }
+    }
+
+    fn matches(self, status: CommentStatus) -> bool {
+        match self {
+            Self::All => true,
+            Self::Unresolved => status == CommentStatus::Open,
+            Self::Resolved => status == CommentStatus::Resolved,
+            Self::Dismissed => status == CommentStatus::Dismissed,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct PrCommentSearchResponse {
+    pub repo: String,
+    pub pr_number: u32,
+    pub diff_source: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_review_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_review_status: Option<ReviewStatus>,
+    #[serde(default)]
+    pub total_comments: usize,
+    #[serde(default)]
+    pub comments: Vec<crate::core::Comment>,
+}
+
+#[derive(Serialize)]
+pub struct PrFindingsGroup {
+    pub value: String,
+    pub count: usize,
+    #[serde(default)]
+    pub findings: Vec<crate::core::Comment>,
+}
+
+#[derive(Serialize)]
+pub struct PrFindingsResponse {
+    pub repo: String,
+    pub pr_number: u32,
+    pub diff_source: String,
+    pub group_by: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_review_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_review_status: Option<ReviewStatus>,
+    #[serde(default)]
+    pub total_findings: usize,
+    #[serde(default)]
+    pub groups: Vec<PrFindingsGroup>,
+}
+
+fn filter_comments_by_search_filter(
+    comments: &[crate::core::Comment],
+    filter: CommentSearchFilter,
+) -> Vec<crate::core::Comment> {
+    comments
+        .iter()
+        .filter(|comment| filter.matches(comment.status))
+        .cloned()
+        .collect()
+}
+
+fn group_pr_findings(
+    findings: &[crate::core::Comment],
+    group_by: FindingsGroupBy,
+) -> Vec<PrFindingsGroup> {
+    let mut grouped: BTreeMap<String, Vec<crate::core::Comment>> = BTreeMap::new();
+
+    for finding in findings {
+        let key = match group_by {
+            FindingsGroupBy::Severity => match finding.severity {
+                crate::core::comment::Severity::Error => "Error".to_string(),
+                crate::core::comment::Severity::Warning => "Warning".to_string(),
+                crate::core::comment::Severity::Info => "Info".to_string(),
+                crate::core::comment::Severity::Suggestion => "Suggestion".to_string(),
+            },
+            FindingsGroupBy::File => finding.file_path.display().to_string(),
+            FindingsGroupBy::Lifecycle => match finding.status {
+                CommentStatus::Open => "Open".to_string(),
+                CommentStatus::Resolved => "Resolved".to_string(),
+                CommentStatus::Dismissed => "Dismissed".to_string(),
+            },
+        };
+
+        grouped.entry(key).or_default().push(finding.clone());
+    }
+
+    let ordered_keys: Vec<String> = match group_by {
+        FindingsGroupBy::Severity => ["Error", "Warning", "Info", "Suggestion"]
+            .into_iter()
+            .filter(|key| grouped.contains_key(*key))
+            .map(str::to_string)
+            .collect(),
+        FindingsGroupBy::Lifecycle => ["Open", "Resolved", "Dismissed"]
+            .into_iter()
+            .filter(|key| grouped.contains_key(*key))
+            .map(str::to_string)
+            .collect(),
+        FindingsGroupBy::File => grouped.keys().cloned().collect(),
+    };
+
+    ordered_keys
+        .into_iter()
+        .map(|value| {
+            let findings = grouped.remove(&value).unwrap_or_default();
+            PrFindingsGroup {
+                count: findings.len(),
+                value,
+                findings,
+            }
+        })
+        .collect()
+}
+
 #[derive(Serialize)]
 pub struct GhPullRequest {
     pub number: u32,
@@ -1537,6 +2330,10 @@ pub struct GhPullRequest {
     pub base_branch: String,
     pub labels: Vec<String>,
     pub draft: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_blockers: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_readiness: Option<MergeReadiness>,
 }
 
 /// Regex for validating repo names: owner/repo
@@ -1613,6 +2410,8 @@ pub async fn get_gh_prs(
         )
     })?;
 
+    let inventory = load_review_inventory(&state).await;
+
     let prs: Vec<GhPullRequest> = items
         .into_iter()
         .filter(|item| {
@@ -1647,8 +2446,20 @@ pub async fn get_gh_prs(
                     .to_string()
             };
 
+            let pr_number = item.get("number").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let current_head_sha = item
+                .get("head")
+                .and_then(|v| v.get("sha"))
+                .and_then(|v| v.as_str());
+            let readiness_snapshot =
+                build_pr_readiness_snapshot(&inventory, &params.repo, pr_number, current_head_sha);
+            let latest_summary = readiness_snapshot
+                .latest_review
+                .as_ref()
+                .and_then(|review| review.summary.as_ref());
+
             GhPullRequest {
-                number: item.get("number").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                number: pr_number,
                 title: item
                     .get("title")
                     .and_then(|v| v.as_str())
@@ -1688,6 +2499,8 @@ pub async fn get_gh_prs(
                     .to_string(),
                 labels,
                 draft: item.get("draft").and_then(|v| v.as_bool()).unwrap_or(false),
+                open_blockers: latest_summary.map(|summary| summary.open_blockers),
+                merge_readiness: latest_summary.map(|summary| summary.merge_readiness),
             }
         })
         .collect();
@@ -1695,20 +2508,191 @@ pub async fn get_gh_prs(
     Ok(Json(prs))
 }
 
+pub async fn get_gh_pr_readiness(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PrReadinessParams>,
+) -> Result<Json<PrReadinessSnapshot>, (StatusCode, String)> {
+    if !is_valid_repo_name(&params.repo) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid repo format. Expected 'owner/repo'.".to_string(),
+        ));
+    }
+
+    if params.pr_number == 0 || params.pr_number > 999_999_999 {
+        return Err((StatusCode::BAD_REQUEST, "Invalid PR number.".to_string()));
+    }
+
+    let config_guard = state.config.read().await;
+    let token = config_guard
+        .github
+        .token
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    drop(config_guard);
+    let current_head_sha = if let Some(ref token) = token {
+        match fetch_github_pr_head_sha(&state.http_client, token, &params.repo, params.pr_number)
+            .await
+        {
+            Ok(head_sha) => Some(head_sha),
+            Err(err) => {
+                warn!(
+                    repo = %params.repo,
+                    pr_number = params.pr_number,
+                    "Failed to fetch current PR head SHA for readiness: {}",
+                    err
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    Ok(Json(
+        get_pr_readiness_snapshot(
+            &state,
+            &params.repo,
+            params.pr_number,
+            current_head_sha.as_deref(),
+        )
+        .await,
+    ))
+}
+
+pub async fn get_gh_pr_comments(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PrCommentSearchParams>,
+) -> Result<Json<PrCommentSearchResponse>, (StatusCode, String)> {
+    if !is_valid_repo_name(&params.repo) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid repo format. Expected 'owner/repo'.".to_string(),
+        ));
+    }
+
+    if params.pr_number == 0 || params.pr_number > 999_999_999 {
+        return Err((StatusCode::BAD_REQUEST, "Invalid PR number.".to_string()));
+    }
+
+    let filter =
+        CommentSearchFilter::from_api_value(params.status.as_deref()).ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Invalid status. Must be all, unresolved, open, resolved, or dismissed."
+                    .to_string(),
+            )
+        })?;
+
+    let inventory = load_review_inventory(&state).await;
+    let latest_review = latest_pr_review_session(&inventory, &params.repo, params.pr_number);
+    let comments = latest_review
+        .as_ref()
+        .map(|review| filter_comments_by_search_filter(&review.comments, filter))
+        .unwrap_or_default();
+
+    Ok(Json(PrCommentSearchResponse {
+        repo: params.repo.clone(),
+        pr_number: params.pr_number,
+        diff_source: pr_diff_source(&params.repo, params.pr_number),
+        status: filter.as_api_str().to_string(),
+        latest_review_id: latest_review.as_ref().map(|review| review.id.clone()),
+        latest_review_status: latest_review.as_ref().map(|review| review.status.clone()),
+        total_comments: comments.len(),
+        comments,
+    }))
+}
+
+pub async fn get_gh_pr_findings(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PrFindingsParams>,
+) -> Result<Json<PrFindingsResponse>, (StatusCode, String)> {
+    if !is_valid_repo_name(&params.repo) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid repo format. Expected 'owner/repo'.".to_string(),
+        ));
+    }
+
+    if params.pr_number == 0 || params.pr_number > 999_999_999 {
+        return Err((StatusCode::BAD_REQUEST, "Invalid PR number.".to_string()));
+    }
+
+    let group_by =
+        FindingsGroupBy::from_api_value(params.group_by.as_deref()).ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Invalid group_by. Must be severity, file, or lifecycle.".to_string(),
+            )
+        })?;
+
+    let inventory = load_review_inventory(&state).await;
+    let latest_review = latest_pr_review_session(&inventory, &params.repo, params.pr_number);
+    let findings = latest_review
+        .as_ref()
+        .map(|review| review.comments.clone())
+        .unwrap_or_default();
+    let groups = group_pr_findings(&findings, group_by);
+
+    Ok(Json(PrFindingsResponse {
+        repo: params.repo.clone(),
+        pr_number: params.pr_number,
+        diff_source: pr_diff_source(&params.repo, params.pr_number),
+        group_by: group_by.as_api_str().to_string(),
+        latest_review_id: latest_review.as_ref().map(|review| review.id.clone()),
+        latest_review_status: latest_review.as_ref().map(|review| review.status.clone()),
+        total_findings: findings.len(),
+        groups,
+    }))
+}
+
 // === GitHub PR Review ===
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct StartPrReviewRequest {
     pub repo: String,
     pub pr_number: u32,
     pub post_results: bool,
 }
 
-#[tracing::instrument(name = "api.start_pr_review", skip(state, request), fields(repo = %request.repo, pr_number = request.pr_number))]
-pub async fn start_pr_review(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<StartPrReviewRequest>,
-) -> Result<Json<StartReviewResponse>, (StatusCode, String)> {
+#[derive(Deserialize)]
+pub struct RerunPrReviewRequest {
+    pub review_id: String,
+    pub post_results: Option<bool>,
+}
+
+fn resolve_rerun_post_results(
+    session: &ReviewSession,
+    post_results_override: Option<bool>,
+) -> bool {
+    post_results_override
+        .or(session.github_post_results_requested)
+        .or_else(|| session.event.as_ref().map(|event| event.github_posted))
+        .unwrap_or(false)
+}
+
+fn build_rerun_pr_review_request(
+    session: &ReviewSession,
+    post_results_override: Option<bool>,
+) -> Result<StartPrReviewRequest, (StatusCode, String)> {
+    let Some((repo, pr_number)) = parse_pr_diff_source(&session.diff_source) else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Review is not tied to a GitHub PR.".to_string(),
+        ));
+    };
+
+    Ok(StartPrReviewRequest {
+        repo,
+        pr_number,
+        post_results: resolve_rerun_post_results(session, post_results_override),
+    })
+}
+
+async fn dispatch_pr_review(
+    state: &Arc<AppState>,
+    request: StartPrReviewRequest,
+) -> Result<StartReviewResponse, (StatusCode, String)> {
     info!(repo = %request.repo, pr = request.pr_number, post_results = request.post_results, "Starting PR review");
 
     if !is_valid_repo_name(&request.repo) {
@@ -1737,7 +2721,6 @@ pub async fn start_pr_review(
         .to_string();
     drop(config);
 
-    // Fetch the diff via GitHub API
     let diff_url = format!(
         "https://api.github.com/repos/{}/pulls/{}",
         request.repo, request.pr_number,
@@ -1745,14 +2728,20 @@ pub async fn start_pr_review(
     let diff_content = github_api_get_diff(&state.http_client, &token, &diff_url)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    let head_sha =
+        fetch_github_pr_head_sha(&state.http_client, &token, &request.repo, request.pr_number)
+            .await
+            .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
     let id = Uuid::new_v4().to_string();
-    let diff_source = format!("pr:{}#{}", request.repo, request.pr_number);
+    let diff_source = pr_diff_source(&request.repo, request.pr_number);
 
     let session = ReviewSession {
         id: id.clone(),
         status: ReviewStatus::Pending,
         diff_source: diff_source.clone(),
+        github_head_sha: Some(head_sha.clone()),
+        github_post_results_requested: Some(request.post_results),
         started_at: current_timestamp(),
         completed_at: None,
         comments: Vec::new(),
@@ -1771,6 +2760,7 @@ pub async fn start_pr_review(
     let review_id = id.clone();
     let repo = request.repo.clone();
     let pr_number = request.pr_number;
+    let pr_head_sha = head_sha.clone();
     let post_results = request.post_results;
 
     tokio::spawn(async move {
@@ -1780,15 +2770,45 @@ pub async fn start_pr_review(
             diff_content,
             repo,
             pr_number,
+            pr_head_sha,
             post_results,
         )
         .await;
     });
 
-    Ok(Json(StartReviewResponse {
+    Ok(StartReviewResponse {
         id,
         status: ReviewStatus::Pending,
-    }))
+    })
+}
+
+#[tracing::instrument(name = "api.start_pr_review", skip(state, request), fields(repo = %request.repo, pr_number = request.pr_number))]
+pub async fn start_pr_review(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<StartPrReviewRequest>,
+) -> Result<Json<StartReviewResponse>, (StatusCode, String)> {
+    Ok(Json(dispatch_pr_review(&state, request).await?))
+}
+
+#[tracing::instrument(name = "api.rerun_pr_review", skip(state, request), fields(review_id = %request.review_id))]
+pub async fn rerun_pr_review(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<RerunPrReviewRequest>,
+) -> Result<Json<StartReviewResponse>, (StatusCode, String)> {
+    let review_id = request.review_id.trim();
+    let session = load_review_session_for_update(&state, review_id)
+        .await
+        .map_err(|status| match status {
+            StatusCode::NOT_FOUND => (
+                StatusCode::NOT_FOUND,
+                format!("Review '{}' not found.", review_id),
+            ),
+            _ => (status, "Failed to load review session.".to_string()),
+        })?;
+
+    let start_request = build_rerun_pr_review_request(&session, request.post_results)?;
+
+    Ok(Json(dispatch_pr_review(&state, start_request).await?))
 }
 
 async fn run_pr_review_task(
@@ -1797,6 +2817,7 @@ async fn run_pr_review_task(
     diff_content: String,
     repo: String,
     pr_number: u32,
+    _head_sha: String,
     post_results: bool,
 ) {
     let _permit = match state.review_semaphore.clone().acquire_owned().await {
@@ -1864,7 +2885,13 @@ async fn run_pr_review_task(
     match result {
         Ok(Ok(review_result)) => {
             let comments = review_result.comments;
-            let summary = CommentSynthesizer::generate_summary(&comments);
+            let summary = CommentSynthesizer::apply_verification(
+                CommentSynthesizer::generate_summary(&comments),
+                crate::review::summarize_review_verification(
+                    review_result.verification_report.as_ref(),
+                    &review_result.warnings,
+                ),
+            );
             let files_reviewed = count_reviewed_files(&comments);
 
             let mut github_posted = false;
@@ -2400,6 +3427,7 @@ mod tests {
             "github_webhook_secret".to_string(),
             serde_json::json!("secret5"),
         );
+        obj.insert("vault_token".to_string(), serde_json::json!("secret6"));
         mask_config_secrets(&mut obj);
         assert_eq!(obj.get("api_key").unwrap(), &serde_json::json!("***"));
         assert_eq!(obj.get("github_token").unwrap(), &serde_json::json!("***"));
@@ -2415,6 +3443,7 @@ mod tests {
             obj.get("github_webhook_secret").unwrap(),
             &serde_json::json!("***")
         );
+        assert_eq!(obj.get("vault_token").unwrap(), &serde_json::json!("***"));
     }
 
     #[test]
@@ -2739,6 +3768,8 @@ mod tests {
             language: Some("Rust".to_string()),
             updated_at: "2024-01-01T00:00:00Z".to_string(),
             open_prs: 5,
+            open_blockers: Some(3),
+            blocking_prs: Some(2),
             default_branch: "main".to_string(),
             stargazers_count: 42,
             private: false,
@@ -2747,6 +3778,8 @@ mod tests {
         assert_eq!(json["full_name"], "owner/repo");
         assert_eq!(json["language"], "Rust");
         assert_eq!(json["open_prs"], 5);
+        assert_eq!(json["open_blockers"], 3);
+        assert_eq!(json["blocking_prs"], 2);
         assert_eq!(json["stargazers_count"], 42);
         assert_eq!(json["private"], false);
     }
@@ -2767,13 +3800,33 @@ mod tests {
             base_branch: "main".to_string(),
             labels: vec!["bugfix".to_string()],
             draft: false,
+            open_blockers: Some(2),
+            merge_readiness: Some(MergeReadiness::NeedsAttention),
         };
         let json = serde_json::to_value(&pr).unwrap();
         assert_eq!(json["number"], 42);
         assert_eq!(json["title"], "Fix bug");
         assert_eq!(json["author"], "dev");
         assert_eq!(json["draft"], false);
+        assert_eq!(json["open_blockers"], 2);
+        assert_eq!(json["merge_readiness"], "NeedsAttention");
         assert_eq!(json["labels"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_pr_readiness_snapshot_serialize() {
+        let snapshot = PrReadinessSnapshot {
+            repo: "owner/repo".to_string(),
+            pr_number: 42,
+            diff_source: "pr:owner/repo#42".to_string(),
+            current_head_sha: Some("abc123".to_string()),
+            latest_review: None,
+            timeline: Vec::new(),
+        };
+        let json = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(json["repo"], "owner/repo");
+        assert_eq!(json["pr_number"], 42);
+        assert_eq!(json["current_head_sha"], "abc123");
     }
 
     #[test]
@@ -2783,5 +3836,464 @@ mod tests {
         assert_eq!(req.repo, "owner/repo");
         assert_eq!(req.pr_number, 42);
         assert!(req.post_results);
+    }
+
+    #[test]
+    fn test_apply_comment_lifecycle_transition_sets_and_clears_resolved_at() {
+        let mut comment = make_search_comment("lifecycle", CommentStatus::Open);
+
+        assert!(apply_comment_lifecycle_transition(
+            &mut comment,
+            CommentStatus::Resolved,
+            123,
+        ));
+        assert_eq!(comment.status, CommentStatus::Resolved);
+        assert_eq!(comment.resolved_at, Some(123));
+
+        assert!(apply_comment_lifecycle_transition(
+            &mut comment,
+            CommentStatus::Open,
+            456,
+        ));
+        assert_eq!(comment.status, CommentStatus::Open);
+        assert_eq!(comment.resolved_at, None);
+    }
+
+    #[test]
+    fn test_apply_comment_lifecycle_transition_is_noop_when_status_matches() {
+        let mut comment = make_search_comment("lifecycle", CommentStatus::Resolved);
+        comment.resolved_at = Some(123);
+
+        assert!(!apply_comment_lifecycle_transition(
+            &mut comment,
+            CommentStatus::Resolved,
+            456,
+        ));
+        assert_eq!(comment.resolved_at, Some(123));
+    }
+
+    fn make_search_comment(id: &str, status: CommentStatus) -> crate::core::Comment {
+        crate::core::Comment {
+            id: id.to_string(),
+            file_path: std::path::PathBuf::from("src/lib.rs"),
+            line_number: 10,
+            content: format!("comment {id}"),
+            rule_id: None,
+            severity: crate::core::comment::Severity::Warning,
+            category: crate::core::comment::Category::Bug,
+            suggestion: None,
+            confidence: 0.8,
+            code_suggestion: None,
+            tags: Vec::new(),
+            fix_effort: crate::core::comment::FixEffort::Low,
+            feedback: None,
+            status,
+            resolved_at: None,
+        }
+    }
+
+    fn make_grouped_comment(
+        id: &str,
+        file_path: &str,
+        severity: crate::core::comment::Severity,
+        status: CommentStatus,
+    ) -> crate::core::Comment {
+        let mut comment = make_search_comment(id, status);
+        comment.file_path = std::path::PathBuf::from(file_path);
+        comment.severity = severity;
+        comment
+    }
+
+    #[test]
+    fn test_comment_search_filter_parses_aliases() {
+        assert_eq!(
+            CommentSearchFilter::from_api_value(None),
+            Some(CommentSearchFilter::All)
+        );
+        assert_eq!(
+            CommentSearchFilter::from_api_value(Some("open")),
+            Some(CommentSearchFilter::Unresolved)
+        );
+        assert_eq!(
+            CommentSearchFilter::from_api_value(Some("unresolved")),
+            Some(CommentSearchFilter::Unresolved)
+        );
+        assert_eq!(
+            CommentSearchFilter::from_api_value(Some("resolved")),
+            Some(CommentSearchFilter::Resolved)
+        );
+        assert_eq!(
+            CommentSearchFilter::from_api_value(Some("dismissed")),
+            Some(CommentSearchFilter::Dismissed)
+        );
+        assert_eq!(CommentSearchFilter::from_api_value(Some("wat")), None);
+    }
+
+    #[test]
+    fn test_filter_comments_by_search_filter_matches_status() {
+        let comments = vec![
+            make_search_comment("open", CommentStatus::Open),
+            make_search_comment("resolved", CommentStatus::Resolved),
+            make_search_comment("dismissed", CommentStatus::Dismissed),
+        ];
+
+        assert_eq!(
+            filter_comments_by_search_filter(&comments, CommentSearchFilter::All)
+                .into_iter()
+                .map(|comment| comment.id)
+                .collect::<Vec<_>>(),
+            vec!["open", "resolved", "dismissed"]
+        );
+        assert_eq!(
+            filter_comments_by_search_filter(&comments, CommentSearchFilter::Unresolved)
+                .into_iter()
+                .map(|comment| comment.id)
+                .collect::<Vec<_>>(),
+            vec!["open"]
+        );
+        assert_eq!(
+            filter_comments_by_search_filter(&comments, CommentSearchFilter::Resolved)
+                .into_iter()
+                .map(|comment| comment.id)
+                .collect::<Vec<_>>(),
+            vec!["resolved"]
+        );
+        assert_eq!(
+            filter_comments_by_search_filter(&comments, CommentSearchFilter::Dismissed)
+                .into_iter()
+                .map(|comment| comment.id)
+                .collect::<Vec<_>>(),
+            vec!["dismissed"]
+        );
+    }
+
+    #[test]
+    fn test_findings_group_by_parser_defaults_to_severity() {
+        assert_eq!(
+            FindingsGroupBy::from_api_value(None),
+            Some(FindingsGroupBy::Severity)
+        );
+        assert_eq!(
+            FindingsGroupBy::from_api_value(Some("severity")),
+            Some(FindingsGroupBy::Severity)
+        );
+        assert_eq!(
+            FindingsGroupBy::from_api_value(Some("file")),
+            Some(FindingsGroupBy::File)
+        );
+        assert_eq!(
+            FindingsGroupBy::from_api_value(Some("lifecycle")),
+            Some(FindingsGroupBy::Lifecycle)
+        );
+        assert_eq!(
+            FindingsGroupBy::from_api_value(Some("status")),
+            Some(FindingsGroupBy::Lifecycle)
+        );
+        assert_eq!(FindingsGroupBy::from_api_value(Some("wat")), None);
+    }
+
+    #[test]
+    fn test_group_pr_findings_by_severity_orders_buckets() {
+        let findings = vec![
+            make_grouped_comment(
+                "warning",
+                "src/b.rs",
+                crate::core::comment::Severity::Warning,
+                CommentStatus::Open,
+            ),
+            make_grouped_comment(
+                "error",
+                "src/a.rs",
+                crate::core::comment::Severity::Error,
+                CommentStatus::Resolved,
+            ),
+            make_grouped_comment(
+                "info",
+                "src/c.rs",
+                crate::core::comment::Severity::Info,
+                CommentStatus::Dismissed,
+            ),
+        ];
+
+        let groups = group_pr_findings(&findings, FindingsGroupBy::Severity);
+
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Error", "Warning", "Info"]
+        );
+        assert_eq!(
+            groups.iter().map(|group| group.count).collect::<Vec<_>>(),
+            vec![1, 1, 1]
+        );
+    }
+
+    #[test]
+    fn test_group_pr_findings_by_file_orders_paths() {
+        let findings = vec![
+            make_grouped_comment(
+                "b",
+                "src/z.rs",
+                crate::core::comment::Severity::Warning,
+                CommentStatus::Open,
+            ),
+            make_grouped_comment(
+                "a",
+                "src/a.rs",
+                crate::core::comment::Severity::Error,
+                CommentStatus::Open,
+            ),
+            make_grouped_comment(
+                "a-2",
+                "src/a.rs",
+                crate::core::comment::Severity::Info,
+                CommentStatus::Resolved,
+            ),
+        ];
+
+        let groups = group_pr_findings(&findings, FindingsGroupBy::File);
+
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["src/a.rs", "src/z.rs"]
+        );
+        assert_eq!(
+            groups.iter().map(|group| group.count).collect::<Vec<_>>(),
+            vec![2, 1]
+        );
+    }
+
+    #[test]
+    fn test_group_pr_findings_by_lifecycle_orders_statuses() {
+        let findings = vec![
+            make_grouped_comment(
+                "resolved",
+                "src/a.rs",
+                crate::core::comment::Severity::Warning,
+                CommentStatus::Resolved,
+            ),
+            make_grouped_comment(
+                "open",
+                "src/b.rs",
+                crate::core::comment::Severity::Error,
+                CommentStatus::Open,
+            ),
+            make_grouped_comment(
+                "dismissed",
+                "src/c.rs",
+                crate::core::comment::Severity::Info,
+                CommentStatus::Dismissed,
+            ),
+        ];
+
+        let groups = group_pr_findings(&findings, FindingsGroupBy::Lifecycle);
+
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Open", "Resolved", "Dismissed"]
+        );
+        assert_eq!(
+            groups.iter().map(|group| group.count).collect::<Vec<_>>(),
+            vec![1, 1, 1]
+        );
+    }
+
+    fn make_pr_review_session(
+        diff_source: &str,
+        requested_post_results: Option<bool>,
+        github_posted: bool,
+    ) -> ReviewSession {
+        ReviewSession {
+            id: "review-123".to_string(),
+            status: ReviewStatus::Complete,
+            diff_source: diff_source.to_string(),
+            github_head_sha: Some("abc123".to_string()),
+            github_post_results_requested: requested_post_results,
+            started_at: 10,
+            completed_at: Some(20),
+            comments: Vec::new(),
+            summary: None,
+            files_reviewed: 0,
+            error: None,
+            pr_summary_text: None,
+            diff_content: None,
+            event: Some(
+                ReviewEventBuilder::new("review-123", "review.completed", diff_source, "gpt-4")
+                    .github_posted(github_posted)
+                    .build(),
+            ),
+            progress: None,
+        }
+    }
+
+    #[test]
+    fn test_build_rerun_pr_review_request_reuses_saved_policy() {
+        let session = make_pr_review_session("pr:owner/repo#42", Some(true), false);
+
+        let request = build_rerun_pr_review_request(&session, None).expect("rerun request");
+
+        assert_eq!(request.repo, "owner/repo");
+        assert_eq!(request.pr_number, 42);
+        assert!(request.post_results);
+    }
+
+    #[test]
+    fn test_build_rerun_pr_review_request_prefers_override() {
+        let session = make_pr_review_session("pr:owner/repo#42", Some(true), false);
+
+        let request = build_rerun_pr_review_request(&session, Some(false)).expect("rerun request");
+
+        assert!(!request.post_results);
+    }
+
+    #[test]
+    fn test_build_rerun_pr_review_request_falls_back_to_legacy_event_signal() {
+        let session = make_pr_review_session("pr:owner/repo#42", None, true);
+
+        let request = build_rerun_pr_review_request(&session, None).expect("rerun request");
+
+        assert!(request.post_results);
+    }
+
+    #[test]
+    fn test_build_rerun_pr_review_request_rejects_non_pr_reviews() {
+        let session = make_pr_review_session("head", Some(true), false);
+
+        let err = build_rerun_pr_review_request(&session, None).expect_err("non-pr review");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(err.1, "Review is not tied to a GitHub PR.");
+    }
+
+    #[test]
+    fn test_summarize_learned_rule_patterns_orders_by_total_observations() {
+        let mut store = ConventionStore::new();
+
+        for _ in 0..3 {
+            store.record_feedback(
+                "Prefer iterator adapters over manual loops",
+                "BestPractice",
+                true,
+                Some("*.rs"),
+                "2024-01-01T00:00:00Z",
+            );
+        }
+        for _ in 0..4 {
+            store.record_feedback(
+                "Use the builder pattern for complex config",
+                "BestPractice",
+                true,
+                Some("*.rs"),
+                "2024-01-02T00:00:00Z",
+            );
+        }
+
+        let summaries = summarize_learned_rule_patterns(store.boost_patterns());
+
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].total_observations, 4);
+        assert!(summaries[0].pattern_text.contains("builder pattern"));
+        assert_eq!(
+            summaries[1].pattern_text,
+            "prefer iterator adapters over manual loops"
+        );
+        assert!(summaries[0].confidence >= summaries[1].confidence);
+    }
+
+    #[test]
+    fn test_latest_attention_gap_snapshot_skips_newer_empty_entries() {
+        let trend = FeedbackEvalTrendResponse {
+            entries: vec![
+                FeedbackEvalTrendEntryResponse {
+                    timestamp: "2024-01-01T00:00:00Z".to_string(),
+                    eval_label: Some("weekly-batch".to_string()),
+                    eval_model: Some("frontier".to_string()),
+                    eval_provider: Some("anthropic".to_string()),
+                    attention_by_category: vec![FeedbackEvalTrendGapResponse {
+                        name: "Security".to_string(),
+                        feedback_total: 8,
+                        high_confidence_total: 3,
+                        high_confidence_acceptance_rate: 0.2,
+                        eval_score: Some(0.6),
+                        gap: Some(-0.4),
+                    }],
+                    attention_by_rule: vec![FeedbackEvalTrendGapResponse {
+                        name: "sec.sql.injection".to_string(),
+                        feedback_total: 5,
+                        high_confidence_total: 2,
+                        high_confidence_acceptance_rate: 0.1,
+                        eval_score: Some(0.5),
+                        gap: Some(-0.4),
+                    }],
+                    ..Default::default()
+                },
+                FeedbackEvalTrendEntryResponse {
+                    timestamp: "2024-01-02T00:00:00Z".to_string(),
+                    ..Default::default()
+                },
+            ],
+        };
+
+        let snapshot = latest_attention_gap_snapshot(&trend);
+
+        assert_eq!(snapshot.timestamp, "2024-01-01T00:00:00Z");
+        assert_eq!(snapshot.eval_label.as_deref(), Some("weekly-batch"));
+        assert_eq!(snapshot.by_category.len(), 1);
+        assert_eq!(snapshot.by_category[0].name, "Security");
+        assert_eq!(snapshot.by_rule.len(), 1);
+        assert_eq!(snapshot.by_rule[0].name, "sec.sql.injection");
+    }
+
+    #[test]
+    fn test_summarize_rejected_patterns_orders_by_rejected_count() {
+        let mut store = crate::review::FeedbackStore::default();
+
+        for _ in 0..2 {
+            store.record_feedback("Style", Some("*.rs"), false);
+        }
+        for _ in 0..4 {
+            store.record_feedback("Bug", Some("*.ts"), false);
+        }
+        for _ in 0..3 {
+            store.record_rule_feedback_patterns("style.rule", &["*.rs"], false);
+        }
+        for _ in 0..1 {
+            store.record_rule_feedback_patterns("bug.rule", &["*.ts"], false);
+        }
+
+        let (by_category, by_rule, by_file_pattern) = summarize_rejected_patterns(&store);
+
+        assert_eq!(
+            by_category
+                .iter()
+                .map(|summary| summary.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Bug", "Style"]
+        );
+        assert_eq!(by_category[0].rejected, 4);
+        assert_eq!(
+            by_rule
+                .iter()
+                .map(|summary| summary.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["style.rule", "bug.rule"]
+        );
+        assert_eq!(by_rule[0].rejected, 3);
+        assert_eq!(
+            by_file_pattern
+                .iter()
+                .map(|summary| summary.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["*.ts", "*.rs"]
+        );
+        assert_eq!(by_file_pattern[0].rejected, 4);
     }
 }

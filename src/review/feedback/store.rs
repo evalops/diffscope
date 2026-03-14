@@ -50,6 +50,12 @@ pub struct FeedbackStore {
     /// Feedback stats keyed by composite "category|*.ext" (e.g., "Bug|*.rs").
     #[serde(default)]
     pub by_category_file_pattern: HashMap<String, FeedbackPatternStats>,
+    /// Feedback stats keyed by normalized rule id (e.g., "sec.sql.injection").
+    #[serde(default)]
+    pub by_rule: HashMap<String, FeedbackPatternStats>,
+    /// Feedback stats keyed by composite "rule_id|*.ext".
+    #[serde(default)]
+    pub by_rule_file_pattern: HashMap<String, FeedbackPatternStats>,
 }
 
 impl FeedbackStore {
@@ -93,6 +99,29 @@ impl FeedbackStore {
             update_pattern_stats(comp_stats, accepted);
         }
     }
+
+    /// Record a feedback event across normalized rule-id buckets.
+    pub fn record_rule_feedback_patterns<S>(
+        &mut self,
+        rule_id: &str,
+        file_patterns: &[S],
+        accepted: bool,
+    ) where
+        S: AsRef<str>,
+    {
+        let Some(rule_id) = normalize_feedback_key(rule_id) else {
+            return;
+        };
+
+        let rule_stats = self.by_rule.entry(rule_id.clone()).or_default();
+        update_pattern_stats(rule_stats, accepted);
+
+        for pattern in collect_unique_patterns(file_patterns) {
+            let composite = format!("{}|{}", rule_id, pattern);
+            let comp_stats = self.by_rule_file_pattern.entry(composite).or_default();
+            update_pattern_stats(comp_stats, accepted);
+        }
+    }
 }
 
 fn update_pattern_stats(stats: &mut FeedbackPatternStats, accepted: bool) {
@@ -101,4 +130,24 @@ fn update_pattern_stats(stats: &mut FeedbackPatternStats, accepted: bool) {
     } else {
         stats.rejected += 1;
     }
+}
+
+fn collect_unique_patterns<S>(file_patterns: &[S]) -> HashSet<String>
+where
+    S: AsRef<str>,
+{
+    let mut unique_patterns = HashSet::new();
+    for pattern in file_patterns {
+        let pattern = pattern.as_ref().trim();
+        if pattern.is_empty() {
+            continue;
+        }
+        unique_patterns.insert(pattern.to_string());
+    }
+    unique_patterns
+}
+
+fn normalize_feedback_key(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    (!normalized.is_empty()).then_some(normalized)
 }

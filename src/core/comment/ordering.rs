@@ -18,6 +18,11 @@ pub(super) fn sort_by_priority(comments: &mut [Comment]) {
         severity_rank(&a.severity)
             .cmp(&severity_rank(&b.severity))
             .then_with(|| category_rank(&a.category).cmp(&category_rank(&b.category)))
+            .then_with(|| {
+                b.confidence
+                    .partial_cmp(&a.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| a.file_path.cmp(&b.file_path))
             .then_with(|| a.line_number.cmp(&b.line_number))
     });

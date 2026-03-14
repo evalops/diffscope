@@ -7,6 +7,9 @@ use super::super::super::super::{
     FeedbackEvalRuleCorrelation,
 };
 
+const ATTENTION_GAP_THRESHOLD: f32 = 0.15;
+const ATTENTION_ACCEPTANCE_THRESHOLD: f32 = 0.5;
+
 pub(super) fn build_feedback_eval_correlation(
     eval_report: Option<&EvalReport>,
     by_category: &[FeedbackEvalBucket],
@@ -28,45 +31,61 @@ pub(super) fn build_feedback_eval_correlation(
         .map(|metric| (normalize_key(&metric.rule_id), metric))
         .collect::<HashMap<_, _>>();
 
+    let by_category = by_category
+        .iter()
+        .map(|bucket| {
+            let high_confidence = high_confidence_categories.get(&normalize_key(&bucket.name));
+            let eval_metrics = eval_categories.get(&normalize_key(&bucket.name));
+            let eval_micro_f1 = eval_metrics.map(|metrics| metrics.micro_f1);
+            let high_confidence_acceptance_rate = high_confidence
+                .map(|bucket| bucket.acceptance_rate)
+                .unwrap_or(0.0);
+            FeedbackEvalCategoryCorrelation {
+                name: bucket.name.clone(),
+                feedback_total: bucket.total,
+                feedback_acceptance_rate: bucket.acceptance_rate,
+                high_confidence_total: high_confidence.map(|bucket| bucket.total).unwrap_or(0),
+                high_confidence_acceptance_rate,
+                eval_fixture_count: eval_metrics.map(|metrics| metrics.fixture_count),
+                eval_micro_f1,
+                eval_weighted_score: eval_metrics.map(|metrics| metrics.weighted_score),
+                feedback_vs_eval_gap: metric_gap(eval_micro_f1, bucket.acceptance_rate),
+                high_confidence_vs_eval_gap: metric_gap(
+                    eval_micro_f1,
+                    high_confidence_acceptance_rate,
+                ),
+            }
+        })
+        .collect::<Vec<_>>();
+    let by_rule = by_rule
+        .iter()
+        .map(|bucket| {
+            let high_confidence = high_confidence_rules.get(&normalize_key(&bucket.name));
+            let eval_metric = eval_rules.get(&normalize_key(&bucket.name));
+            let eval_f1 = eval_metric.map(|metric| metric.f1);
+            let high_confidence_acceptance_rate = high_confidence
+                .map(|bucket| bucket.acceptance_rate)
+                .unwrap_or(0.0);
+            FeedbackEvalRuleCorrelation {
+                rule_id: bucket.name.clone(),
+                feedback_total: bucket.total,
+                feedback_acceptance_rate: bucket.acceptance_rate,
+                high_confidence_total: high_confidence.map(|bucket| bucket.total).unwrap_or(0),
+                high_confidence_acceptance_rate,
+                eval_precision: eval_metric.map(|metric| metric.precision),
+                eval_recall: eval_metric.map(|metric| metric.recall),
+                eval_f1,
+                feedback_vs_eval_gap: metric_gap(eval_f1, bucket.acceptance_rate),
+                high_confidence_vs_eval_gap: metric_gap(eval_f1, high_confidence_acceptance_rate),
+            }
+        })
+        .collect::<Vec<_>>();
+
     Some(FeedbackEvalCorrelationReport {
-        by_category: by_category
-            .iter()
-            .map(|bucket| {
-                let high_confidence = high_confidence_categories.get(&normalize_key(&bucket.name));
-                let eval_metrics = eval_categories.get(&normalize_key(&bucket.name));
-                FeedbackEvalCategoryCorrelation {
-                    name: bucket.name.clone(),
-                    feedback_total: bucket.total,
-                    feedback_acceptance_rate: bucket.acceptance_rate,
-                    high_confidence_total: high_confidence.map(|bucket| bucket.total).unwrap_or(0),
-                    high_confidence_acceptance_rate: high_confidence
-                        .map(|bucket| bucket.acceptance_rate)
-                        .unwrap_or(0.0),
-                    eval_fixture_count: eval_metrics.map(|metrics| metrics.fixture_count),
-                    eval_micro_f1: eval_metrics.map(|metrics| metrics.micro_f1),
-                    eval_weighted_score: eval_metrics.map(|metrics| metrics.weighted_score),
-                }
-            })
-            .collect(),
-        by_rule: by_rule
-            .iter()
-            .map(|bucket| {
-                let high_confidence = high_confidence_rules.get(&normalize_key(&bucket.name));
-                let eval_metric = eval_rules.get(&normalize_key(&bucket.name));
-                FeedbackEvalRuleCorrelation {
-                    rule_id: bucket.name.clone(),
-                    feedback_total: bucket.total,
-                    feedback_acceptance_rate: bucket.acceptance_rate,
-                    high_confidence_total: high_confidence.map(|bucket| bucket.total).unwrap_or(0),
-                    high_confidence_acceptance_rate: high_confidence
-                        .map(|bucket| bucket.acceptance_rate)
-                        .unwrap_or(0.0),
-                    eval_precision: eval_metric.map(|metric| metric.precision),
-                    eval_recall: eval_metric.map(|metric| metric.recall),
-                    eval_f1: eval_metric.map(|metric| metric.f1),
-                }
-            })
-            .collect(),
+        attention_by_category: build_attention_categories(&by_category),
+        attention_by_rule: build_attention_rules(&by_rule),
+        by_category,
+        by_rule,
     })
 }
 
@@ -79,6 +98,60 @@ fn bucket_map(buckets: &[FeedbackEvalBucket]) -> HashMap<String, &FeedbackEvalBu
 
 fn normalize_key(value: &str) -> String {
     value.trim().to_ascii_lowercase()
+}
+
+fn metric_gap(eval_metric: Option<f32>, acceptance_rate: f32) -> Option<f32> {
+    eval_metric.map(|metric| (metric - acceptance_rate).max(0.0))
+}
+
+fn build_attention_categories(
+    categories: &[FeedbackEvalCategoryCorrelation],
+) -> Vec<FeedbackEvalCategoryCorrelation> {
+    let mut attention = categories
+        .iter()
+        .filter(|category| {
+            category.high_confidence_total > 0
+                && category.high_confidence_acceptance_rate <= ATTENTION_ACCEPTANCE_THRESHOLD
+                && category
+                    .high_confidence_vs_eval_gap
+                    .is_some_and(|gap| gap >= ATTENTION_GAP_THRESHOLD)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    attention.sort_by(|left, right| {
+        right
+            .high_confidence_vs_eval_gap
+            .unwrap_or_default()
+            .total_cmp(&left.high_confidence_vs_eval_gap.unwrap_or_default())
+            .then_with(|| right.high_confidence_total.cmp(&left.high_confidence_total))
+            .then_with(|| right.feedback_total.cmp(&left.feedback_total))
+    });
+    attention
+}
+
+fn build_attention_rules(
+    rules: &[FeedbackEvalRuleCorrelation],
+) -> Vec<FeedbackEvalRuleCorrelation> {
+    let mut attention = rules
+        .iter()
+        .filter(|rule| {
+            rule.high_confidence_total > 0
+                && rule.high_confidence_acceptance_rate <= ATTENTION_ACCEPTANCE_THRESHOLD
+                && rule
+                    .high_confidence_vs_eval_gap
+                    .is_some_and(|gap| gap >= ATTENTION_GAP_THRESHOLD)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    attention.sort_by(|left, right| {
+        right
+            .high_confidence_vs_eval_gap
+            .unwrap_or_default()
+            .total_cmp(&left.high_confidence_vs_eval_gap.unwrap_or_default())
+            .then_with(|| right.high_confidence_total.cmp(&left.high_confidence_total))
+            .then_with(|| right.feedback_total.cmp(&left.feedback_total))
+    });
+    attention
 }
 
 #[cfg(test)]
@@ -170,7 +243,19 @@ mod tests {
 
         assert_eq!(correlation.by_category.len(), 1);
         assert_eq!(correlation.by_category[0].eval_fixture_count, Some(2));
+        assert!((correlation.by_category[0].feedback_vs_eval_gap.unwrap() - 0.55).abs() < 0.001);
+        assert!(
+            (correlation.by_category[0]
+                .high_confidence_vs_eval_gap
+                .unwrap()
+                - 0.8)
+                .abs()
+                < 0.001
+        );
         assert_eq!(correlation.by_rule[0].eval_f1, Some(1.0));
         assert_eq!(correlation.by_rule[0].high_confidence_total, 2);
+        assert!((correlation.by_rule[0].feedback_vs_eval_gap.unwrap() - 0.67).abs() < 0.001);
+        assert_eq!(correlation.attention_by_category.len(), 1);
+        assert_eq!(correlation.attention_by_rule.len(), 1);
     }
 }

@@ -4,6 +4,7 @@ use std::process::Command;
 
 #[derive(Debug, Deserialize)]
 pub(in super::super) struct GhPrMetadata {
+    pub(in super::super) number: u32,
     #[serde(rename = "headRefOid")]
     pub(in super::super) head_ref_oid: String,
     #[serde(rename = "baseRepository")]
@@ -25,7 +26,7 @@ pub(in super::super) fn fetch_pr_metadata(
         "view".to_string(),
         pr_number.to_string(),
         "--json".to_string(),
-        "headRefOid,baseRepository".to_string(),
+        "number,headRefOid,baseRepository".to_string(),
     ];
     if let Some(repo) = repo {
         args.push("--repo".to_string());

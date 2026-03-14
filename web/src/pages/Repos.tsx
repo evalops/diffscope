@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Search, Lock, Star, GitPullRequest, Loader2, ChevronRight, RefreshCw, X, ExternalLink, Copy, Check, Webhook, Eye, EyeOff } from 'lucide-react'
-import { useGhStatus, useGhRepos, useGhPrs, useStartPrReview, useUpdateConfig, useConfig } from '../api/hooks'
+import { useGhStatus, useGhRepos, useGhPrReadiness, useGhPrs, useStartPrReview, useUpdateConfig, useConfig } from '../api/hooks'
 import { api } from '../api/client'
-import type { GhRepo, GhPullRequest, DeviceFlowResponse } from '../api/types'
+import type { GhRepo, GhPullRequest, DeviceFlowResponse, MergeReadiness } from '../api/types'
+import { PrReadinessSummary } from '../components/PrReadinessSummary'
 
 const LANG_COLORS: Record<string, string> = {
   TypeScript: '#3178c6',
@@ -28,6 +29,18 @@ const LANG_COLORS: Record<string, string> = {
   Lua: '#000080',
   Zig: '#ec915c',
   Vue: '#41b883',
+}
+
+const READINESS_STYLES: Record<MergeReadiness, string> = {
+  Ready: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
+  NeedsAttention: 'bg-sev-warning/10 text-sev-warning border border-sev-warning/20',
+  NeedsReReview: 'bg-accent/10 text-accent border border-accent/20',
+}
+
+const READINESS_LABELS: Record<MergeReadiness, string> = {
+  Ready: 'Ready',
+  NeedsAttention: 'Attention',
+  NeedsReReview: 'Re-review',
 }
 
 function timeAgo(dateStr: string): string {
@@ -84,6 +97,11 @@ export function Repos() {
     selectedRepo?.full_name,
     prFilter,
   )
+  const {
+    data: prReadiness,
+    isLoading: prReadinessLoading,
+    error: prReadinessError,
+  } = useGhPrReadiness(selectedRepo?.full_name, selectedPr?.number)
   const startPrReview = useStartPrReview()
 
   // Debounce search
@@ -214,6 +232,16 @@ export function Repos() {
               )}
               <span>{timeAgo(repo.updated_at)}</span>
             </div>
+            {repo.open_blockers !== undefined && repo.blocking_prs !== undefined && (repo.open_blockers > 0 || repo.blocking_prs > 0) && (
+              <div className="mt-2 flex items-center gap-2 text-[10px]">
+                <span className="px-1.5 py-0.5 rounded font-medium bg-sev-warning/10 text-sev-warning border border-sev-warning/20">
+                  {repo.open_blockers} blocker{repo.open_blockers === 1 ? '' : 's'}
+                </span>
+                <span className="text-text-muted">
+                  across {repo.blocking_prs} reviewed PR{repo.blocking_prs === 1 ? '' : 's'}
+                </span>
+              </div>
+            )}
           </button>
         ))}
       </div>
@@ -298,12 +326,24 @@ export function Repos() {
                     <span>{timeAgo(pr.created_at)}</span>
                     <span className="font-code">{pr.head_branch} <span className="text-text-muted/50">&rarr;</span> {pr.base_branch}</span>
                   </div>
-                  {(pr.draft || pr.labels.length > 0) && (
-                    <div className="flex items-center gap-1.5 mt-1.5">
+                  {(pr.draft || pr.labels.length > 0 || pr.merge_readiness || pr.open_blockers !== undefined) && (
+                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                       {pr.draft && <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-surface-2 text-text-muted border border-border">Draft</span>}
                       {pr.labels.map(label => (
                         <span key={label} className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-accent/10 text-accent border border-accent/20">{label}</span>
                       ))}
+                      {pr.merge_readiness && (
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${READINESS_STYLES[pr.merge_readiness]}`}>
+                          {READINESS_LABELS[pr.merge_readiness]}
+                        </span>
+                      )}
+                      {pr.open_blockers !== undefined && (
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium border ${pr.open_blockers > 0
+                          ? 'bg-sev-warning/10 text-sev-warning border-sev-warning/20'
+                          : 'bg-surface-2 text-text-muted border-border'}`}>
+                          {pr.open_blockers} blocker{pr.open_blockers === 1 ? '' : 's'}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -374,6 +414,13 @@ export function Repos() {
           )}
 
           <div className="border-t border-border-subtle pt-4">
+            <PrReadinessSummary
+              readiness={prReadiness}
+              isLoading={prReadinessLoading}
+              error={prReadinessError}
+              onOpenReview={(reviewId) => navigate(`/review/${reviewId}`)}
+            />
+
             <div className="flex items-center justify-between mb-4">
               <div>
                 <div className="text-[13px] text-text-primary">Post results to GitHub</div>

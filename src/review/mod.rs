@@ -13,8 +13,8 @@ pub use context_helpers::{
     resolve_pattern_repositories,
 };
 pub use feedback::{
-    derive_file_patterns, load_feedback_store, load_feedback_store_from_path,
-    record_semantic_feedback_examples, save_feedback_store,
+    apply_comment_feedback_signal, derive_file_patterns, load_feedback_store,
+    load_feedback_store_from_path, record_semantic_feedback_examples, save_feedback_store,
 };
 #[allow(unused_imports)]
 pub use filters::apply_review_filters;
@@ -33,6 +33,8 @@ pub use rule_helpers::{
     apply_rule_overrides, build_pr_summary_comment_body, inject_rule_context, load_review_rules,
     normalize_rule_id, summarize_rule_hits,
 };
+#[allow(unused_imports)]
+pub(crate) use verification::summarize_review_verification;
 
 // Used by sibling modules (commands, output) and their tests
 #[allow(unused_imports)]

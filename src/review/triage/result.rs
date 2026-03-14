@@ -3,7 +3,6 @@ pub enum TriageResult {
     NeedsReview,
     SkipLockFile,
     SkipWhitespaceOnly,
-    SkipDeletionOnly,
     SkipGenerated,
     SkipCommentOnly,
 }
@@ -18,7 +17,6 @@ impl TriageResult {
             TriageResult::NeedsReview => "needs review",
             TriageResult::SkipLockFile => "lock file",
             TriageResult::SkipWhitespaceOnly => "whitespace-only changes",
-            TriageResult::SkipDeletionOnly => "deletion-only changes",
             TriageResult::SkipGenerated => "generated file",
             TriageResult::SkipCommentOnly => "comment-only changes",
         }

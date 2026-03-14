@@ -227,7 +227,7 @@ export function Admin() {
   const [timeRange, setTimeRange] = useState<TimeRange>('All')
   const [compareMode, setCompareMode] = useState(false)
 
-  const allEvents = events ?? []
+  const allEvents = useMemo(() => events ?? [], [events])
   const filteredEvents = useMemo(() => sliceByTimeRange(allEvents, timeRange), [allEvents, timeRange])
   const admin = useMemo(() => computeAdmin(filteredEvents), [filteredEvents])
 

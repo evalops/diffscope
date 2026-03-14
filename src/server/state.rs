@@ -79,6 +79,10 @@ pub struct ReviewEvent {
     pub tokens_completion: Option<usize>,
     pub tokens_total: Option<usize>,
 
+    // --- cost (server-side estimate for stats / log pipelines) ---
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_estimate_usd: Option<f64>,
+
     // --- per-file breakdown ---
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_metrics: Option<Vec<FileMetricEvent>>,
@@ -127,6 +131,10 @@ pub struct ReviewSession {
     pub id: String,
     pub status: ReviewStatus,
     pub diff_source: String,
+    #[serde(default)]
+    pub github_head_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_post_results_requested: Option<bool>,
     pub started_at: i64,
     pub completed_at: Option<i64>,
     pub comments: Vec<Comment>,
@@ -331,7 +339,19 @@ impl AppState {
         }
         match std::fs::read_to_string(path) {
             Ok(data) => match serde_json::from_str::<HashMap<String, ReviewSession>>(&data) {
-                Ok(loaded) => {
+                Ok(mut loaded) => {
+                    for session in loaded.values_mut() {
+                        if session.summary.is_some() || !session.comments.is_empty() {
+                            let previous_summary = session.summary.clone();
+                            session.summary =
+                                Some(crate::core::CommentSynthesizer::inherit_review_state(
+                                    crate::core::CommentSynthesizer::generate_summary(
+                                        &session.comments,
+                                    ),
+                                    previous_summary.as_ref(),
+                                ));
+                        }
+                    }
                     info!("Loaded {} reviews from disk", loaded.len());
                     loaded
                 }
@@ -452,6 +472,8 @@ pub struct ReviewListItem {
     pub diff_source: String,
     pub started_at: i64,
     pub completed_at: Option<i64>,
+    pub comments: Vec<Comment>,
+    pub summary: Option<ReviewSummary>,
     pub files_reviewed: usize,
     pub comment_count: usize,
     pub overall_score: Option<f32>,
@@ -467,6 +489,8 @@ impl ReviewListItem {
             diff_source: session.diff_source.clone(),
             started_at: session.started_at,
             completed_at: session.completed_at,
+            comments: session.comments.clone(),
+            summary: session.summary.clone(),
             files_reviewed: session.files_reviewed,
             comment_count: session.comments.len(),
             overall_score: session.summary.as_ref().map(|s| s.overall_score),
@@ -526,6 +550,7 @@ impl ReviewEventBuilder {
                 tokens_prompt: None,
                 tokens_completion: None,
                 tokens_total: None,
+                cost_estimate_usd: None,
                 file_metrics: None,
                 hotspot_details: None,
                 convention_suppressed: None,
@@ -620,6 +645,8 @@ impl ReviewEventBuilder {
         self.event.tokens_prompt = Some(prompt);
         self.event.tokens_completion = Some(completion);
         self.event.tokens_total = Some(total);
+        self.event.cost_estimate_usd =
+            Some(super::cost::estimate_cost_usd(&self.event.model, total));
         self
     }
 
@@ -679,6 +706,7 @@ impl ReviewEventBuilder {
 }
 
 /// Emit a review wide event via structured tracing.
+/// Also logs one full JSON line per event (target "review.event.json") for log pipelines / OTEL.
 pub fn emit_wide_event(event: &ReviewEvent) {
     info!(
         review_id = %event.review_id,
@@ -700,6 +728,19 @@ pub fn emit_wide_event(event: &ReviewEvent) {
         error = ?event.error,
         "review.event"
     );
+    // One JSON line per event for log pipelines / OTEL: include @timestamp and event.name for filtering.
+    let timestamp = event
+        .created_at
+        .map(|t| t.to_rfc3339())
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    let payload = serde_json::json!({
+        "@timestamp": timestamp,
+        "event": { "name": "review.event", "kind": "event" },
+        "review": event
+    });
+    if let Ok(json) = serde_json::to_string(&payload) {
+        info!(target: "review.event.json", "{}", json);
+    }
 }
 
 /// Build a progress callback that updates the review session during review.
@@ -792,6 +833,36 @@ mod tests {
     }
 
     #[test]
+    fn test_emit_wide_event_payload_has_otel_shape() {
+        let event = ReviewEventBuilder::new("r-otel", "review.completed", "head", "gpt-4o")
+            .duration_ms(100)
+            .build();
+        let timestamp = event
+            .created_at
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        let payload = serde_json::json!({
+            "@timestamp": timestamp,
+            "event": { "name": "review.event", "kind": "event" },
+            "review": event
+        });
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(
+            json.contains("@timestamp"),
+            "OTEL payload must include @timestamp"
+        );
+        assert!(
+            json.contains("\"name\":\"review.event\""),
+            "OTEL payload must include event.name for filtering"
+        );
+        assert!(
+            json.contains("\"review\""),
+            "OTEL payload must include review object"
+        );
+        assert!(json.contains("r-otel"), "payload must contain review_id");
+    }
+
+    #[test]
     fn test_review_event_builder_minimal() {
         let event = ReviewEventBuilder::new("r1", "review.completed", "head", "gpt-4o").build();
         assert_eq!(event.review_id, "r1");
@@ -827,6 +898,8 @@ mod tests {
             tags: vec![],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         }];
         let summary = crate::core::CommentSynthesizer::generate_summary(&comments);
 
@@ -916,6 +989,8 @@ mod tests {
                 tags: vec![],
                 fix_effort: FixEffort::Low,
                 feedback: None,
+                status: crate::core::comment::CommentStatus::Open,
+                resolved_at: None,
             },
             Comment {
                 id: "c2".to_string(),
@@ -931,6 +1006,8 @@ mod tests {
                 tags: vec![],
                 fix_effort: FixEffort::Low,
                 feedback: None,
+                status: crate::core::comment::CommentStatus::Open,
+                resolved_at: None,
             },
             Comment {
                 id: "c3".to_string(),
@@ -946,6 +1023,8 @@ mod tests {
                 tags: vec![],
                 fix_effort: FixEffort::Medium,
                 feedback: None,
+                status: crate::core::comment::CommentStatus::Open,
+                resolved_at: None,
             },
         ];
         assert_eq!(count_reviewed_files(&comments), 2);
@@ -1364,6 +1443,8 @@ mod tests {
             tags: vec![],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         }];
         let summary = crate::core::CommentSynthesizer::generate_summary(&comments);
 

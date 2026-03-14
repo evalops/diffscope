@@ -64,6 +64,8 @@ mod tests {
             tags: vec![],
             fix_effort: core::comment::FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
         let result = select_discussion_comment(std::slice::from_ref(&comment), None, None).unwrap();
         assert_eq!(result.id, "cmt_1");

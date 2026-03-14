@@ -197,6 +197,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec![],
+                dag_traces: vec![],
             }],
         }
     }

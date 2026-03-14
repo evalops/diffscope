@@ -53,6 +53,8 @@ mod tests {
             tags: vec![tag.to_string()],
             fix_effort: core::comment::FixEffort::Medium,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         }
     }
 
@@ -70,6 +72,60 @@ mod tests {
         let deduped = deduplicate_specialized_comments(comments);
         assert_eq!(deduped.len(), 1);
         assert!(deduped[0].tags.contains(&"security-pass".to_string()));
+    }
+
+    #[test]
+    fn dedup_removes_semantic_supply_chain_duplicates() {
+        let comments = vec![
+            make_comment(
+                "Dockerfile",
+                4,
+                "Piping a remote install script to bash executes unverified code during the build.",
+                "security-pass",
+            ),
+            make_comment(
+                "Dockerfile",
+                4,
+                "This downloads a script and runs it without checksum or signature verification, creating a supply chain risk.",
+                "verification-pass",
+            ),
+        ];
+
+        let deduped = deduplicate_specialized_comments(comments);
+
+        assert_eq!(deduped.len(), 1);
+    }
+
+    #[test]
+    fn dedup_merges_same_rule_comments_on_same_line() {
+        let mut first = make_comment(
+            ".github/workflows/build.yml",
+            9,
+            "Action not pinned to full SHA.",
+            "supply-chain",
+        );
+        first.rule_id = Some("sec.supply-chain.ci-injection".to_string());
+
+        let mut second = make_comment(
+            ".github/workflows/build.yml",
+            9,
+            "GitHub Action not pinned to immutable SHA and should use a commit hash.",
+            "github-actions",
+        );
+        second.rule_id = Some("sec.supply-chain.ci-injection".to_string());
+        second.suggestion = Some("Pin the action to a full commit SHA.".to_string());
+
+        let deduped = deduplicate_specialized_comments(vec![first, second]);
+
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(
+            deduped[0].rule_id.as_deref(),
+            Some("sec.supply-chain.ci-injection")
+        );
+        assert_eq!(
+            deduped[0].suggestion.as_deref(),
+            Some("Pin the action to a full commit SHA.")
+        );
     }
 
     #[test]

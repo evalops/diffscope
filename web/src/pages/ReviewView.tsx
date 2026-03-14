@@ -1,31 +1,442 @@
-import { useParams } from 'react-router-dom'
-import { useState, useMemo } from 'react'
+import { useParams, useSearchParams } from 'react-router-dom'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { Loader2, AlertTriangle, MessageSquare, FileCode, ChevronDown, Activity, Clock, Cpu, GitBranch } from 'lucide-react'
-import { useReview, useSubmitFeedback } from '../api/hooks'
+import { useReview, useSubmitFeedback, useUpdateCommentLifecycle } from '../api/hooks'
 import { DiffViewer } from '../components/DiffViewer'
 import { FileSidebar } from '../components/FileSidebar'
 import { ScoreGauge } from '../components/ScoreGauge'
 import { SeverityBadge } from '../components/SeverityBadge'
 import { CommentCard } from '../components/CommentCard'
 import { parseDiff } from '../lib/parseDiff'
-import type { Severity, ReviewEvent } from '../api/types'
+import type { Comment, CommentLifecycleStatus, DiffFile, MergeReadiness, Severity, ReviewEvent } from '../api/types'
 
 type ViewMode = 'diff' | 'list'
 
+const BLOCKING_SEVERITIES = new Set<Severity>(['Error', 'Warning'])
+const LOW_FEEDBACK_COVERAGE_THRESHOLD = 0.5
+const MIN_FEEDBACK_COVERAGE_FINDINGS = 3
+
+type ReviewCommentFilters = {
+  severityFilter: Set<Severity>
+  selectedFile?: string | null
+  categoryFilter: string | null
+  ruleFilter: string | null
+  lifecycleFilter: CommentLifecycleStatus | 'All'
+  blockerOnly?: boolean
+}
+
+type ReviewCommentSectionKey = 'stale' | 'unresolved' | 'informational' | 'fixed'
+
+type ReviewCommentSection = {
+  key: ReviewCommentSectionKey
+  title: string
+  description: string
+  badgeClassName: string
+  files: Array<{
+    path: string
+    comments: Comment[]
+  }>
+}
+
+const REVIEW_COMMENT_SECTION_ORDER: ReviewCommentSectionKey[] = ['stale', 'unresolved', 'informational', 'fixed']
+
+const REVIEW_COMMENT_SECTION_META: Record<ReviewCommentSectionKey, Omit<ReviewCommentSection, 'files'>> = {
+  stale: {
+    key: 'stale',
+    title: 'Stale',
+    description: 'Open findings from a review that predates newer commits.',
+    badgeClassName: 'bg-accent/10 text-accent border border-accent/20',
+  },
+  unresolved: {
+    key: 'unresolved',
+    title: 'Unresolved',
+    description: 'Open blocking findings that still need action.',
+    badgeClassName: 'bg-sev-warning/10 text-sev-warning border border-sev-warning/20',
+  },
+  informational: {
+    key: 'informational',
+    title: 'Informational',
+    description: 'Open non-blocking findings worth keeping in view.',
+    badgeClassName: 'bg-surface-2 text-text-muted border border-border',
+  },
+  fixed: {
+    key: 'fixed',
+    title: 'Fixed',
+    description: 'Resolved and dismissed findings retained for audit history.',
+    badgeClassName: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
+  },
+}
+
+const REVIEW_COMMENT_CARD_SELECTOR = '[data-review-comment-card="true"]'
+
+function normalizeCommentFilePath(filePath: string): string {
+  return filePath.replace(/^\.\//, '')
+}
+
+function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+
+  const tagName = target.tagName.toLowerCase()
+  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
+    return true
+  }
+
+  return target.isContentEditable || target.closest('[contenteditable="true"]') !== null
+}
+
+function isBlockingComment(comment: Pick<Comment, 'severity' | 'status'>): boolean {
+  return (comment.status ?? 'Open') === 'Open' && BLOCKING_SEVERITIES.has(comment.severity)
+}
+
+function classifyReviewCommentSection(
+  comment: Comment,
+  mergeReadiness?: MergeReadiness,
+): ReviewCommentSectionKey {
+  const status = comment.status ?? 'Open'
+  if (status === 'Resolved' || status === 'Dismissed') {
+    return 'fixed'
+  }
+
+  if (mergeReadiness === 'NeedsReReview') {
+    return 'stale'
+  }
+
+  return BLOCKING_SEVERITIES.has(comment.severity) ? 'unresolved' : 'informational'
+}
+
+function buildReviewCommentSections(
+  comments: Comment[],
+  mergeReadiness?: MergeReadiness,
+): ReviewCommentSection[] {
+  const groupedSections = new Map<ReviewCommentSectionKey, Map<string, Comment[]>>()
+
+  for (const comment of comments) {
+    const sectionKey = classifyReviewCommentSection(comment, mergeReadiness)
+    if (!groupedSections.has(sectionKey)) {
+      groupedSections.set(sectionKey, new Map())
+    }
+
+    const sectionFiles = groupedSections.get(sectionKey)!
+    if (!sectionFiles.has(comment.file_path)) {
+      sectionFiles.set(comment.file_path, [])
+    }
+    sectionFiles.get(comment.file_path)!.push(comment)
+  }
+
+  return REVIEW_COMMENT_SECTION_ORDER.flatMap((sectionKey) => {
+    const sectionFiles = groupedSections.get(sectionKey)
+    if (!sectionFiles || sectionFiles.size === 0) {
+      return []
+    }
+
+    return [{
+      ...REVIEW_COMMENT_SECTION_META[sectionKey],
+      files: [...sectionFiles.entries()].map(([path, sectionComments]) => ({
+        path,
+        comments: sectionComments,
+      })),
+    }]
+  })
+}
+
+function buildVisibleCommentIds(
+  comments: Comment[],
+  viewMode: ViewMode,
+  visibleDiffFiles: DiffFile[],
+  commentSections: ReviewCommentSection[],
+): string[] {
+  if (viewMode === 'list' || visibleDiffFiles.length === 0) {
+    return commentSections.flatMap((section) =>
+      section.files.flatMap((file) => file.comments.map((comment) => comment.id)),
+    )
+  }
+
+  const commentsByFile = new Map<string, Map<number, Comment[]>>()
+  for (const comment of comments) {
+    const filePath = normalizeCommentFilePath(comment.file_path)
+    if (!commentsByFile.has(filePath)) {
+      commentsByFile.set(filePath, new Map())
+    }
+
+    const fileComments = commentsByFile.get(filePath)!
+    if (!fileComments.has(comment.line_number)) {
+      fileComments.set(comment.line_number, [])
+    }
+
+    fileComments.get(comment.line_number)!.push(comment)
+  }
+
+  const orderedCommentIds: string[] = []
+  const seenCommentIds = new Set<string>()
+
+  for (const file of visibleDiffFiles) {
+    const fileComments = commentsByFile.get(file.path)
+    if (!fileComments) continue
+
+    for (const hunk of file.hunks) {
+      for (const line of hunk.lines) {
+        const lineNumber = line.type === 'del' ? line.oldNumber : line.newNumber
+        if (!lineNumber) continue
+
+        for (const comment of fileComments.get(lineNumber) ?? []) {
+          if (seenCommentIds.has(comment.id)) continue
+          seenCommentIds.add(comment.id)
+          orderedCommentIds.push(comment.id)
+        }
+      }
+    }
+  }
+
+  for (const comment of comments) {
+    if (seenCommentIds.has(comment.id)) continue
+    orderedCommentIds.push(comment.id)
+  }
+
+  return orderedCommentIds
+}
+
+function filterReviewComments(
+  comments: Comment[],
+  {
+    severityFilter,
+    selectedFile = null,
+    categoryFilter,
+    ruleFilter,
+    lifecycleFilter,
+    blockerOnly = false,
+  }: ReviewCommentFilters,
+): Comment[] {
+  return comments.filter((comment) => {
+    if (selectedFile && normalizeCommentFilePath(comment.file_path) !== selectedFile) return false
+    if (categoryFilter && comment.category !== categoryFilter) return false
+    if (ruleFilter && comment.rule_id?.trim() !== ruleFilter) return false
+
+    if (blockerOnly) {
+      return isBlockingComment(comment)
+    }
+
+    if (!severityFilter.has(comment.severity)) return false
+    if (lifecycleFilter !== 'All' && (comment.status ?? 'Open') !== lifecycleFilter) return false
+    return true
+  })
+}
+
+function parseViewModeParam(value: string | null): ViewMode | null {
+  return value === 'diff' || value === 'list' ? value : null
+}
+
+function parseLifecycleFilterParam(value: string | null): CommentLifecycleStatus | 'All' | null {
+  return value === 'Open' || value === 'Resolved' || value === 'Dismissed' || value === 'All'
+    ? value
+    : null
+}
+
 export function ReviewView() {
   const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
   const { data: review, isLoading } = useReview(id)
   const feedback = useSubmitFeedback(id || '')
+  const lifecycle = useUpdateCommentLifecycle(id || '')
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('diff')
   const [severityFilter, setSeverityFilter] = useState<Set<Severity>>(new Set(['Error', 'Warning', 'Info', 'Suggestion']))
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
+  const [ruleFilter, setRuleFilter] = useState<string | null>(null)
+  const [lifecycleFilter, setLifecycleFilter] = useState<CommentLifecycleStatus | 'All'>('All')
+  const [showOnlyBlockers, setShowOnlyBlockers] = useState(false)
   const [showEvent, setShowEvent] = useState(false)
+  const [activeCommentId, setActiveCommentId] = useState<string | null>(null)
+  const reviewRootRef = useRef<HTMLDivElement | null>(null)
+  const diffContent = review?.diff_content
+  const comments = useMemo(() => review?.comments ?? [], [review?.comments])
+
+  const handleFeedback = useCallback((commentId: string, action: 'accept' | 'reject') => {
+    feedback.mutate({ commentId, action })
+  }, [feedback])
+
+  const handleLifecycleChange = useCallback((commentId: string, status: 'open' | 'resolved' | 'dismissed') => {
+    lifecycle.mutate({ commentId, status })
+  }, [lifecycle])
 
   const diffFiles = useMemo(() => {
-    if (!review?.diff_content) return []
-    return parseDiff(review.diff_content)
-  }, [review?.diff_content])
+    if (!diffContent) return []
+    return parseDiff(diffContent)
+  }, [diffContent])
+
+  const blockerCount = useMemo(() => (
+    review?.summary?.open_blocking_comments ?? comments.filter(isBlockingComment).length
+  ), [comments, review?.summary?.open_blocking_comments])
+
+  const blockerFilteredComments = useMemo(() => filterReviewComments(comments, {
+    severityFilter,
+    categoryFilter,
+    ruleFilter,
+    lifecycleFilter,
+    blockerOnly: showOnlyBlockers,
+  }), [comments, severityFilter, categoryFilter, ruleFilter, lifecycleFilter, showOnlyBlockers])
+
+  const filteredDiffFiles = useMemo(() => {
+    if (!showOnlyBlockers) return diffFiles
+    const blockerFiles = new Set(blockerFilteredComments.map((comment) => normalizeCommentFilePath(comment.file_path)))
+    return diffFiles.filter((file) => blockerFiles.has(file.path))
+  }, [diffFiles, blockerFilteredComments, showOnlyBlockers])
+
+  const activeSelectedFile = selectedFile && filteredDiffFiles.some((file) => file.path === selectedFile)
+    ? selectedFile
+    : null
+
+  const visibleDiffFiles = activeSelectedFile
+    ? filteredDiffFiles.filter((file) => file.path === activeSelectedFile)
+    : filteredDiffFiles
+
+  const filteredComments = useMemo(() => filterReviewComments(comments, {
+    severityFilter,
+    selectedFile: activeSelectedFile,
+    categoryFilter,
+    ruleFilter,
+    lifecycleFilter,
+    blockerOnly: showOnlyBlockers,
+  }), [comments, severityFilter, activeSelectedFile, categoryFilter, ruleFilter, lifecycleFilter, showOnlyBlockers])
+
+  const commentSections = useMemo(
+    () => buildReviewCommentSections(filteredComments, review?.summary?.merge_readiness),
+    [filteredComments, review?.summary?.merge_readiness],
+  )
+
+  const visibleCommentIds = useMemo(
+    () => buildVisibleCommentIds(filteredComments, viewMode, visibleDiffFiles, commentSections),
+    [commentSections, filteredComments, viewMode, visibleDiffFiles],
+  )
+
+  const activeVisibleCommentId = activeCommentId && visibleCommentIds.includes(activeCommentId)
+    ? activeCommentId
+    : null
+
+  const focusComment = useCallback((commentId: string) => {
+    if (!reviewRootRef.current) return
+
+    const element = Array.from(
+      reviewRootRef.current.querySelectorAll<HTMLElement>(REVIEW_COMMENT_CARD_SELECTOR),
+    ).find((candidate) => candidate.dataset.commentId === commentId)
+
+    if (!element) return
+
+    element.focus({ preventScroll: true })
+    element.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+  }, [])
+
+  const focusCommentSoon = useCallback((commentId: string) => {
+    queueMicrotask(() => focusComment(commentId))
+  }, [focusComment])
+
+  const focusNextVisibleComment = useCallback(() => {
+    if (visibleCommentIds.length === 0) return
+
+    const currentIndex = activeVisibleCommentId ? visibleCommentIds.indexOf(activeVisibleCommentId) : -1
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % visibleCommentIds.length : 0
+    const nextCommentId = visibleCommentIds[nextIndex]
+
+    setActiveCommentId(nextCommentId)
+    focusCommentSoon(nextCommentId)
+  }, [activeVisibleCommentId, focusCommentSoon, visibleCommentIds])
+
+  const runKeyboardAction = useCallback((action: 'accept' | 'reject' | 'resolve') => {
+    if (visibleCommentIds.length === 0) return
+
+    const currentCommentId = activeVisibleCommentId
+      ? activeVisibleCommentId
+      : visibleCommentIds[0]
+    const currentComment = filteredComments.find((comment) => comment.id === currentCommentId)
+    if (!currentComment) return
+
+    if (action === 'accept') {
+      handleFeedback(currentCommentId, 'accept')
+    } else if (action === 'reject') {
+      handleFeedback(currentCommentId, 'reject')
+    } else if ((currentComment.status ?? 'Open') === 'Open') {
+      handleLifecycleChange(currentCommentId, 'resolved')
+    } else {
+      return
+    }
+
+    if (visibleCommentIds.length > 1) {
+      const currentIndex = visibleCommentIds.indexOf(currentCommentId)
+      const nextCommentId = visibleCommentIds[(currentIndex + 1) % visibleCommentIds.length]
+      setActiveCommentId(nextCommentId)
+      focusCommentSoon(nextCommentId)
+      return
+    }
+
+    setActiveCommentId(currentCommentId)
+    focusCommentSoon(currentCommentId)
+  }, [activeVisibleCommentId, filteredComments, focusCommentSoon, handleFeedback, handleLifecycleChange, visibleCommentIds])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+      if (isEditableShortcutTarget(event.target)) return
+
+      const key = event.key.toLowerCase()
+      if (key === 'j' || key === 'n') {
+        event.preventDefault()
+        focusNextVisibleComment()
+        return
+      }
+
+      if (key === 'a') {
+        event.preventDefault()
+        runKeyboardAction('accept')
+        return
+      }
+
+      if (key === 'r') {
+        event.preventDefault()
+        runKeyboardAction('reject')
+        return
+      }
+
+      if (key === 'e') {
+        event.preventDefault()
+        runKeyboardAction('resolve')
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [focusNextVisibleComment, runKeyboardAction])
+
+  useEffect(() => {
+    if (!review) return
+
+    const commentId = searchParams.get('comment')
+    const comment = commentId ? review.comments.find((entry) => entry.id === commentId) : undefined
+    const nextViewMode = parseViewModeParam(searchParams.get('view'))
+    const nextCategoryFilter = searchParams.get('category') || null
+    const nextRuleFilter = searchParams.get('rule') || null
+    const nextLifecycleFilter = parseLifecycleFilterParam(searchParams.get('lifecycle')) ?? 'All'
+    const fileParam = searchParams.get('file')
+    const nextSelectedFile = fileParam
+      ? normalizeCommentFilePath(fileParam)
+      : comment
+        ? normalizeCommentFilePath(comment.file_path)
+        : null
+
+    // Sync URL search params to local state (single batch per param change)
+    /* eslint-disable react-hooks/set-state-in-effect -- URL is source of truth for view state */
+    setViewMode(nextViewMode ?? (comment ? 'list' : 'diff'))
+    setSelectedFile(nextSelectedFile)
+    setCategoryFilter(nextCategoryFilter)
+    setRuleFilter(nextRuleFilter)
+    setLifecycleFilter(nextLifecycleFilter)
+    setShowOnlyBlockers(searchParams.get('blockers') === '1')
+    setActiveCommentId(comment?.id ?? null)
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [review, searchParams])
+
+  useEffect(() => {
+    if (!activeVisibleCommentId) return
+    focusCommentSoon(activeVisibleCommentId)
+  }, [activeVisibleCommentId, focusCommentSoon])
 
   // All hooks MUST be above this line — no hooks after early returns
 
@@ -100,39 +511,41 @@ export function ReviewView() {
     setSeverityFilter(next)
   }
 
-  const filteredComments = review.comments.filter((c) => {
-    if (!severityFilter.has(c.severity)) return false
-    if (selectedFile && c.file_path.replace(/^\.\//, '') !== selectedFile) return false
-    if (categoryFilter && c.category !== categoryFilter) return false
-    return true
-  })
+  const categories = [...new Set(comments.map(c => c.category))]
+  const rules = [...new Set(
+    comments
+      .map((comment) => comment.rule_id?.trim())
+      .filter((ruleId): ruleId is string => Boolean(ruleId)),
+  )]
 
-  const categories = [...new Set(review.comments.map(c => c.category))]
-
-  const handleFeedback = (commentId: string, action: 'accept' | 'reject') => {
-    feedback.mutate({ commentId, action })
+  const readinessStyles: Record<MergeReadiness, string> = {
+    Ready: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
+    NeedsAttention: 'bg-sev-warning/10 text-sev-warning border border-sev-warning/20',
+    NeedsReReview: 'bg-accent/10 text-accent border border-accent/20',
   }
 
-  // Group comments by file for list view (no useMemo — filteredComments changes every render)
-  const groupedByFile = new Map<string, typeof filteredComments>()
-  for (const c of filteredComments) {
-    const key = c.file_path
-    if (!groupedByFile.has(key)) groupedByFile.set(key, [])
-    groupedByFile.get(key)!.push(c)
+  const verificationStyles: Record<NonNullable<typeof review.summary>['verification']['state'], string> = {
+    NotApplicable: 'text-text-muted',
+    Verified: 'text-sev-suggestion',
+    Inconclusive: 'text-accent',
   }
 
-  const visibleDiffFiles = selectedFile
-    ? diffFiles.filter(f => f.path === selectedFile)
-    : diffFiles
+  const openErrorCount = review.summary?.open_by_severity.Error ?? 0
+  const openWarningCount = review.summary?.open_by_severity.Warning ?? 0
+  const labeledFeedbackCount = comments.filter((comment) => comment.feedback === 'accept' || comment.feedback === 'reject').length
+  const feedbackCoverage = comments.length > 0 ? labeledFeedbackCount / comments.length : 1
+  const feedbackCoveragePercent = Math.round(feedbackCoverage * 100)
+  const shouldShowFeedbackCallout = comments.length >= MIN_FEEDBACK_COVERAGE_FINDINGS
+    && feedbackCoverage < LOW_FEEDBACK_COVERAGE_THRESHOLD
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full" ref={reviewRootRef}>
       {/* File sidebar */}
-      {diffFiles.length > 0 && (
+      {filteredDiffFiles.length > 0 && (
         <FileSidebar
-          files={diffFiles}
-          comments={review.comments}
-          selectedFile={selectedFile}
+          files={filteredDiffFiles}
+          comments={showOnlyBlockers ? blockerFilteredComments : review.comments}
+          selectedFile={activeSelectedFile}
           onSelectFile={setSelectedFile}
         />
       )}
@@ -160,12 +573,46 @@ export function ReviewView() {
                   {review.summary.total_comments} findings
                 </span>
                 <span className="flex items-center gap-1">
+                  <span className="text-text-primary">
+                    {review.summary.completeness.acknowledged_findings}/{review.summary.completeness.total_findings}
+                  </span>
+                  acknowledged
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="text-accent">{review.summary.open_comments}</span>
+                  open
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className={review.summary.open_blocking_comments > 0 ? 'text-sev-warning' : 'text-sev-suggestion'}>
+                    {review.summary.open_blocking_comments}
+                  </span>
+                  blocking
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className={review.summary.open_informational_comments > 0 ? 'text-accent' : 'text-text-muted'}>
+                    {review.summary.open_informational_comments}
+                  </span>
+                  informational
+                </span>
+                <span className="flex items-center gap-1">
                   <FileCode size={11} />
                   {review.summary.files_reviewed} files
                 </span>
                 <span className="font-code">{review.diff_source}</span>
                 <span className="font-code text-text-muted/50">{review.id.slice(0, 8)}</span>
               </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`text-[10px] px-2 py-0.5 rounded font-code ${readinessStyles[review.summary.merge_readiness]}`}>
+                {review.summary.merge_readiness === 'Ready'
+                  ? 'Merge Ready'
+                  : review.summary.merge_readiness === 'NeedsAttention'
+                    ? 'Needs Attention'
+                    : 'Needs Re-review'}
+              </span>
+              <span className="text-[10px] text-text-muted font-code">
+                {review.summary.completeness.fixed_findings} fixed · {review.summary.completeness.stale_findings} stale
+              </span>
             </div>
             {review.event && (
               <button
@@ -183,6 +630,82 @@ export function ReviewView() {
 
         {/* Wide event panel */}
         {showEvent && review.event && <EventPanel event={review.event} />}
+
+        {review.summary && (
+          <div className="px-3 py-2 border-b border-border bg-surface flex items-center gap-4 text-[11px]">
+            <span className={`font-code ${verificationStyles[review.summary.verification.state]}`}>
+              Verification: {review.summary.verification.state}
+            </span>
+            {review.summary.verification.judge_count > 0 && (
+              <span className="text-text-muted font-code">
+                judges {review.summary.verification.required_votes}/{review.summary.verification.judge_count}
+              </span>
+            )}
+            {review.summary.verification.warning_count > 0 && (
+              <span className="text-accent font-code">
+                {review.summary.verification.warning_count} warning{review.summary.verification.warning_count === 1 ? '' : 's'}
+              </span>
+            )}
+            {review.summary.readiness_reasons.length > 0 && (
+              <span className="text-text-muted truncate" title={review.summary.readiness_reasons.join(' | ')}>
+                {review.summary.readiness_reasons.join(' | ')}
+              </span>
+            )}
+          </div>
+        )}
+
+        {review.summary && (
+          <div className="px-3 py-3 border-b border-border bg-surface grid grid-cols-2 lg:grid-cols-4 gap-2">
+            <SummaryCard
+              label="Error Blockers"
+              value={openErrorCount}
+              hint="Open Error findings"
+              tone={openErrorCount > 0 ? 'error' : 'muted'}
+            />
+            <SummaryCard
+              label="Warning Blockers"
+              value={openWarningCount}
+              hint="Open Warning findings"
+              tone={openWarningCount > 0 ? 'warning' : 'muted'}
+            />
+            <SummaryCard
+              label="Blocking Open"
+              value={review.summary.open_blocking_comments}
+              hint="Error + Warning"
+              tone={review.summary.open_blocking_comments > 0 ? 'warning' : 'muted'}
+            />
+            <SummaryCard
+              label="Informational Open"
+              value={review.summary.open_informational_comments}
+              hint="Info + Suggestion"
+              tone={review.summary.open_informational_comments > 0 ? 'accent' : 'muted'}
+            />
+          </div>
+        )}
+
+        {shouldShowFeedbackCallout && (
+          <div className="px-3 py-3 border-b border-accent/20 bg-accent/5">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 w-7 h-7 rounded-full bg-accent/10 flex items-center justify-center shrink-0">
+                <MessageSquare size={14} className="text-accent" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-semibold text-accent tracking-[0.08em] font-code uppercase">
+                  Train the reviewer
+                </div>
+                <p className="mt-1 text-[12px] text-text-primary leading-relaxed">
+                  {labeledFeedbackCount === 0
+                    ? 'No thumbs recorded yet. Label findings below to train the reviewer.'
+                    : `You've labeled ${labeledFeedbackCount} of ${comments.length} findings. Add a few more thumbs so future reviews learn what to keep or suppress.`}
+                </p>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="text-[13px] font-semibold font-code text-accent">{feedbackCoveragePercent}%</div>
+                <div className="text-[10px] text-text-muted">coverage</div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Toolbar */}
         <div className="px-3 py-2 border-b border-border bg-surface flex items-center gap-2">
@@ -213,8 +736,11 @@ export function ReviewView() {
             <button
               key={sev}
               onClick={() => toggleSeverity(sev)}
+              disabled={showOnlyBlockers}
               className={`text-[11px] px-2 py-0.5 rounded transition-colors ${
-                severityFilter.has(sev)
+                showOnlyBlockers
+                  ? 'text-text-muted/40 cursor-not-allowed'
+                  : severityFilter.has(sev)
                   ? 'bg-surface-3 text-text-primary'
                   : 'text-text-muted/40 hover:text-text-muted'
               }`}
@@ -240,56 +766,179 @@ export function ReviewView() {
             <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
           </div>
 
+          {rules.length > 0 && (
+            <div className="relative">
+              <select
+                value={ruleFilter || ''}
+                onChange={e => setRuleFilter(e.target.value || null)}
+                className="max-w-[14rem] text-[11px] bg-surface-2 border border-border rounded px-2 py-1 text-text-secondary appearance-none pr-6 cursor-pointer"
+              >
+                <option value="">All rules</option>
+                {rules.map(ruleId => (
+                  <option key={ruleId} value={ruleId}>{ruleId}</option>
+                ))}
+              </select>
+              <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+            </div>
+          )}
+
+          <div className="relative">
+            <select
+              value={lifecycleFilter}
+              onChange={e => setLifecycleFilter(e.target.value as CommentLifecycleStatus | 'All')}
+              disabled={showOnlyBlockers}
+              className={`text-[11px] bg-surface-2 border border-border rounded px-2 py-1 text-text-secondary appearance-none pr-6 ${showOnlyBlockers ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+            >
+              <option value="All">All statuses</option>
+              <option value="Open">Open</option>
+              <option value="Resolved">Resolved</option>
+              <option value="Dismissed">Dismissed</option>
+            </select>
+            <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+          </div>
+
+          <button
+            onClick={() => setShowOnlyBlockers(value => !value)}
+            className={`text-[11px] px-2 py-1 rounded border transition-colors ${
+              showOnlyBlockers
+                ? 'bg-sev-warning/10 text-sev-warning border-sev-warning/20'
+                : 'bg-surface-2 text-text-muted border-border hover:text-text-primary'
+            }`}
+            title="Show only open Error and Warning findings"
+          >
+            Blockers only
+            <span className="ml-1 font-code">{blockerCount}</span>
+          </button>
+
+          {showOnlyBlockers && (
+            <span className="text-[10px] text-sev-warning font-code">Open Error + Warning</span>
+          )}
+
           <span className="ml-auto text-[11px] text-text-muted">
             {filteredComments.length}/{review.comments.length}
           </span>
+
+          {filteredComments.length > 0 && (
+            <span className="hidden xl:flex items-center gap-2 text-[10px] text-text-muted font-code">
+              <span>N/J next</span>
+              <span>A accept</span>
+              <span>R reject</span>
+              <span>E resolve</span>
+            </span>
+          )}
         </div>
 
         {/* Main content */}
         <div className="flex-1 overflow-auto p-4">
-          {viewMode === 'diff' && diffFiles.length > 0 ? (
+          {viewMode === 'diff' && visibleDiffFiles.length > 0 ? (
             <DiffViewer
               files={visibleDiffFiles}
               comments={filteredComments}
               onFeedback={handleFeedback}
+              onLifecycleChange={handleLifecycleChange}
+              activeCommentId={activeVisibleCommentId}
+              onActivateComment={setActiveCommentId}
             />
           ) : (
             /* List view / fallback when no diff content */
             <div className="space-y-4 max-w-3xl">
-              {[...groupedByFile.entries()].map(([file, fileComments]) => (
-                <div key={file}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <FileCode size={13} className="text-text-muted" />
-                    <span className="font-code text-[12px] text-text-muted">{file.split('/').slice(0, -1).join('/')}/</span>
-                    <span className="font-code text-[12px] text-text-primary font-medium">{file.split('/').pop()}</span>
+              {commentSections.map((section) => (
+                <section key={section.key} className="border border-border rounded-lg overflow-hidden bg-surface-1/60">
+                  <div className="px-4 py-3 border-b border-border bg-surface-2/70 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-[12px] font-semibold text-text-primary">{section.title}</h2>
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-code ${section.badgeClassName}`}>
+                          {section.files.reduce((total, file) => total + file.comments.length, 0)}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-text-muted">{section.description}</p>
+                    </div>
                   </div>
-                  <div className="space-y-2 ml-5">
-                    {fileComments
-                      .sort((a, b) => a.line_number - b.line_number)
-                      .map(comment => (
-                        <div key={comment.id}>
-                          <span className="text-[10px] text-text-muted font-code">L{comment.line_number}</span>
-                          <CommentCard
-                            comment={comment}
-                            onFeedback={action => handleFeedback(comment.id, action)}
-                          />
+
+                  <div className="p-4 space-y-4">
+                    {section.files.map(({ path, comments: fileComments }) => (
+                      <div key={`${section.key}-${path}`}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <FileCode size={13} className="text-text-muted" />
+                          <span className="font-code text-[12px] text-text-muted">{path.split('/').slice(0, -1).join('/')}/</span>
+                          <span className="font-code text-[12px] text-text-primary font-medium">{path.split('/').pop()}</span>
                         </div>
-                      ))}
+                        <div className="space-y-2 ml-5">
+                          {fileComments.map(comment => (
+                            <div key={comment.id}>
+                              <span className="text-[10px] text-text-muted font-code">L{comment.line_number}</span>
+                              <CommentCard
+                                comment={comment}
+                                onFeedback={action => handleFeedback(comment.id, action)}
+                                onLifecycleChange={status => handleLifecycleChange(comment.id, status)}
+                                isActive={activeVisibleCommentId === comment.id}
+                                onActivate={() => setActiveCommentId(comment.id)}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </div>
+                </section>
               ))}
 
               {filteredComments.length === 0 && (
-                <div className="text-center py-16 text-text-muted">
-                  {review.comments.length === 0
-                    ? 'No findings. Code looks good!'
-                    : 'No findings match the current filters.'}
+                <div className="text-center py-16 px-4">
+                  <p className="text-text-primary font-medium">
+                    {showOnlyBlockers
+                      ? blockerCount === 0
+                        ? 'No open blockers'
+                        : 'No blockers match filters'
+                      : review.comments.length === 0
+                        ? 'No findings'
+                        : 'No findings match filters'}
+                  </p>
+                  <p className="text-sm text-text-muted mt-1">
+                    {showOnlyBlockers && blockerCount === 0
+                      ? 'No open blockers remain in this review.'
+                      : showOnlyBlockers && blockerCount > 0
+                        ? 'Try changing severity or lifecycle filters.'
+                        : review.comments.length === 0
+                          ? 'Code looks good!'
+                          : 'Adjust filters above to see more.'}
+                  </p>
                 </div>
               )}
             </div>
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function SummaryCard(
+  {
+    label,
+    value,
+    hint,
+    tone,
+  }: {
+    label: string
+    value: number
+    hint: string
+    tone: 'error' | 'warning' | 'accent' | 'muted'
+  },
+) {
+  const toneStyles = {
+    error: 'border-sev-error/20 bg-sev-error/5 text-sev-error',
+    warning: 'border-sev-warning/20 bg-sev-warning/5 text-sev-warning',
+    accent: 'border-accent/20 bg-accent/5 text-accent',
+    muted: 'border-border bg-surface-1 text-text-muted',
+  }
+
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${toneStyles[tone]}`}>
+      <div className="text-[10px] font-code uppercase tracking-[0.08em]">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-text-primary">{value}</div>
+      <div className="text-[11px]">{hint}</div>
     </div>
   )
 }
