@@ -347,13 +347,27 @@ fn find_balanced_json(content: &str, open: char, close: char) -> Option<String> 
 fn repair_json_candidates(candidate: &str) -> Vec<String> {
     static TRAILING_COMMAS: Lazy<Regex> = Lazy::new(|| Regex::new(r",\s*([}\]])").unwrap());
 
-    let mut candidates = vec![candidate.trim().to_string()];
-    let without_trailing_commas = TRAILING_COMMAS
-        .replace_all(candidate.trim(), "$1")
-        .to_string();
-    if without_trailing_commas != candidate.trim() {
+    let trimmed = candidate.trim();
+    let mut candidates = vec![trimmed.to_string()];
+
+    let without_trailing_commas = TRAILING_COMMAS.replace_all(trimmed, "$1").to_string();
+    if without_trailing_commas != trimmed {
         candidates.push(without_trailing_commas);
     }
+
+    // When LLM echoes JSON with diff-style line prefixes (leading "+"), strip them (issue #28).
+    let without_diff_prefix: String = trimmed
+        .lines()
+        .map(|line| line.strip_prefix('+').map(str::trim).unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let without_diff_prefix = without_diff_prefix.trim();
+    if without_diff_prefix != trimmed
+        && (without_diff_prefix.starts_with('[') || without_diff_prefix.starts_with('{'))
+    {
+        candidates.push(without_diff_prefix.to_string());
+    }
+
     candidates
 }
 
@@ -1216,6 +1230,17 @@ let data = &input;
         let comments = parse_llm_response(input, &file_path).unwrap();
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].line_number, 5);
+    }
+
+    #[test]
+    fn parse_json_with_diff_prefix_artifact() {
+        // LLM sometimes echoes JSON in a code block with leading "+" on each line (diff artifact); repair strips (issue #28).
+        let input = "```json\n+[{\"line\": 7, \"issue\": \"Missing check\"}]\n+\n```";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 7);
+        assert!(comments[0].content.contains("Missing check"));
     }
 
     // ── Bug: find_json_array uses mismatched brackets ──────────────────

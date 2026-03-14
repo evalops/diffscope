@@ -20,6 +20,7 @@ cargo run -- --help       # CLI usage
 - `migrations/` — PostgreSQL migrations (sqlx)
 - `eval/` — Evaluation and benchmarking
 - `examples/` — Usage examples
+- `docs/` — Mutation testing, **ROADMAP.md** (enhancement backlog + gh CLI workflow)
 
 ## Development
 - Run `bash scripts/install-hooks.sh` once to install pre-commit and pre-push hooks (merge conflict check, trailing newline, conditional Rust/web checks, shellcheck; pre-push adds version sync, cargo audit, full web build+test). Mutation testing runs in CI only; see `docs/mutation-testing.md`.

@@ -1000,7 +1000,7 @@ The summary includes:
 
 ## Contributing
 
-Contributions are welcome! Please open an issue first to discuss what you would like to change.
+Contributions are welcome! Please open an issue first to discuss what you would like to change. Enhancement backlog and triage: see [docs/ROADMAP.md](docs/ROADMAP.md) and `gh issue list --label "priority: high"`.
 
 **PR workflow:** Open a PR → ensure CI is green (version, lint, security, test, mutation, review) → merge when ready. Use a short test plan in the PR description. Small, focused PRs are preferred.
 
