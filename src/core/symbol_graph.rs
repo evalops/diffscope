@@ -1,11 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use crate::core::symbol_index::SymbolLocation;
 use crate::core::ContextProvenance;
 
 /// Relationship between two symbols in the codebase.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SymbolRelation {
     /// This symbol calls the target.
     Calls,
@@ -61,7 +63,7 @@ impl SymbolRelation {
 }
 
 /// A reference to a related symbol with the relationship type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolEdge {
     pub target: String,
     pub relation: SymbolRelation,
@@ -70,7 +72,7 @@ pub struct SymbolEdge {
 }
 
 /// A node in the symbol graph representing a single symbol definition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolNode {
     pub name: String,
     pub file_path: PathBuf,
@@ -79,7 +81,7 @@ pub struct SymbolNode {
     pub edges: Vec<SymbolEdge>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SymbolKind {
     Function,
     Struct,
@@ -89,7 +91,7 @@ pub enum SymbolKind {
 }
 
 /// Graph-based symbol index that tracks relationships between symbols.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SymbolGraph {
     /// symbol_name -> list of nodes (same name can appear in multiple files)
     nodes: HashMap<String, Vec<SymbolNode>>,

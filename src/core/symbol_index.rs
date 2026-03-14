@@ -4,6 +4,7 @@ use git2::Repository;
 use ignore::WalkBuilder;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -15,12 +16,15 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use crate::core::symbol_graph::SymbolGraph;
 use crate::core::ContextProvenance;
 
+#[path = "symbol_index/persistence.rs"]
+mod persistence;
 #[path = "symbol_index/retrieval.rs"]
 mod retrieval;
 
+pub use persistence::{default_symbol_index_path, load_symbol_index, save_symbol_index};
 pub use retrieval::{SymbolContextRetriever, SymbolRetrievalPolicy};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SymbolLocation {
     pub file_path: PathBuf,
     pub line_range: (usize, usize),
@@ -28,7 +32,7 @@ pub struct SymbolLocation {
     pub provenance: Option<ContextProvenance>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct SymbolIndexMetadata {
     provider: String,
     repo_revision: Option<String>,
@@ -160,7 +164,7 @@ impl SymbolIndexFreshnessSnapshot {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SymbolIndex {
     symbols: HashMap<String, Vec<SymbolLocation>>,
     dependency_graph: HashMap<PathBuf, HashSet<PathBuf>>,
@@ -171,7 +175,7 @@ pub struct SymbolIndex {
     metadata: SymbolIndexMetadata,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct FileSummary {
     snippet: String,
     line_count: usize,
@@ -553,6 +557,14 @@ impl SymbolIndex {
 
     pub fn graph_trace_details(&self, repo_root: &Path) -> Vec<String> {
         self.freshness_snapshot(repo_root).trace_details()
+    }
+
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    pub fn from_json(content: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(content)
     }
 
     fn register_file_summary(&mut self, relative: &Path, lines: &[&str]) {

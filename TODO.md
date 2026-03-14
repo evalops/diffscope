@@ -61,7 +61,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 
 ## 4. Code Graph and Repository Intelligence
 
-31. [ ] Turn the current symbol graph into a persisted repository graph with durable storage and reload support.
+31. [x] Turn the current symbol graph into a persisted repository graph with durable storage and reload support.
 32. [x] Add caller/callee expansion APIs for multi-hop impact analysis from changed symbols.
 33. [x] Add contract edges between interfaces, implementations, and API endpoints.
 34. [x] Add "similar implementation" lookup so repeated patterns and divergences are explicit.
