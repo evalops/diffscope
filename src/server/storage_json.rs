@@ -390,16 +390,28 @@ impl StorageBackend for JsonStorageBackend {
     }
 
     async fn prune(&self, max_age_secs: i64, max_count: usize) -> anyhow::Result<usize> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        self.prune_at(max_age_secs, max_count, now).await
+    }
+}
+
+impl JsonStorageBackend {
+    /// Prune with a fixed "now" timestamp. Used by the trait implementation and by tests to avoid race conditions.
+    pub(crate) async fn prune_at(
+        &self,
+        max_age_secs: i64,
+        max_count: usize,
+        now_secs: i64,
+    ) -> anyhow::Result<usize> {
         let removed = {
             let mut reviews = self.reviews.write().await;
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
 
             let expired: Vec<String> = reviews
                 .iter()
-                .filter(|(_, r)| now - r.started_at > max_age_secs)
+                .filter(|(_, r)| now_secs - r.started_at > max_age_secs)
                 .map(|(id, _)| id.clone())
                 .collect();
             let mut removed = expired.len();
@@ -1467,6 +1479,7 @@ mod tests {
     }
 
     /// Prune age boundary: review with started_at exactly (now - max_age_secs) must NOT be expired (> not >=).
+    /// Uses prune_at with a single timestamp to avoid race (Sentry feedback).
     #[tokio::test]
     async fn test_prune_age_boundary_not_expired() {
         let dir = tempfile::tempdir().unwrap();
@@ -1477,7 +1490,7 @@ mod tests {
         let session = make_session("boundary", now - max_age, ReviewStatus::Complete);
         backend.save_review(&session).await.unwrap();
 
-        let removed = backend.prune(max_age, 1000).await.unwrap();
+        let removed = backend.prune_at(max_age, 1000, now).await.unwrap();
         assert_eq!(
             removed, 0,
             "exactly at boundary (now - max_age) should not be pruned"
