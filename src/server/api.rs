@@ -10,15 +10,15 @@ use uuid::Uuid;
 
 use super::pr_readiness::{
     apply_dynamic_review_state, build_pr_readiness_snapshot, build_repo_blocker_rollups,
-    get_pr_readiness_snapshot, latest_review_head_by_source, load_review_inventory,
-    PrReadinessSnapshot,
+    get_pr_readiness_snapshot, latest_pr_review_session, latest_review_head_by_source,
+    load_review_inventory, pr_diff_source, PrReadinessSnapshot,
 };
 use super::state::{
     build_progress_callback, count_diff_files, count_reviewed_files, current_timestamp,
     emit_wide_event, AppState, FileMetricEvent, HotspotDetail, ReviewEventBuilder, ReviewListItem,
     ReviewSession, ReviewStatus, MAX_DIFF_SIZE,
 };
-use crate::core::comment::{CommentSynthesizer, MergeReadiness};
+use crate::core::comment::{CommentStatus, CommentSynthesizer, MergeReadiness};
 use crate::core::convention_learner::ConventionStore;
 use tracing::{info, warn};
 
@@ -1837,6 +1837,79 @@ pub struct PrReadinessParams {
     pub pr_number: u32,
 }
 
+#[derive(Deserialize)]
+pub struct PrCommentSearchParams {
+    pub repo: String,
+    pub pr_number: u32,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommentSearchFilter {
+    All,
+    Unresolved,
+    Resolved,
+    Dismissed,
+}
+
+impl CommentSearchFilter {
+    fn from_api_value(value: Option<&str>) -> Option<Self> {
+        match value.map(|value| value.trim().to_ascii_lowercase()) {
+            None => Some(Self::All),
+            Some(value) if value.is_empty() || value == "all" => Some(Self::All),
+            Some(value) if value == "open" || value == "unresolved" => Some(Self::Unresolved),
+            Some(value) if value == "resolved" => Some(Self::Resolved),
+            Some(value) if value == "dismissed" => Some(Self::Dismissed),
+            _ => None,
+        }
+    }
+
+    fn as_api_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Unresolved => "unresolved",
+            Self::Resolved => "resolved",
+            Self::Dismissed => "dismissed",
+        }
+    }
+
+    fn matches(self, status: CommentStatus) -> bool {
+        match self {
+            Self::All => true,
+            Self::Unresolved => status == CommentStatus::Open,
+            Self::Resolved => status == CommentStatus::Resolved,
+            Self::Dismissed => status == CommentStatus::Dismissed,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct PrCommentSearchResponse {
+    pub repo: String,
+    pub pr_number: u32,
+    pub diff_source: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_review_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_review_status: Option<ReviewStatus>,
+    #[serde(default)]
+    pub total_comments: usize,
+    #[serde(default)]
+    pub comments: Vec<crate::core::Comment>,
+}
+
+fn filter_comments_by_search_filter(
+    comments: &[crate::core::Comment],
+    filter: CommentSearchFilter,
+) -> Vec<crate::core::Comment> {
+    comments
+        .iter()
+        .filter(|comment| filter.matches(comment.status))
+        .cloned()
+        .collect()
+}
+
 #[derive(Serialize)]
 pub struct GhPullRequest {
     pub number: u32,
@@ -2079,6 +2152,49 @@ pub async fn get_gh_pr_readiness(
         )
         .await,
     ))
+}
+
+pub async fn get_gh_pr_comments(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PrCommentSearchParams>,
+) -> Result<Json<PrCommentSearchResponse>, (StatusCode, String)> {
+    if !is_valid_repo_name(&params.repo) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid repo format. Expected 'owner/repo'.".to_string(),
+        ));
+    }
+
+    if params.pr_number == 0 || params.pr_number > 999_999_999 {
+        return Err((StatusCode::BAD_REQUEST, "Invalid PR number.".to_string()));
+    }
+
+    let filter =
+        CommentSearchFilter::from_api_value(params.status.as_deref()).ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Invalid status. Must be all, unresolved, open, resolved, or dismissed."
+                    .to_string(),
+            )
+        })?;
+
+    let inventory = load_review_inventory(&state).await;
+    let latest_review = latest_pr_review_session(&inventory, &params.repo, params.pr_number);
+    let comments = latest_review
+        .as_ref()
+        .map(|review| filter_comments_by_search_filter(&review.comments, filter))
+        .unwrap_or_default();
+
+    Ok(Json(PrCommentSearchResponse {
+        repo: params.repo.clone(),
+        pr_number: params.pr_number,
+        diff_source: pr_diff_source(&params.repo, params.pr_number),
+        status: filter.as_api_str().to_string(),
+        latest_review_id: latest_review.as_ref().map(|review| review.id.clone()),
+        latest_review_status: latest_review.as_ref().map(|review| review.status.clone()),
+        total_comments: comments.len(),
+        comments,
+    }))
 }
 
 // === GitHub PR Review ===
@@ -3210,5 +3326,87 @@ mod tests {
         assert_eq!(req.repo, "owner/repo");
         assert_eq!(req.pr_number, 42);
         assert!(req.post_results);
+    }
+
+    fn make_search_comment(id: &str, status: CommentStatus) -> crate::core::Comment {
+        crate::core::Comment {
+            id: id.to_string(),
+            file_path: std::path::PathBuf::from("src/lib.rs"),
+            line_number: 10,
+            content: format!("comment {id}"),
+            rule_id: None,
+            severity: crate::core::comment::Severity::Warning,
+            category: crate::core::comment::Category::Bug,
+            suggestion: None,
+            confidence: 0.8,
+            code_suggestion: None,
+            tags: Vec::new(),
+            fix_effort: crate::core::comment::FixEffort::Low,
+            feedback: None,
+            status,
+        }
+    }
+
+    #[test]
+    fn test_comment_search_filter_parses_aliases() {
+        assert_eq!(
+            CommentSearchFilter::from_api_value(None),
+            Some(CommentSearchFilter::All)
+        );
+        assert_eq!(
+            CommentSearchFilter::from_api_value(Some("open")),
+            Some(CommentSearchFilter::Unresolved)
+        );
+        assert_eq!(
+            CommentSearchFilter::from_api_value(Some("unresolved")),
+            Some(CommentSearchFilter::Unresolved)
+        );
+        assert_eq!(
+            CommentSearchFilter::from_api_value(Some("resolved")),
+            Some(CommentSearchFilter::Resolved)
+        );
+        assert_eq!(
+            CommentSearchFilter::from_api_value(Some("dismissed")),
+            Some(CommentSearchFilter::Dismissed)
+        );
+        assert_eq!(CommentSearchFilter::from_api_value(Some("wat")), None);
+    }
+
+    #[test]
+    fn test_filter_comments_by_search_filter_matches_status() {
+        let comments = vec![
+            make_search_comment("open", CommentStatus::Open),
+            make_search_comment("resolved", CommentStatus::Resolved),
+            make_search_comment("dismissed", CommentStatus::Dismissed),
+        ];
+
+        assert_eq!(
+            filter_comments_by_search_filter(&comments, CommentSearchFilter::All)
+                .into_iter()
+                .map(|comment| comment.id)
+                .collect::<Vec<_>>(),
+            vec!["open", "resolved", "dismissed"]
+        );
+        assert_eq!(
+            filter_comments_by_search_filter(&comments, CommentSearchFilter::Unresolved)
+                .into_iter()
+                .map(|comment| comment.id)
+                .collect::<Vec<_>>(),
+            vec!["open"]
+        );
+        assert_eq!(
+            filter_comments_by_search_filter(&comments, CommentSearchFilter::Resolved)
+                .into_iter()
+                .map(|comment| comment.id)
+                .collect::<Vec<_>>(),
+            vec!["resolved"]
+        );
+        assert_eq!(
+            filter_comments_by_search_filter(&comments, CommentSearchFilter::Dismissed)
+                .into_iter()
+                .map(|comment| comment.id)
+                .collect::<Vec<_>>(),
+            vec!["dismissed"]
+        );
     }
 }

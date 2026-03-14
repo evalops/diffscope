@@ -113,7 +113,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 
 ## 8. APIs, Automation, and MCP-Like Surfaces
 
-71. [ ] Expose unresolved/resolved comment search through the HTTP API.
+71. [x] Expose unresolved/resolved comment search through the HTTP API.
 72. [x] Expose PR readiness through the HTTP API for CI and agent integrations.
 73. [ ] Add API endpoints to fetch learned rules, attention gaps, and top rejected patterns.
 74. [ ] Add machine-friendly APIs to fetch findings grouped by severity, file, and lifecycle state.
@@ -167,4 +167,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Add visible feedback badges on comments so accepted and rejected states are not icon-only.
 - [x] Add a train-the-reviewer callout on review detail when thumbs coverage is low.
 - [x] Add structured custom context and per-path instruction editors to the Settings review context workflow.
+- [x] Expose latest-review PR comment search with unresolved, resolved, and dismissed lifecycle filters through the API.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.

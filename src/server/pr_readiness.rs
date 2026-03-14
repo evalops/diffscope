@@ -162,6 +162,20 @@ fn latest_summarized_reviews_by_source(
     latest
 }
 
+pub(crate) fn latest_pr_review_session(
+    reviews: &[ReviewSession],
+    repo: &str,
+    pr_number: u32,
+) -> Option<ReviewSession> {
+    let diff_source = pr_diff_source(repo, pr_number);
+
+    reviews
+        .iter()
+        .filter(|session| session.diff_source == diff_source && session.summary.is_some())
+        .max_by_key(|session| (session.started_at, session.completed_at.unwrap_or_default()))
+        .cloned()
+}
+
 pub(crate) fn build_repo_blocker_rollups(
     reviews: &[ReviewSession],
 ) -> HashMap<String, RepoBlockerRollup> {
@@ -193,11 +207,7 @@ pub(crate) fn build_pr_readiness_snapshot(
 ) -> PrReadinessSnapshot {
     let diff_source = pr_diff_source(repo, pr_number);
     let latest_by_source = latest_review_head_by_source(reviews);
-    let latest_review = reviews
-        .iter()
-        .filter(|session| session.diff_source == diff_source && session.summary.is_some())
-        .max_by_key(|session| (session.started_at, session.completed_at.unwrap_or_default()))
-        .cloned()
+    let latest_review = latest_pr_review_session(reviews, repo, pr_number)
         .map(|session| apply_dynamic_review_state(session, &latest_by_source, current_head_sha))
         .map(|session| PrReadinessReview::from_session(&session));
 
@@ -360,6 +370,40 @@ mod tests {
             latest_review.summary.expect("summary").merge_readiness,
             crate::core::comment::MergeReadiness::NeedsReReview
         );
+    }
+
+    #[test]
+    fn latest_pr_review_session_ignores_newer_failed_reviews() {
+        let older_complete = make_pr_review_session(
+            "r1",
+            10,
+            "sha-a",
+            vec![make_comment("c1", Severity::Warning, CommentStatus::Open)],
+        );
+        let newer_failed = ReviewSession {
+            id: "r2".to_string(),
+            status: ReviewStatus::Failed,
+            diff_source: "pr:owner/repo#42".to_string(),
+            github_head_sha: Some("sha-b".to_string()),
+            started_at: 20,
+            completed_at: Some(21),
+            summary: None,
+            files_reviewed: 0,
+            comments: Vec::new(),
+            error: Some("boom".to_string()),
+            pr_summary_text: None,
+            diff_content: None,
+            event: None,
+            progress: None,
+        };
+
+        let latest_review =
+            latest_pr_review_session(&[older_complete, newer_failed], "owner/repo", 42)
+                .expect("latest completed review");
+
+        assert_eq!(latest_review.id, "r1");
+        assert_eq!(latest_review.status, ReviewStatus::Complete);
+        assert_eq!(latest_review.comments.len(), 1);
     }
 
     #[test]
