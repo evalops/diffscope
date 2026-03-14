@@ -25,6 +25,16 @@ pub(in super::super::super) fn evaluate_eval_thresholds(
         &current_by_rule,
         options,
     );
+    if let Some(threshold) = options.min_verification_health {
+        if let Some(health) = current.verification_health.as_ref() {
+            if health.total_checks > 0 && health.verified_pct < threshold {
+                failures.push(format!(
+                    "verification health {:.3} fell below minimum {:.3} ({}/{})",
+                    health.verified_pct, threshold, health.verified_checks, health.total_checks
+                ));
+            }
+        }
+    }
     failures.extend(check_drop_thresholds(
         current,
         current_micro_f1,
@@ -79,6 +89,7 @@ mod tests {
             max_language_f1_drop: None,
             min_micro_f1: None,
             min_macro_f1: None,
+            min_verification_health: None,
             min_rule_f1: vec![],
             max_rule_f1_drop: vec![],
         };
@@ -160,6 +171,7 @@ mod tests {
             max_language_f1_drop: None,
             min_micro_f1: None,
             min_macro_f1: None,
+            min_verification_health: None,
             min_rule_f1: vec![],
             max_rule_f1_drop: vec![EvalRuleThreshold {
                 rule_id: "sec.sql.injection".to_string(),
@@ -220,6 +232,7 @@ mod tests {
             max_language_f1_drop: None,
             min_micro_f1: None,
             min_macro_f1: None,
+            min_verification_health: None,
             min_rule_f1: vec![],
             max_rule_f1_drop: vec![],
         };
@@ -229,5 +242,52 @@ mod tests {
         assert_eq!(failures.len(), 1);
         assert!(failures[0].contains("category 'security'"));
         assert!(failures[0].contains("exceeded max 0.100"));
+    }
+
+    #[test]
+    fn test_evaluate_eval_thresholds_checks_verification_health() {
+        let current = EvalReport {
+            run: Default::default(),
+            fixtures_total: 1,
+            fixtures_passed: 1,
+            fixtures_failed: 0,
+            rule_metrics: vec![],
+            rule_summary: Some(EvalRuleScoreSummary::default()),
+            benchmark_summary: None,
+            suite_results: vec![],
+            benchmark_by_category: Default::default(),
+            benchmark_by_language: Default::default(),
+            benchmark_by_difficulty: Default::default(),
+            suite_comparisons: vec![],
+            category_comparisons: vec![],
+            language_comparisons: vec![],
+            verification_health: Some(crate::commands::eval::EvalVerificationHealth {
+                verified_checks: 7,
+                total_checks: 10,
+                verified_pct: 0.7,
+                ..Default::default()
+            }),
+            warnings: vec![],
+            threshold_failures: vec![],
+            results: vec![],
+        };
+        let options = EvalThresholdOptions {
+            max_micro_f1_drop: None,
+            max_suite_f1_drop: None,
+            max_category_f1_drop: None,
+            max_language_f1_drop: None,
+            min_micro_f1: None,
+            min_macro_f1: None,
+            min_verification_health: Some(0.8),
+            min_rule_f1: vec![],
+            max_rule_f1_drop: vec![],
+        };
+
+        let failures = evaluate_eval_thresholds(&current, None, &options);
+
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("verification health 0.700"));
+        assert!(failures[0].contains("minimum 0.800"));
+        assert!(failures[0].contains("7/10"));
     }
 }

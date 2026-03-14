@@ -74,6 +74,7 @@ jobs:
             --baseline /tmp/eval-baseline.json \
             --max-micro-f1-drop 0.20 \
             --min-micro-f1 0.20 \
+            --min-verification-health 0.80 \
             --min-rule-f1 sec.shell.injection=0.10 \
             --min-rule-f1 reliability.unwrap_panic=0.10 \
             --max-rule-f1-drop sec.shell.injection=0.25 \

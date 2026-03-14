@@ -32,6 +32,7 @@ pub(super) fn prepare_eval_options(options: &EvalRunOptions) -> Result<PreparedE
             max_language_f1_drop: options.max_language_f1_drop,
             min_micro_f1: options.min_micro_f1,
             min_macro_f1: options.min_macro_f1,
+            min_verification_health: options.min_verification_health,
             min_rule_f1: min_rule_thresholds,
             max_rule_f1_drop: max_rule_drop_thresholds,
         },

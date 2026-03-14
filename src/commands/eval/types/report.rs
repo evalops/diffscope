@@ -89,6 +89,12 @@ pub struct EvalNamedMetricComparison {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EvalVerificationHealth {
     #[serde(default)]
+    pub verified_checks: usize,
+    #[serde(default)]
+    pub total_checks: usize,
+    #[serde(default)]
+    pub verified_pct: f32,
+    #[serde(default)]
     pub warnings_total: usize,
     #[serde(default)]
     pub fixtures_with_warnings: usize,

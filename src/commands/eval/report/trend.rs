@@ -71,6 +71,9 @@ fn trend_entry_for_report(report: &EvalReport) -> Option<TrendEntry> {
             .map(|health| health.parse_failure_count),
         verification_request_failure_count: verification_health
             .map(|health| health.request_failure_count),
+        verification_verified_checks: verification_health.map(|health| health.verified_checks),
+        verification_total_checks: verification_health.map(|health| health.total_checks),
+        verification_verified_pct: verification_health.map(|health| health.verified_pct),
     })
 }
 
@@ -170,6 +173,9 @@ mod tests {
             category_comparisons: vec![],
             language_comparisons: vec![],
             verification_health: Some(EvalVerificationHealth {
+                verified_checks: 8,
+                total_checks: 10,
+                verified_pct: 0.8,
                 warnings_total: 2,
                 fixtures_with_warnings: 1,
                 fail_open_warning_count: 2,
@@ -232,6 +238,24 @@ mod tests {
                 .verification_parse_failure_count
                 .unwrap_or_default(),
             1
+        );
+        assert_eq!(
+            trend.entries[0]
+                .verification_verified_checks
+                .unwrap_or_default(),
+            8
+        );
+        assert_eq!(
+            trend.entries[0]
+                .verification_total_checks
+                .unwrap_or_default(),
+            10
+        );
+        assert_eq!(
+            trend.entries[0]
+                .verification_verified_pct
+                .unwrap_or_default(),
+            0.8
         );
     }
 }

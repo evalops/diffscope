@@ -295,7 +295,10 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
 
     if let Some(verification_health) = report.verification_health.as_ref() {
         println!(
-            "Verification health: warnings={} fixtures={} fail-open={} parse-failures={} request-failures={}",
+            "Verification health: {:.0}% ({}/{}) warnings={} fixtures={} fail-open={} parse-failures={} request-failures={}",
+            verification_health.verified_pct * 100.0,
+            verification_health.verified_checks,
+            verification_health.total_checks,
             verification_health.warnings_total,
             verification_health.fixtures_with_warnings,
             verification_health.fail_open_warning_count,

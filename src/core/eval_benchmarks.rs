@@ -454,6 +454,12 @@ pub struct TrendEntry {
     pub verification_parse_failure_count: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_request_failure_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_verified_checks: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_total_checks: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_verified_pct: Option<f32>,
 }
 
 impl QualityTrend {

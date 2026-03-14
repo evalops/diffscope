@@ -332,6 +332,12 @@ enum Commands {
 
         #[arg(
             long,
+            help = "Minimum required verification health for current run (verified comment checks / total checks, 0.0-1.0)"
+        )]
+        min_verification_health: Option<f32>,
+
+        #[arg(
+            long,
             value_delimiter = ',',
             help = "Per-rule minimum F1 thresholds as rule_id=value (repeatable)"
         )]
@@ -713,6 +719,7 @@ async fn main() -> Result<()> {
             max_language_f1_drop,
             min_micro_f1,
             min_macro_f1,
+            min_verification_health,
             min_rule_f1,
             max_rule_f1_drop,
             matrix_model,
@@ -737,6 +744,7 @@ async fn main() -> Result<()> {
                 max_language_f1_drop,
                 min_micro_f1,
                 min_macro_f1,
+                min_verification_health,
                 min_rule_f1,
                 max_rule_f1_drop,
                 matrix_models: matrix_model,
