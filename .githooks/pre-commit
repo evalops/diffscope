@@ -4,6 +4,24 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
+staged="$(git diff --cached --name-only)"
+
+# Reject merge conflict markers in staged files
+conflicts_file=""
+if [ -n "$staged" ]; then
+    conflicts_file="$(mktemp)"
+    echo "$staged" | while IFS= read -r f; do
+        [ -f "$f" ] && grep -q -E '^<<<<<<< |^=======$|^>>>>>>> ' "$f" 2>/dev/null && echo "$f" >> "$conflicts_file" || true
+    done
+    if [ -s "$conflicts_file" ]; then
+        echo "ERROR: Staged files contain merge conflict markers (<<<<<<<, =======, >>>>>>>):"
+        cat "$conflicts_file"
+        rm -f "$conflicts_file"
+        exit 1
+    fi
+    rm -f "$conflicts_file"
+fi
+
 echo "==> Validating GitHub workflows..."
 bash "./scripts/check-workflows.sh"
 
@@ -12,6 +30,21 @@ cargo fmt --check
 
 echo "==> Running cargo clippy --all-targets..."
 cargo clippy --all-targets -- -D warnings
+
+if echo "$staged" | grep -q '^web/'; then
+    echo "==> Web files changed: running npm lint and tsc in web/..."
+    (cd web && npm run lint)
+    (cd web && npx tsc -b --noEmit)
+fi
+
+if command -v shellcheck >/dev/null 2>&1; then
+    if echo "$staged" | grep -qE '^scripts/|^\.githooks/'; then
+        echo "==> Shell scripts changed: running shellcheck..."
+        echo "$staged" | while IFS= read -r f; do
+            case "$f" in scripts/*.sh|.githooks/pre-commit|.githooks/pre-push) [ -f "$f" ] && shellcheck -s bash "$f" ;; esac
+        done
+    fi
+fi
 
 if [ "${SKIP_TESTS:-0}" = "1" ]; then
     echo "==> Skipping cargo test (SKIP_TESTS=1). Pre-push still enforces the full Rust gate."
