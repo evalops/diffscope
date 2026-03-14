@@ -1,4 +1,6 @@
 use anyhow::Result;
+use chrono::{TimeZone, Utc};
+use git2::Repository;
 use ignore::WalkBuilder;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -26,6 +28,138 @@ pub struct SymbolLocation {
     pub provenance: Option<ContextProvenance>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct SymbolIndexMetadata {
+    provider: String,
+    repo_revision: Option<String>,
+    indexed_at_unix_secs: i64,
+    max_files: usize,
+    file_limit_hit: bool,
+    graph_nodes: usize,
+    graph_edges: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SymbolIndexFreshnessStatus {
+    Fresh,
+    Stale,
+}
+
+impl SymbolIndexFreshnessStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Fresh => "fresh",
+            Self::Stale => "stale",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SymbolIndexFreshnessSnapshot {
+    status: SymbolIndexFreshnessStatus,
+    version: String,
+    provider: String,
+    build_revision: Option<String>,
+    current_revision: Option<String>,
+    indexed_at_unix_secs: i64,
+    files_indexed: usize,
+    symbols_indexed: usize,
+    graph_nodes: usize,
+    graph_edges: usize,
+    max_files: usize,
+    partial_coverage: bool,
+}
+
+impl SymbolIndexFreshnessSnapshot {
+    fn summary(&self) -> String {
+        let mut lines = vec![
+            "Repository graph metadata:".to_string(),
+            format!("- freshness: {}", self.status.as_str()),
+            format!("- version: {}", self.version),
+            format!("- provider: {}", self.provider),
+            format!(
+                "- indexed at: {}",
+                format_graph_timestamp(self.indexed_at_unix_secs)
+            ),
+            format!("- indexed files: {}", self.files_indexed),
+            format!("- indexed symbols: {}", self.symbols_indexed),
+            format!(
+                "- graph size: {} nodes / {} edges",
+                self.graph_nodes, self.graph_edges
+            ),
+        ];
+
+        if let Some(build_revision) = self.build_revision.as_deref() {
+            lines.push(format!(
+                "- build revision: {}",
+                short_revision(build_revision)
+            ));
+        }
+
+        if self.partial_coverage {
+            lines.push(format!(
+                "- coverage: partial (hit symbol_index_max_files={}, so graph context may omit some files)",
+                self.max_files
+            ));
+        } else {
+            lines.push("- coverage: within configured file limits".to_string());
+        }
+
+        match self.status {
+            SymbolIndexFreshnessStatus::Fresh => {
+                lines.push("- note: graph was built for the current repository revision.".to_string())
+            }
+            SymbolIndexFreshnessStatus::Stale => lines.push(format!(
+                "- warning: repository revision changed after indexing ({} -> {}), so graph context may be stale.",
+                self.build_revision
+                    .as_deref()
+                    .map(short_revision)
+                    .unwrap_or("unknown"),
+                self.current_revision
+                    .as_deref()
+                    .map(short_revision)
+                    .unwrap_or("unknown")
+            )),
+        }
+
+        lines.join("\n")
+    }
+
+    fn trace_details(&self) -> Vec<String> {
+        let mut details = vec![
+            format!("graph_freshness={}", self.status.as_str()),
+            format!("graph_version={}", self.version),
+        ];
+
+        if self.partial_coverage {
+            details.push(format!(
+                "graph_coverage=partial(indexed_files={},limit={})",
+                self.files_indexed, self.max_files
+            ));
+        } else {
+            details.push(format!(
+                "graph_coverage=within_limits(indexed_files={})",
+                self.files_indexed
+            ));
+        }
+
+        if let Some(build_revision) = self.build_revision.as_deref() {
+            details.push(format!(
+                "graph_build_revision={}",
+                short_revision(build_revision)
+            ));
+        }
+        if let Some(current_revision) = self.current_revision.as_deref() {
+            details.push(format!(
+                "graph_current_revision={}",
+                short_revision(current_revision)
+            ));
+        }
+
+        details
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct SymbolIndex {
     symbols: HashMap<String, Vec<SymbolLocation>>,
@@ -34,6 +168,7 @@ pub struct SymbolIndex {
     file_summaries: HashMap<PathBuf, FileSummary>,
     symbol_graph: Option<SymbolGraph>,
     files_indexed: usize,
+    metadata: SymbolIndexMetadata,
 }
 
 #[derive(Debug, Clone)]
@@ -164,7 +299,7 @@ impl SymbolIndex {
     where
         F: Fn(&PathBuf) -> bool,
     {
-        let mut index = SymbolIndex::default();
+        let mut index = SymbolIndex::with_metadata(repo_root, max_files, "regex".to_string());
         if max_files == 0 {
             return Ok(index);
         }
@@ -180,6 +315,7 @@ impl SymbolIndex {
             .build();
 
         let mut files_seen = 0usize;
+        let mut file_limit_hit = false;
 
         for entry in walker.flatten() {
             let path = entry.path();
@@ -187,6 +323,7 @@ impl SymbolIndex {
                 continue;
             }
             if files_seen >= max_files {
+                file_limit_hit = true;
                 break;
             }
 
@@ -238,6 +375,8 @@ impl SymbolIndex {
         }
 
         index.build_graph_from_sources(&graph_sources);
+        index.metadata.file_limit_hit = file_limit_hit || index.files_indexed >= max_files;
+        index.finalize_metadata();
 
         Ok(index)
     }
@@ -254,7 +393,10 @@ impl SymbolIndex {
     where
         F: Fn(&PathBuf) -> bool,
     {
-        let mut index = SymbolIndex::default();
+        let provider = command_program(lsp_command)
+            .map(|program| format!("lsp:{program}"))
+            .unwrap_or_else(|| format!("lsp:{lsp_command}"));
+        let mut index = SymbolIndex::with_metadata(repo_root, max_files, provider);
         if max_files == 0 {
             return Ok(index);
         }
@@ -296,6 +438,8 @@ impl SymbolIndex {
             }
         }
 
+        index.metadata.file_limit_hit = lsp_files.len() + other_files.len() >= max_files;
+
         let mut files_seen = 0usize;
         let mut fallback_lsp = false;
 
@@ -327,6 +471,7 @@ impl SymbolIndex {
                             ) {
                                 if file_added {
                                     files_seen += 1;
+                                    index.files_indexed += 1;
                                 }
                             }
                         }
@@ -380,10 +525,12 @@ impl SymbolIndex {
                 add_symbols_from_lines(&mut index, &relative, &lines, patterns, max_locations);
             if file_added {
                 files_seen += 1;
+                index.files_indexed += 1;
             }
         }
 
         index.build_graph_from_sources(&graph_sources);
+        index.finalize_metadata();
 
         Ok(index)
     }
@@ -398,6 +545,14 @@ impl SymbolIndex {
 
     pub fn symbols_indexed(&self) -> usize {
         self.symbols.len()
+    }
+
+    pub fn graph_metadata_summary(&self, repo_root: &Path) -> String {
+        self.freshness_snapshot(repo_root).summary()
+    }
+
+    pub fn graph_trace_details(&self, repo_root: &Path) -> Vec<String> {
+        self.freshness_snapshot(repo_root).trace_details()
     }
 
     fn register_file_summary(&mut self, relative: &Path, lines: &[&str]) {
@@ -456,6 +611,79 @@ impl SymbolIndex {
             self.symbol_graph = None;
         } else {
             self.symbol_graph = Some(graph);
+        }
+    }
+
+    fn with_metadata(repo_root: &Path, max_files: usize, provider: String) -> Self {
+        Self {
+            metadata: SymbolIndexMetadata {
+                provider,
+                repo_revision: resolve_repo_revision(repo_root),
+                indexed_at_unix_secs: Utc::now().timestamp(),
+                max_files,
+                ..SymbolIndexMetadata::default()
+            },
+            ..Self::default()
+        }
+    }
+
+    fn finalize_metadata(&mut self) {
+        self.metadata.graph_nodes = self
+            .symbol_graph
+            .as_ref()
+            .map(SymbolGraph::node_count)
+            .unwrap_or(0);
+        self.metadata.graph_edges = self
+            .symbol_graph
+            .as_ref()
+            .map(SymbolGraph::edge_count)
+            .unwrap_or(0);
+    }
+
+    fn freshness_snapshot(&self, repo_root: &Path) -> SymbolIndexFreshnessSnapshot {
+        let current_revision = resolve_repo_revision(repo_root);
+        let status = match (
+            self.metadata.repo_revision.as_deref(),
+            current_revision.as_deref(),
+        ) {
+            (Some(build_revision), Some(current_revision))
+                if build_revision != current_revision =>
+            {
+                SymbolIndexFreshnessStatus::Stale
+            }
+            _ => SymbolIndexFreshnessStatus::Fresh,
+        };
+
+        SymbolIndexFreshnessSnapshot {
+            status,
+            version: format!(
+                "{}@{}-t{}-f{}-s{}-n{}-e{}",
+                provider_tag(&self.metadata.provider),
+                self.metadata
+                    .repo_revision
+                    .as_deref()
+                    .map(short_revision)
+                    .unwrap_or("unversioned"),
+                self.metadata.indexed_at_unix_secs,
+                self.files_indexed(),
+                self.symbols_indexed(),
+                self.metadata.graph_nodes,
+                self.metadata.graph_edges,
+            ),
+            provider: if self.metadata.provider.is_empty() {
+                "unknown".to_string()
+            } else {
+                self.metadata.provider.clone()
+            },
+            build_revision: self.metadata.repo_revision.clone(),
+            current_revision,
+            indexed_at_unix_secs: self.metadata.indexed_at_unix_secs,
+            files_indexed: self.files_indexed(),
+            symbols_indexed: self.symbols_indexed(),
+            graph_nodes: self.metadata.graph_nodes,
+            graph_edges: self.metadata.graph_edges,
+            max_files: self.metadata.max_files,
+            partial_coverage: self.metadata.file_limit_hit,
         }
     }
 }
@@ -825,6 +1053,43 @@ fn candidate_paths(path: &Path) -> Vec<PathBuf> {
     candidates
 }
 
+fn resolve_repo_revision(repo_root: &Path) -> Option<String> {
+    let repo = Repository::discover(repo_root).ok()?;
+    let head = repo.head().ok()?;
+    let target = head.target()?;
+    Some(target.to_string())
+}
+
+fn short_revision(revision: &str) -> &str {
+    revision.get(..12).unwrap_or(revision)
+}
+
+fn provider_tag(provider: &str) -> String {
+    let sanitized = provider
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | ':' => ch,
+            _ => '_',
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "unknown".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn format_graph_timestamp(timestamp: i64) -> String {
+    if timestamp <= 0 {
+        return "unknown".to_string();
+    }
+
+    Utc.timestamp_opt(timestamp, 0)
+        .single()
+        .map(|time| time.to_rfc3339())
+        .unwrap_or_else(|| timestamp.to_string())
+}
+
 fn normalize_relative_path(path: PathBuf) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -1161,6 +1426,52 @@ fn url_encode(segment: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git2::{Repository, Signature};
+    use std::fs;
+
+    fn init_git_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        Repository::init(dir.path()).unwrap();
+        dir
+    }
+
+    fn commit_repo_file(repo_root: &Path, relative: &str, content: &str, message: &str) -> String {
+        let repo = Repository::open(repo_root).unwrap();
+        let path = repo_root.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&path, content).unwrap();
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new(relative)).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let signature = Signature::now("Test User", "test@example.com").unwrap();
+
+        let parent = repo
+            .head()
+            .ok()
+            .and_then(|head| head.target())
+            .and_then(|oid| repo.find_commit(oid).ok());
+        let commit_id = if let Some(parent) = parent.as_ref() {
+            repo.commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                message,
+                &tree,
+                &[parent],
+            )
+            .unwrap()
+        } else {
+            repo.commit(Some("HEAD"), &signature, &signature, message, &tree, &[])
+                .unwrap()
+        };
+
+        commit_id.to_string()
+    }
 
     #[test]
     fn test_url_encode_ascii() {
@@ -1272,5 +1583,81 @@ mod tests {
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "MyVar");
         assert_eq!(symbols[0].range, (11, 11)); // 0-based to 1-based
+    }
+
+    #[test]
+    fn graph_metadata_summary_reports_fresh_revision_and_version() {
+        let dir = init_git_repo();
+        let revision = commit_repo_file(
+            dir.path(),
+            "src/lib.rs",
+            "pub fn helper() {}\n",
+            "initial graph",
+        );
+        let index = SymbolIndex::build(dir.path(), 16, 128 * 1024, 8, |_path| false).unwrap();
+
+        let summary = index.graph_metadata_summary(dir.path());
+        let traces = index.graph_trace_details(dir.path());
+
+        assert!(summary.contains("freshness: fresh"));
+        assert!(summary.contains(short_revision(&revision)));
+        assert!(summary.contains("coverage: within configured file limits"));
+        assert!(traces
+            .iter()
+            .any(|detail| detail == "graph_freshness=fresh"));
+        assert!(traces
+            .iter()
+            .any(|detail| detail.starts_with("graph_version=")));
+        let expected_revision = format!("graph_build_revision={}", short_revision(&revision));
+        assert!(traces.iter().any(|detail| detail == &expected_revision));
+    }
+
+    #[test]
+    fn graph_metadata_summary_marks_revision_changes_as_stale() {
+        let dir = init_git_repo();
+        commit_repo_file(
+            dir.path(),
+            "src/lib.rs",
+            "pub fn helper() {}\n",
+            "initial graph",
+        );
+        let index = SymbolIndex::build(dir.path(), 16, 128 * 1024, 8, |_path| false).unwrap();
+        let current_revision = commit_repo_file(
+            dir.path(),
+            "src/lib.rs",
+            "pub fn helper() {}\npub fn changed() {}\n",
+            "advance head",
+        );
+
+        let summary = index.graph_metadata_summary(dir.path());
+        let traces = index.graph_trace_details(dir.path());
+
+        assert!(summary.contains("freshness: stale"));
+        assert!(summary.contains(short_revision(&current_revision)));
+        assert!(traces
+            .iter()
+            .any(|detail| detail == "graph_freshness=stale"));
+        let expected_revision = format!(
+            "graph_current_revision={}",
+            short_revision(&current_revision)
+        );
+        assert!(traces.iter().any(|detail| detail == &expected_revision));
+    }
+
+    #[test]
+    fn graph_metadata_summary_marks_file_limit_as_partial_coverage() {
+        let dir = init_git_repo();
+        commit_repo_file(dir.path(), "src/a.rs", "pub fn alpha() {}\n", "add alpha");
+        commit_repo_file(dir.path(), "src/b.rs", "pub fn beta() {}\n", "add beta");
+
+        let index = SymbolIndex::build(dir.path(), 1, 128 * 1024, 8, |_path| false).unwrap();
+        let summary = index.graph_metadata_summary(dir.path());
+        let traces = index.graph_trace_details(dir.path());
+
+        assert_eq!(index.files_indexed(), 1);
+        assert!(summary.contains("coverage: partial"));
+        assert!(traces
+            .iter()
+            .any(|detail| detail == "graph_coverage=partial(indexed_files=1,limit=1)"));
     }
 }

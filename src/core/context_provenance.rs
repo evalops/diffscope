@@ -12,6 +12,7 @@ pub enum ContextProvenance {
     CustomContextNotes,
     DependencyGraphNeighborhood,
     PathSpecificFocusAreas,
+    RepositoryGraphMetadata,
     PatternRepositoryContext {
         source: String,
     },
@@ -89,6 +90,7 @@ impl ContextProvenance {
             | Self::CustomContextNotes
             | Self::DependencyGraphNeighborhood
             | Self::PathSpecificFocusAreas
+            | Self::RepositoryGraphMetadata
             | Self::RelatedTestFile
             | Self::ReverseDependencySummary => 0,
         }
@@ -109,6 +111,7 @@ impl ContextProvenance {
             Self::CustomContextNotes => "custom context notes".to_string(),
             Self::DependencyGraphNeighborhood => "dependency graph neighborhood".to_string(),
             Self::PathSpecificFocusAreas => "path-specific focus areas".to_string(),
+            Self::RepositoryGraphMetadata => "repository graph metadata".to_string(),
             Self::PatternRepositoryContext { source } => {
                 format!("pattern repository: {source}")
             }
@@ -178,6 +181,10 @@ mod tests {
         assert_eq!(
             ContextProvenance::pattern_repository_context("org/repo").to_string(),
             "pattern repository: org/repo"
+        );
+        assert_eq!(
+            ContextProvenance::RepositoryGraphMetadata.to_string(),
+            "repository graph metadata"
         );
     }
 }
