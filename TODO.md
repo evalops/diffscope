@@ -118,7 +118,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 73. [ ] Add API endpoints to fetch learned rules, attention gaps, and top rejected patterns.
 74. [ ] Add machine-friendly APIs to fetch findings grouped by severity, file, and lifecycle state.
 75. [ ] Add a "trigger re-review" API that reuses existing PR metadata and loop policy.
-76. [ ] Add APIs for comment resolution and lifecycle updates, not just thumbs.
+76. [x] Add APIs for comment resolution and lifecycle updates, not just thumbs.
 77. [ ] Add an MCP server for DiffScope with review, analytics, and rule-management tools.
 78. [ ] Add reusable agent skills/workflows for checking PR readiness and running fix loops.
 79. [ ] Add signed webhook or event-stream integration for downstream automation consumers.
@@ -168,4 +168,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Add a train-the-reviewer callout on review detail when thumbs coverage is low.
 - [x] Add structured custom context and per-path instruction editors to the Settings review context workflow.
 - [x] Expose latest-review PR comment search with unresolved, resolved, and dismissed lifecycle filters through the API.
+- [x] Close TODO drift for existing comment lifecycle update APIs now that read and write surfaces are both shipped.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.
