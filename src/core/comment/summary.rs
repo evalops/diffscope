@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    Category, Comment, CommentStatus, MergeReadiness, ReviewSummary, ReviewVerificationState,
-    ReviewVerificationSummary, Severity,
+    Category, Comment, CommentStatus, MergeReadiness, ReviewCompletenessSummary, ReviewSummary,
+    ReviewVerificationState, ReviewVerificationSummary, Severity,
 };
 
 pub(super) fn generate_summary(comments: &[Comment]) -> ReviewSummary {
@@ -65,6 +65,12 @@ pub(super) fn generate_summary(comments: &[Comment]) -> ReviewSummary {
         resolved_comments,
         dismissed_comments,
         open_blockers,
+        completeness: build_completeness_summary(
+            comments.len(),
+            resolved_comments,
+            dismissed_comments,
+            0,
+        ),
         merge_readiness: default_merge_readiness(open_blockers),
         verification: ReviewVerificationSummary::default(),
         readiness_reasons: Vec::new(),
@@ -93,6 +99,17 @@ pub(super) fn apply_review_runtime_state(
     mut summary: ReviewSummary,
     stale_review: bool,
 ) -> ReviewSummary {
+    summary.completeness = build_completeness_summary(
+        summary.total_comments,
+        summary.resolved_comments,
+        summary.dismissed_comments,
+        if stale_review {
+            summary.open_comments
+        } else {
+            0
+        },
+    );
+
     let mut reasons = Vec::new();
     if matches!(
         summary.verification.state,
@@ -110,6 +127,20 @@ pub(super) fn apply_review_runtime_state(
         default_merge_readiness(summary.open_blockers)
     };
     summary
+}
+
+fn build_completeness_summary(
+    total_findings: usize,
+    resolved_comments: usize,
+    dismissed_comments: usize,
+    stale_findings: usize,
+) -> ReviewCompletenessSummary {
+    ReviewCompletenessSummary {
+        total_findings,
+        acknowledged_findings: resolved_comments + dismissed_comments,
+        fixed_findings: resolved_comments,
+        stale_findings,
+    }
 }
 
 fn default_merge_readiness(open_blockers: usize) -> MergeReadiness {
@@ -238,6 +269,10 @@ mod tests {
         assert_eq!(summary.resolved_comments, 1);
         assert_eq!(summary.dismissed_comments, 1);
         assert_eq!(summary.open_blockers, 1);
+        assert_eq!(summary.completeness.total_findings, 3);
+        assert_eq!(summary.completeness.acknowledged_findings, 2);
+        assert_eq!(summary.completeness.fixed_findings, 1);
+        assert_eq!(summary.completeness.stale_findings, 0);
         assert_eq!(summary.open_by_severity.get("Error"), Some(&1));
         assert_eq!(summary.merge_readiness, MergeReadiness::NeedsAttention);
         assert_eq!(
@@ -344,9 +379,34 @@ mod tests {
         let summary = apply_review_runtime_state(generate_summary(&comments), true);
         assert_eq!(summary.open_blockers, 0);
         assert_eq!(summary.merge_readiness, MergeReadiness::NeedsReReview);
+        assert_eq!(summary.completeness.stale_findings, 0);
         assert_eq!(
             summary.readiness_reasons,
             vec!["new commits landed after this review".to_string()]
         );
+    }
+
+    #[test]
+    fn stale_review_counts_open_findings_in_completeness() {
+        let comments = vec![
+            make_comment(
+                "open-warning",
+                Severity::Warning,
+                Category::Bug,
+                CommentStatus::Open,
+            ),
+            make_comment(
+                "resolved-info",
+                Severity::Info,
+                Category::Documentation,
+                CommentStatus::Resolved,
+            ),
+        ];
+
+        let summary = apply_review_runtime_state(generate_summary(&comments), true);
+        assert_eq!(summary.completeness.total_findings, 2);
+        assert_eq!(summary.completeness.acknowledged_findings, 1);
+        assert_eq!(summary.completeness.fixed_findings, 1);
+        assert_eq!(summary.completeness.stale_findings, 1);
     }
 }

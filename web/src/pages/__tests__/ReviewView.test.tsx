@@ -45,6 +45,12 @@ function makeSummary(overrides: Partial<ReviewSummary> = {}): ReviewSummary {
     resolved_comments: 1,
     dismissed_comments: 0,
     open_blockers: 1,
+    completeness: {
+      total_findings: 3,
+      acknowledged_findings: 1,
+      fixed_findings: 1,
+      stale_findings: 0,
+    },
     merge_readiness: 'NeedsAttention',
     verification: {
       state: 'Verified',
@@ -161,6 +167,12 @@ describe('ReviewView blocker mode', () => {
           open_informational_comments: 1,
           resolved_comments: 1,
           open_blockers: 0,
+          completeness: {
+            total_findings: 2,
+            acknowledged_findings: 1,
+            fixed_findings: 1,
+            stale_findings: 0,
+          },
           merge_readiness: 'Ready',
           readiness_reasons: [],
         }),
@@ -196,6 +208,12 @@ describe('ReviewView blocker mode', () => {
       data: makeReview({
         summary: makeSummary({
           merge_readiness: 'NeedsReReview',
+          completeness: {
+            total_findings: 3,
+            acknowledged_findings: 1,
+            fixed_findings: 1,
+            stale_findings: 2,
+          },
           readiness_reasons: ['New commits landed after the latest completed review.'],
         }),
       }),

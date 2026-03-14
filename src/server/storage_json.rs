@@ -540,6 +540,12 @@ mod tests {
             resolved_comments: 0,
             dismissed_comments: 0,
             open_blockers: 2,
+            completeness: crate::core::comment::ReviewCompletenessSummary {
+                total_findings: 2,
+                acknowledged_findings: 0,
+                fixed_findings: 0,
+                stale_findings: 0,
+            },
             merge_readiness: crate::core::comment::MergeReadiness::NeedsAttention,
             verification: crate::core::comment::ReviewVerificationSummary::default(),
             readiness_reasons: Vec::new(),

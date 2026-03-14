@@ -518,6 +518,12 @@ export function ReviewView() {
                   {review.summary.total_comments} findings
                 </span>
                 <span className="flex items-center gap-1">
+                  <span className="text-text-primary">
+                    {review.summary.completeness.acknowledged_findings}/{review.summary.completeness.total_findings}
+                  </span>
+                  acknowledged
+                </span>
+                <span className="flex items-center gap-1">
                   <span className="text-accent">{review.summary.open_comments}</span>
                   open
                 </span>
@@ -550,7 +556,7 @@ export function ReviewView() {
                     : 'Needs Re-review'}
               </span>
               <span className="text-[10px] text-text-muted font-code">
-                {review.summary.resolved_comments} resolved / {review.summary.dismissed_comments} dismissed
+                {review.summary.completeness.fixed_findings} fixed · {review.summary.completeness.stale_findings} stale
               </span>
             </div>
             {review.event && (

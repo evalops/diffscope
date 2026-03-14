@@ -211,6 +211,7 @@ mod tests {
         let body = build_pr_summary_comment_body(&[c], &[]);
         assert!(body.contains("DiffScope Review Summary"));
         assert!(body.contains("Total issues: 1"));
+        assert!(body.contains("Completeness: 0 acknowledged / 0 fixed / 0 stale"));
         assert!(body.contains("sec.xss"));
     }
 

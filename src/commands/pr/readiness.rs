@@ -102,6 +102,12 @@ fn format_pr_readiness_markdown(snapshot: &PrReadinessSnapshot) -> String {
                     "- Lifecycle: {} open · {} resolved · {} dismissed\n",
                     summary.open_comments, summary.resolved_comments, summary.dismissed_comments
                 ));
+                output.push_str(&format!(
+                    "- Completeness: {} acknowledged · {} fixed · {} stale\n",
+                    summary.completeness.acknowledged_findings,
+                    summary.completeness.fixed_findings,
+                    summary.completeness.stale_findings
+                ));
                 output.push_str(&format!("- Verification: {}\n", summary.verification.state));
                 if !summary.readiness_reasons.is_empty() {
                     output.push_str("- Readiness reasons:\n");
@@ -139,6 +145,10 @@ mod tests {
         summary.open_comments = 3;
         summary.resolved_comments = 1;
         summary.dismissed_comments = 1;
+        summary.completeness.total_findings = 5;
+        summary.completeness.acknowledged_findings = 2;
+        summary.completeness.fixed_findings = 1;
+        summary.completeness.stale_findings = 3;
         summary.verification.state = ReviewVerificationState::Inconclusive;
         summary.readiness_reasons = vec!["new commits landed after this review".to_string()];
         let snapshot = PrReadinessSnapshot {
@@ -165,6 +175,7 @@ mod tests {
         assert!(output.contains("Current head: `0123456789ab`"));
         assert!(output.contains("Merge readiness: Needs attention"));
         assert!(output.contains("Open blockers: 2"));
+        assert!(output.contains("Completeness: 2 acknowledged · 1 fixed · 3 stale"));
         assert!(output.contains("new commits landed after this review"));
     }
 

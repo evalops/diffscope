@@ -22,6 +22,12 @@ pub fn build_pr_summary_comment_body(
         "- Lifecycle: {} open / {} resolved / {} dismissed\n",
         summary.open_comments, summary.resolved_comments, summary.dismissed_comments
     ));
+    body.push_str(&format!(
+        "- Completeness: {} acknowledged / {} fixed / {} stale\n",
+        summary.completeness.acknowledged_findings,
+        summary.completeness.fixed_findings,
+        summary.completeness.stale_findings
+    ));
     body.push_str(&format!("- Open blockers: {}\n", summary.open_blockers));
     body.push_str(&format!(
         "- Blocking open: {} | Informational open: {}\n",

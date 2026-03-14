@@ -56,6 +56,12 @@ function makeReview(): ReviewSession {
       resolved_comments: 1,
       dismissed_comments: 0,
       open_blockers: 1,
+      completeness: {
+        total_findings: 2,
+        acknowledged_findings: 1,
+        fixed_findings: 1,
+        stale_findings: 0,
+      },
       merge_readiness: 'NeedsAttention',
       verification: {
         state: 'Verified',

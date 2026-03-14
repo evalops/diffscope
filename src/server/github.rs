@@ -706,11 +706,14 @@ async fn create_check_run(
     };
 
     let summary_text = format!(
-        "**Score:** {:.1}/10 | **Findings:** {} | **Files:** {} | **Readiness:** {}\n\n{}{}",
+        "**Score:** {:.1}/10 | **Findings:** {} | **Files:** {} | **Readiness:** {}\n**Completeness:** {} acknowledged | {} fixed | {} stale\n\n{}{}",
         summary.overall_score,
         summary.total_comments,
         summary.files_reviewed,
         summary.merge_readiness,
+        summary.completeness.acknowledged_findings,
+        summary.completeness.fixed_findings,
+        summary.completeness.stale_findings,
         if summary.recommendations.is_empty() {
             String::new()
         } else {

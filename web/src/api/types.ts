@@ -47,6 +47,12 @@ export interface ReviewSummary {
   resolved_comments: number
   dismissed_comments: number
   open_blockers: number
+  completeness: {
+    total_findings: number
+    acknowledged_findings: number
+    fixed_findings: number
+    stale_findings: number
+  }
   merge_readiness: MergeReadiness
   verification: {
     state: ReviewVerificationState

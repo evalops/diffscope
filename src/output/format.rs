@@ -32,6 +32,15 @@ pub async fn output_comments(
     Ok(())
 }
 
+fn format_completeness(summary: &core::comment::ReviewSummary) -> String {
+    format!(
+        "{} acknowledged · {} fixed · {} stale",
+        summary.completeness.acknowledged_findings,
+        summary.completeness.fixed_findings,
+        summary.completeness.stale_findings
+    )
+}
+
 pub fn format_as_patch(comments: &[core::Comment]) -> String {
     let mut output = String::new();
     for comment in comments {
@@ -86,6 +95,10 @@ pub fn format_as_markdown(comments: &[core::Comment], rule_priority: &[String]) 
     output.push_str(&format!(
         "📌 **Lifecycle:** {} open · {} resolved · {} dismissed\n\n",
         summary.open_comments, summary.resolved_comments, summary.dismissed_comments
+    ));
+    output.push_str(&format!(
+        "📎 **Completeness:** {}\n\n",
+        format_completeness(&summary)
     ));
     output.push_str(&format!(
         "⛔ **Open Blockers:** {}\n\n",
@@ -306,6 +319,10 @@ pub fn format_smart_review_output(
     output.push_str(&format!(
         "📌 **Lifecycle:** {} open · {} resolved · {} dismissed\n\n",
         summary.open_comments, summary.resolved_comments, summary.dismissed_comments
+    ));
+    output.push_str(&format!(
+        "📎 **Completeness:** {}\n\n",
+        format_completeness(summary)
     ));
     output.push_str(&format!(
         "⛔ **Open Blockers:** {}\n\n",
@@ -916,6 +933,12 @@ mod tests {
             resolved_comments: 0,
             dismissed_comments: 0,
             open_blockers: 2,
+            completeness: crate::core::comment::ReviewCompletenessSummary {
+                total_findings: 2,
+                acknowledged_findings: 0,
+                fixed_findings: 0,
+                stale_findings: 0,
+            },
             merge_readiness: crate::core::comment::MergeReadiness::NeedsAttention,
             verification: crate::core::comment::ReviewVerificationSummary::default(),
             readiness_reasons: Vec::new(),
@@ -939,6 +962,7 @@ mod tests {
         assert!(output.contains("Executive Summary"));
         assert!(output.contains("7.5/10"));
         assert!(output.contains("Critical Issues"));
+        assert!(output.contains("Completeness"));
         assert!(output.contains("Fix bugs"));
     }
 

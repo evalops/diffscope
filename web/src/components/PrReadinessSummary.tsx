@@ -90,10 +90,15 @@ export function PrReadinessSummary({ readiness, isLoading = false, error, onOpen
             <span className="text-[10px] text-text-muted font-code">{latestReview.status}</span>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 text-[11px] mb-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-[11px] mb-3">
             <Metric label="Open blockers" value={String(summary.open_blockers)} tone={summary.open_blockers > 0 ? 'warning' : 'success'} />
             <Metric label="Verification" value={summary.verification.state} />
             <Metric label="Lifecycle" value={`${summary.open_comments} open`} hint={`${summary.resolved_comments} resolved · ${summary.dismissed_comments} dismissed`} />
+            <Metric
+              label="Completeness"
+              value={`${summary.completeness.acknowledged_findings}/${summary.completeness.total_findings} acknowledged`}
+              hint={`${summary.completeness.fixed_findings} fixed · ${summary.completeness.stale_findings} stale`}
+            />
             <Metric label="Findings" value={String(summary.total_comments)} hint={`${latestReview.files_reviewed} file${latestReview.files_reviewed === 1 ? '' : 's'} reviewed`} />
           </div>
 

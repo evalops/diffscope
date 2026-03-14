@@ -36,7 +36,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 ## 2. Review Lifecycle and Merge Readiness
 
 11. [x] Track unresolved vs resolved findings for PR reviews as a first-class lifecycle state.
-12. [ ] Add review completeness metrics: total findings, acknowledged findings, fixed findings, stale findings.
+12. [x] Add review completeness metrics: total findings, acknowledged findings, fixed findings, stale findings.
 13. [x] Compute merge-readiness summaries for GitHub PR reviews using severity, unresolved count, and verification state.
 14. [x] Add stale-review detection when new commits land after the latest completed review.
 15. [x] Show "needs re-review" state in review detail and history pages for incremental PR workflows.
@@ -178,4 +178,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Group ReviewView list-mode findings into unresolved, fixed, stale, and informational sections.
 - [x] Add ReviewView keyboard shortcuts for next-finding navigation plus accept/reject/resolve actions.
 - [x] Add path-scoped reinforcement buckets so feedback can distinguish `tests/**`, `scripts/**`, and broader code areas.
+- [x] Add review completeness metrics across summaries, PR readiness, and ReviewView surfaces.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.

@@ -21,6 +21,12 @@ function makeSummary(overrides: Partial<ReviewSummary> = {}): ReviewSummary {
     resolved_comments: 1,
     dismissed_comments: 1,
     open_blockers: 2,
+    completeness: {
+      total_findings: 4,
+      acknowledged_findings: 2,
+      fixed_findings: 1,
+      stale_findings: 0,
+    },
     merge_readiness: 'NeedsAttention',
     verification: {
       state: 'Verified',
@@ -70,6 +76,9 @@ describe('PrReadinessSummary', () => {
     expect(screen.getByText('Incremental review coverage')).toBeInTheDocument()
     expect(screen.getByText(/does not include the newer delta yet/i)).toBeInTheDocument()
     expect(screen.getByText('Open blockers')).toBeInTheDocument()
+    expect(screen.getByText('Completeness')).toBeInTheDocument()
+    expect(screen.getByText('2/4 acknowledged')).toBeInTheDocument()
+    expect(screen.getByText('1 fixed · 0 stale')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
     expect(screen.getByText('2 blocking findings remain open.')).toBeInTheDocument()
     expect(screen.getAllByText('0123456789ab')).toHaveLength(2)

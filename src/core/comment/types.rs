@@ -56,11 +56,25 @@ pub struct ReviewSummary {
     #[serde(default)]
     pub open_blockers: usize,
     #[serde(default)]
+    pub completeness: ReviewCompletenessSummary,
+    #[serde(default)]
     pub merge_readiness: MergeReadiness,
     #[serde(default)]
     pub verification: ReviewVerificationSummary,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub readiness_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ReviewCompletenessSummary {
+    #[serde(default)]
+    pub total_findings: usize,
+    #[serde(default)]
+    pub acknowledged_findings: usize,
+    #[serde(default)]
+    pub fixed_findings: usize,
+    #[serde(default)]
+    pub stale_findings: usize,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
