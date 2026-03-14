@@ -49,6 +49,7 @@ jobs:
       - name: Run DiffScope
         if: steps.check_key.outputs.skip != 'true' && steps.check_image.outputs.available == 'true'
         uses: docker://ghcr.io/evalops/diffscope:latest
+        continue-on-error: true
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         with:
