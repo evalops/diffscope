@@ -195,4 +195,41 @@ expect:
         assert_eq!(fixtures[0].fixture.name.as_deref(), Some("community/panic"));
         assert_eq!(fixtures[1].fixture.name.as_deref(), Some("standard"));
     }
+
+    #[test]
+    fn test_checked_in_infra_pack_loads_expected_fixtures() {
+        let pack_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/deep_review_suite/review_depth_infra.json");
+
+        let fixtures = load_eval_fixtures_from_path(&pack_path).unwrap();
+
+        assert_eq!(fixtures.len(), 4);
+        assert_eq!(
+            fixtures[0].suite_name.as_deref(),
+            Some("review-depth-infra")
+        );
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("review-depth-infra/docker-user-root")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("sec.infra.docker-root")
+        );
+        assert_eq!(
+            fixtures[1]
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.language.as_deref()),
+            Some("hcl")
+        );
+        assert_eq!(
+            fixtures[2].fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("sec.supply-chain.ci-injection")
+        );
+        assert_eq!(
+            fixtures[3].fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("sec.infra.k8s-privileged")
+        );
+    }
 }

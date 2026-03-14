@@ -1,0 +1,163 @@
+{
+  "name": "review-depth-infra",
+  "author": "diffscope",
+  "version": "1.0.0",
+  "description": "Infrastructure and configuration security benchmark pack for deeper live review runs.",
+  "languages": [
+    "docker",
+    "hcl",
+    "yaml"
+  ],
+  "categories": [
+    "security"
+  ],
+  "thresholds": {
+    "min_precision": 0.45,
+    "min_recall": 0.35,
+    "min_f1": 0.4,
+    "max_false_positive_rate": 0.45,
+    "min_weighted_score": 0.45
+  },
+  "metadata": {
+    "purpose": "live-regression-eval",
+    "family": "review-depth"
+  },
+  "fixtures": [
+    {
+      "name": "docker-user-root",
+      "category": "security",
+      "language": "docker",
+      "difficulty": "Easy",
+      "diff_content": "diff --git a/Dockerfile b/Dockerfile\nindex 1111111..2222222 100644\n--- a/Dockerfile\n+++ b/Dockerfile\n@@ -1,5 +1,5 @@\n FROM node:20-alpine\n RUN adduser -D appuser\n WORKDIR /app\n-USER appuser\n+USER root\n CMD [\"node\", \"server.js\"]\n",
+      "expected_findings": [
+        {
+          "description": "Container is explicitly configured to run as root instead of a non-root user.",
+          "severity": "Warning",
+          "category": "Security",
+          "file_pattern": "Dockerfile",
+          "line_hint": 4,
+          "contains_any": [
+            "container runs as root",
+            "user root",
+            "should run as a non-root user",
+            "drop privileges",
+            "least privilege"
+          ],
+          "rule_id": "sec.infra.docker-root"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Containers should not be switched back to root for runtime execution.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "terraform-ssh-open-world",
+      "category": "security",
+      "language": "hcl",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/main.tf b/main.tf\nindex 1111111..2222222 100644\n--- a/main.tf\n+++ b/main.tf\n@@ -2,7 +2,7 @@ resource \"aws_security_group\" \"ssh\" {\n   name        = \"public-ssh\"\n   from_port   = 22\n   to_port     = 22\n   protocol    = \"tcp\"\n-  cidr_blocks = [\"10.0.0.0/8\"]\n+  cidr_blocks = [\"0.0.0.0/0\"]\n }\n",
+      "expected_findings": [
+        {
+          "description": "Security group opens SSH to the entire internet.",
+          "severity": "Error",
+          "category": "Security",
+          "file_pattern": "main.tf",
+          "line_hint": 6,
+          "contains_any": [
+            "ssh open to the internet",
+            "0.0.0.0/0",
+            "world-open ingress",
+            "publicly accessible ssh",
+            "open to the world"
+          ],
+          "rule_id": "sec.infra.terraform-public"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Infrastructure changes should not expose SSH to the public internet.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "github-actions-event-script-injection",
+      "category": "security",
+      "language": "yaml",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/.github/workflows/triage.yml b/.github/workflows/triage.yml\nindex 1111111..2222222 100644\n--- a/.github/workflows/triage.yml\n+++ b/.github/workflows/triage.yml\n@@ -1,6 +1,6 @@\n name: Issue Triage\n on: issues\n jobs:\n   label:\n     runs-on: ubuntu-latest\n-    steps: []\n+    steps:\n+      - run: echo \"${{ github.event.issue.title }}\" | bash\n",
+      "expected_findings": [
+        {
+          "description": "Attacker-controlled GitHub event data is executed by a shell step.",
+          "severity": "Error",
+          "category": "Security",
+          "file_pattern": ".github/workflows/triage.yml",
+          "line_hint": 7,
+          "contains_any": [
+            "script injection",
+            "attacker-controlled issue title",
+            "untrusted github event data",
+            "piped into bash",
+            "arbitrary command execution"
+          ],
+          "rule_id": "sec.supply-chain.ci-injection"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "CI automation should never pipe untrusted GitHub event fields into a shell.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "k8s-privileged-container",
+      "category": "security",
+      "language": "yaml",
+      "difficulty": "Easy",
+      "diff_content": "diff --git a/deploy/pod.yaml b/deploy/pod.yaml\nindex 1111111..2222222 100644\n--- a/deploy/pod.yaml\n+++ b/deploy/pod.yaml\n@@ -5,6 +5,6 @@ spec:\n   containers:\n     - name: api\n       image: example/api:latest\n       securityContext:\n-        privileged: false\n+        privileged: true\n       ports:\n         - containerPort: 8080\n",
+      "expected_findings": [
+        {
+          "description": "Pod enables privileged container execution.",
+          "severity": "Error",
+          "category": "Security",
+          "file_pattern": "deploy/pod.yaml",
+          "line_hint": 6,
+          "contains_any": [
+            "privileged container",
+            "securitycontext privileged",
+            "full host access",
+            "should not run privileged",
+            "drop privileged"
+          ],
+          "rule_id": "sec.infra.k8s-privileged"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Kubernetes workloads should avoid privileged mode unless absolutely required.",
+      "source": "deep-review-suite"
+    }
+  ]
+}
