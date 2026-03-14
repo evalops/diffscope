@@ -2185,6 +2185,25 @@ triage_skip_deletion_only: true
     }
 
     #[test]
+    fn test_config_default_triage_skip_deletion_only_false() {
+        let config = Config::default();
+        assert!(
+            !config.triage_skip_deletion_only,
+            "default: deletions get review unless explicitly enabled"
+        );
+    }
+
+    #[test]
+    fn test_config_deserialize_triage_skip_deletion_only_false() {
+        let yaml = r#"
+model: claude-sonnet-4-6
+triage_skip_deletion_only: false
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.triage_skip_deletion_only);
+    }
+
+    #[test]
     fn test_default_frontier_role_models_match_requested_pair() {
         let config = Config::default();
         assert_eq!(config.model, "anthropic/claude-opus-4.5");
