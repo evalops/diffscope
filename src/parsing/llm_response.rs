@@ -257,6 +257,10 @@ fn parse_json_format(content: &str, file_path: &Path) -> Vec<core::comment::RawC
         .or_else(|| find_json_array(content))
         .or_else(|| find_json_object(content));
 
+    let json_str = json_str
+        .or_else(|| find_balanced_bracket_span(content, '[', ']'))
+        .or_else(|| find_balanced_bracket_span(content, '{', '}'));
+
     if let Some(json_str) = json_str {
         for candidate in repair_json_candidates(&json_str) {
             let Ok(value) = serde_json::from_str::<serde_json::Value>(&candidate) else {
@@ -303,6 +307,26 @@ fn find_json_array(content: &str) -> Option<String> {
 
 fn find_json_object(content: &str) -> Option<String> {
     find_balanced_json(content, '{', '}')
+}
+
+/// Find the first balanced span for open/close (e.g. [ and ]) without validating JSON.
+/// Used when valid JSON isn't found so we can run repair (e.g. single-quote conversion) and retry.
+fn find_balanced_bracket_span(content: &str, open: char, close: char) -> Option<String> {
+    for (start, _) in content.char_indices().filter(|&(_, ch)| ch == open) {
+        let mut depth = 0i32;
+        for (offset, ch) in content[start..].char_indices() {
+            if ch == open {
+                depth += 1;
+            } else if ch == close {
+                depth -= 1;
+                if depth == 0 {
+                    let end = start + offset;
+                    return Some(content[start..=end].to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn find_balanced_json(content: &str, open: char, close: char) -> Option<String> {
@@ -368,7 +392,78 @@ fn repair_json_candidates(candidate: &str) -> Vec<String> {
         candidates.push(without_diff_prefix.to_string());
     }
 
+    // When LLM outputs single-quoted keys/values (e.g. {'line': 9}), convert to valid JSON (issue #28).
+    let with_double_quotes = convert_single_quoted_json_to_double(trimmed);
+    if with_double_quotes != trimmed
+        && (with_double_quotes.starts_with('[') || with_double_quotes.starts_with('{'))
+    {
+        candidates.push(with_double_quotes);
+    }
+
     candidates
+}
+
+/// Convert single-quoted JSON-like strings to double-quoted so serde_json can parse.
+/// Only converts single-quoted regions that are outside any double-quoted string.
+fn convert_single_quoted_json_to_double(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    let mut in_double = false;
+    let mut escape_next = false;
+
+    while let Some(c) = chars.next() {
+        if escape_next {
+            escape_next = false;
+            out.push(c);
+            continue;
+        }
+        if in_double {
+            if c == '\\' {
+                escape_next = true;
+                out.push(c);
+            } else if c == '"' {
+                in_double = false;
+                out.push(c);
+            } else {
+                out.push(c);
+            }
+            continue;
+        }
+        if c == '"' {
+            in_double = true;
+            out.push(c);
+            continue;
+        }
+        if c == '\'' {
+            // Start of single-quoted string: emit " and copy until unescaped ', escaping " and \.
+            out.push('"');
+            for c in chars.by_ref() {
+                if c == '\\' {
+                    escape_next = true;
+                    out.push(c);
+                } else if c == '\'' {
+                    if escape_next {
+                        escape_next = false;
+                        out.push('\'');
+                    } else {
+                        out.push('"');
+                        break;
+                    }
+                } else if c == '"' {
+                    out.push('\\');
+                    out.push('"');
+                } else {
+                    out.push(c);
+                }
+            }
+            if escape_next {
+                escape_next = false;
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
 }
 
 fn extract_structured_items(value: serde_json::Value) -> Vec<serde_json::Value> {
@@ -1241,6 +1336,17 @@ let data = &input;
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].line_number, 7);
         assert!(comments[0].content.contains("Missing check"));
+    }
+
+    #[test]
+    fn parse_json_with_single_quotes() {
+        // LLM sometimes outputs JSON with single-quoted keys/values; repair converts to double quotes (issue #28).
+        let input = r#"[{'line': 9, 'issue': 'Use of deprecated API'}]"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 9);
+        assert!(comments[0].content.contains("deprecated"));
     }
 
     // ── Bug: find_json_array uses mismatched brackets ──────────────────
