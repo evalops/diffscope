@@ -2114,6 +2114,40 @@ temperature: 0.3
     }
 
     #[test]
+    fn test_config_deserialize_verification_enum_fields_from_yaml() {
+        // Regression (PR37): flattened verification_model_role / verification_consensus_mode
+        // must deserialize from YAML. serde_yaml can have issues with enums in flattened
+        // structs; this test locks in that config.verification (flatten) works.
+        let yaml = r#"
+model: claude-sonnet-4-6
+verification_model_role: weak
+verification_consensus_mode: majority
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.verification.model_role, ModelRole::Weak);
+        assert_eq!(
+            config.verification.consensus_mode,
+            VerificationConsensusMode::Majority
+        );
+    }
+
+    #[test]
+    fn test_config_deserialize_verification_enum_primary_and_all() {
+        // TDD: prove enum variants deserialize from YAML (primary, all).
+        let yaml = r#"
+model: claude-sonnet-4-6
+verification_model_role: primary
+verification_consensus_mode: all
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.verification.model_role, ModelRole::Primary);
+        assert_eq!(
+            config.verification.consensus_mode,
+            VerificationConsensusMode::All
+        );
+    }
+
+    #[test]
     fn test_default_frontier_role_models_match_requested_pair() {
         let config = Config::default();
         assert_eq!(config.model, "anthropic/claude-opus-4.5");
