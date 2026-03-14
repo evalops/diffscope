@@ -49,12 +49,78 @@ function computeAnalytics(reviews: ReviewSession[]) {
     .sort((a, b) => b[1] - a[1])
     .map(([name, value]) => ({ name, value }))
 
+  const feedbackTotalsByCategory: Record<string, { accepted: number; rejected: number }> = {}
+  const feedbackCoverageSeries = completed.map((r, i) => {
+    let accepted = 0
+    let rejected = 0
+
+    for (const comment of r.comments) {
+      if (comment.feedback === 'accept') {
+        accepted += 1
+      } else if (comment.feedback === 'reject') {
+        rejected += 1
+      } else {
+        continue
+      }
+
+      const current = feedbackTotalsByCategory[comment.category] ?? { accepted: 0, rejected: 0 }
+      if (comment.feedback === 'accept') {
+        current.accepted += 1
+      } else {
+        current.rejected += 1
+      }
+      feedbackTotalsByCategory[comment.category] = current
+    }
+
+    const totalComments = r.comments.length
+    const labeled = accepted + rejected
+
+    return {
+      idx: i + 1,
+      label: `#${i + 1}`,
+      coverage: totalComments > 0 ? labeled / totalComments : 0,
+      acceptanceRate: labeled > 0 ? accepted / labeled : 0,
+      labeled,
+      accepted,
+      rejected,
+      totalComments,
+    }
+  })
+
+  const feedbackCategoryData = Object.entries(feedbackTotalsByCategory)
+    .map(([name, totals]) => {
+      const total = totals.accepted + totals.rejected
+      return {
+        name,
+        accepted: totals.accepted,
+        rejected: totals.rejected,
+        total,
+        acceptanceRate: total > 0 ? totals.accepted / total : 0,
+      }
+    })
+    .sort((left, right) => right.total - left.total || right.accepted - left.accepted)
+
+  const topAcceptedCategories = feedbackCategoryData
+    .filter(item => item.accepted > 0)
+    .sort((left, right) => right.accepted - left.accepted || right.total - left.total)
+    .slice(0, 5)
+
+  const topRejectedCategories = feedbackCategoryData
+    .filter(item => item.rejected > 0)
+    .sort((left, right) => right.rejected - left.rejected || right.total - left.total)
+    .slice(0, 5)
+
   // Aggregate stats
   const totalFindings = completed.reduce((s, r) => s + r.summary!.total_comments, 0)
   const avgFindings = completed.length > 0 ? totalFindings / completed.length : 0
   const avgScore = completed.length > 0
     ? completed.reduce((s, r) => s + r.summary!.overall_score, 0) / completed.length : 0
   const totalFiles = completed.reduce((s, r) => s + r.files_reviewed, 0)
+  const labeledFeedbackTotal = feedbackCoverageSeries.reduce((sum, point) => sum + point.labeled, 0)
+  const acceptedFeedbackTotal = feedbackCoverageSeries.reduce((sum, point) => sum + point.accepted, 0)
+  const rejectedFeedbackTotal = feedbackCoverageSeries.reduce((sum, point) => sum + point.rejected, 0)
+  const totalCommentCount = completed.reduce((sum, r) => sum + r.comments.length, 0)
+  const reviewsWithFeedback = feedbackCoverageSeries.filter(point => point.labeled > 0).length
 
   const sevTotals: Record<Severity, number> = { Error: 0, Warning: 0, Info: 0, Suggestion: 0 }
   for (const r of completed) {
@@ -71,6 +137,9 @@ function computeAnalytics(reviews: ReviewSession[]) {
     scoreOverTime,
     severityOverTime,
     categoryData,
+    feedbackCoverageSeries,
+    topAcceptedCategories,
+    topRejectedCategories,
     stats: {
       totalReviews: completed.length,
       avgScore,
@@ -79,6 +148,12 @@ function computeAnalytics(reviews: ReviewSession[]) {
       totalFiles,
       sevTotals,
       criticalRate,
+      labeledFeedbackTotal,
+      acceptedFeedbackTotal,
+      rejectedFeedbackTotal,
+      feedbackCoverageRate: totalCommentCount > 0 ? labeledFeedbackTotal / totalCommentCount : 0,
+      feedbackAcceptanceRate: labeledFeedbackTotal > 0 ? acceptedFeedbackTotal / labeledFeedbackTotal : 0,
+      reviewsWithFeedback,
     },
   }
 }
@@ -166,6 +241,41 @@ function TrendList({ items, emptyLabel }: { items: FeedbackEvalTrendGap[]; empty
   )
 }
 
+function FeedbackCategoryList({
+  items,
+  mode,
+  emptyLabel,
+}: {
+  items: Array<{ name: string; accepted: number; rejected: number; total: number; acceptanceRate: number }>
+  mode: 'accepted' | 'rejected'
+  emptyLabel: string
+}) {
+  if (items.length === 0) {
+    return <div className="text-[11px] text-text-muted">{emptyLabel}</div>
+  }
+
+  return (
+    <div className="space-y-2">
+      {items.map(item => {
+        const count = mode === 'accepted' ? item.accepted : item.rejected
+        return (
+          <div key={`${mode}-${item.name}`} className="flex items-center justify-between gap-3 text-[11px]">
+            <div className="min-w-0">
+              <div className="truncate font-medium text-text-primary">{item.name}</div>
+              <div className="text-text-muted">
+                {item.total} labeled · {formatPercent(item.acceptanceRate)} accepted
+              </div>
+            </div>
+            <div className={`shrink-0 font-code ${mode === 'accepted' ? 'text-sev-suggestion' : 'text-sev-error'}`}>
+              {count}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function Analytics() {
   const { data: reviews, isLoading } = useReviews()
   const { data: trends, isLoading: trendsLoading } = useAnalyticsTrends()
@@ -183,7 +293,15 @@ export function Analytics() {
     )
   }
 
-  const { scoreOverTime, severityOverTime, categoryData, stats } = analytics
+  const {
+    scoreOverTime,
+    severityOverTime,
+    categoryData,
+    feedbackCoverageSeries,
+    topAcceptedCategories,
+    topRejectedCategories,
+    stats,
+  } = analytics
   const {
     warnings,
     evalEntries,
@@ -369,6 +487,124 @@ export function Analytics() {
               ) : (
                 <div className="h-44 flex items-center justify-center text-text-muted text-sm">
                   No category data yet
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mt-8 mb-3">
+            LEARNING LOOP
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                FEEDBACK COVERAGE
+              </div>
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className="text-2xl font-bold font-code text-accent">
+                  {formatPercent(stats.feedbackCoverageRate)}
+                </span>
+                <span className="text-[11px] text-text-muted">of findings labeled</span>
+              </div>
+              <div className="h-32 mt-2">
+                <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                  <AreaChart data={feedbackCoverageSeries}>
+                    <defs>
+                      <linearGradient id="feedbackCoverageGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={CHART_THEME.accent} stopOpacity={0.35} />
+                        <stop offset="95%" stopColor={CHART_THEME.accent} stopOpacity={0.05} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                    <YAxis domain={[0, 1]} tick={axisTick} axisLine={false} tickLine={false} />
+                    <Tooltip {...tooltipStyle} />
+                    <Area type="monotone" dataKey="coverage" stroke={CHART_THEME.accent} fill="url(#feedbackCoverageGrad)" strokeWidth={1.5} dot={false} name="Coverage" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex items-center gap-6 mt-3 pt-3 border-t border-border-subtle">
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-text-primary">{stats.labeledFeedbackTotal}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">LABELED</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-text-primary">{stats.reviewsWithFeedback}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">REVIEWS</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                ACCEPTANCE TREND
+              </div>
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className="text-2xl font-bold font-code text-sev-suggestion">
+                  {formatPercent(stats.feedbackAcceptanceRate)}
+                </span>
+                <span className="text-[11px] text-text-muted">accepted when labeled</span>
+              </div>
+              <div className="h-32 mt-2">
+                <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                  <AreaChart data={feedbackCoverageSeries}>
+                    <defs>
+                      <linearGradient id="feedbackAcceptanceGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={SEV_COLORS.Suggestion} stopOpacity={0.35} />
+                        <stop offset="95%" stopColor={SEV_COLORS.Suggestion} stopOpacity={0.05} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                    <YAxis domain={[0, 1]} tick={axisTick} axisLine={false} tickLine={false} />
+                    <Tooltip {...tooltipStyle} />
+                    <Area type="monotone" dataKey="acceptanceRate" stroke={SEV_COLORS.Suggestion} fill="url(#feedbackAcceptanceGrad)" strokeWidth={1.5} dot={false} name="Acceptance rate" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex items-center gap-6 mt-3 pt-3 border-t border-border-subtle">
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-sev-suggestion">{stats.acceptedFeedbackTotal}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">ACCEPTED</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-sev-error">{stats.rejectedFeedbackTotal}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">REJECTED</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                TOP LABELED CATEGORIES
+              </div>
+              {stats.labeledFeedbackTotal > 0 ? (
+                <div className="grid grid-cols-1 gap-4">
+                  <div>
+                    <div className="text-[10px] font-semibold text-text-muted tracking-[0.05em] font-code mb-2">
+                      MOST ACCEPTED
+                    </div>
+                    <FeedbackCategoryList
+                      items={topAcceptedCategories}
+                      mode="accepted"
+                      emptyLabel="No accepted categories yet"
+                    />
+                  </div>
+                  <div className="pt-3 border-t border-border-subtle">
+                    <div className="text-[10px] font-semibold text-text-muted tracking-[0.05em] font-code mb-2">
+                      MOST REJECTED
+                    </div>
+                    <FeedbackCategoryList
+                      items={topRejectedCategories}
+                      mode="rejected"
+                      emptyLabel="No rejected categories yet"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="h-32 flex items-center justify-center text-center text-text-muted text-sm px-6">
+                  No thumbs recorded yet. Label findings in review detail to train the reviewer.
                 </div>
               )}
             </div>

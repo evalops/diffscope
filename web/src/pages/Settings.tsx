@@ -90,6 +90,16 @@ interface ProviderFormState {
   enabled: boolean
 }
 
+interface PatternRepositoryFormState {
+  source: string
+  scope?: string
+  include_patterns?: string[]
+  max_files?: number
+  max_lines?: number
+  rule_patterns?: string[]
+  max_rules?: number
+}
+
 type ProvidersMap = Record<string, ProviderFormState>
 
 function getProviders(form: Record<string, unknown>): ProvidersMap {
@@ -262,6 +272,53 @@ export function Settings() {
     Array.isArray(form[key])
       ? (form[key] as unknown[]).filter((value): value is string => typeof value === 'string')
       : []
+
+  const patternRepositoriesField = (): PatternRepositoryFormState[] => {
+    const value = form.pattern_repositories
+    if (!Array.isArray(value)) {
+      return []
+    }
+
+    return value.flatMap((entry): PatternRepositoryFormState[] => {
+      if (!entry || typeof entry !== 'object') {
+        return []
+      }
+
+      const candidate = entry as Record<string, unknown>
+      const source = typeof candidate.source === 'string' ? candidate.source.trim() : ''
+      if (!source) {
+        return []
+      }
+
+      return [{
+        source,
+        scope: typeof candidate.scope === 'string' ? candidate.scope : undefined,
+        include_patterns: Array.isArray(candidate.include_patterns)
+          ? candidate.include_patterns.filter((item): item is string => typeof item === 'string')
+          : undefined,
+        max_files: typeof candidate.max_files === 'number' ? candidate.max_files : undefined,
+        max_lines: typeof candidate.max_lines === 'number' ? candidate.max_lines : undefined,
+        rule_patterns: Array.isArray(candidate.rule_patterns)
+          ? candidate.rule_patterns.filter((item): item is string => typeof item === 'string')
+          : undefined,
+        max_rules: typeof candidate.max_rules === 'number' ? candidate.max_rules : undefined,
+      }]
+    })
+  }
+
+  const setPatternRepositorySources = (value: string) => {
+    const nextSources = value
+      .split('\n')
+      .map(source => source.trim())
+      .filter(Boolean)
+
+    const existingBySource = new Map(
+      patternRepositoriesField().map(repo => [repo.source, repo] as const),
+    )
+
+    const nextRepositories = nextSources.map(source => existingBySource.get(source) ?? { source })
+    setForm({ ...form, pattern_repositories: nextRepositories })
+  }
 
   const toggleStringArrayField = (key: string, value: string) => {
     const current = stringArrayField(key)
@@ -504,6 +561,30 @@ export function Settings() {
         />
 
         {textareaField('Review Instructions', 'review_instructions', 'Custom instructions for the reviewer (e.g., "Focus on security issues in auth code")', 'Additional context passed to the LLM for every review')}
+      </Section>
+
+      <Section title="REPOSITORY CONTEXT" defaultOpen={false}>
+        <p className="text-[10px] text-text-muted mb-3">
+          Shared rule packs and repository context help DiffScope behave more like a learned reviewer instead of a stateless diff bot.
+        </p>
+        <div className="space-y-3">
+          {textareaListField('Rule Files', 'rules_files', '.diffscope-rules.yml\nrules/**/*.yaml', 'One file or glob per line. These repository-local rule sources are loaded on each review run.')}
+          {textareaListField('Rule Priority', 'rule_priority', 'sec.authz.tenant-scope\nbug.async.missing-await', 'Optional rule IDs to prioritize when multiple rules match the same change.')}
+          <div>
+            <label className="block text-[12px] font-medium text-text-secondary mb-1">Pattern Repository Sources</label>
+            <textarea
+              value={patternRepositoriesField().map(repo => repo.source).join('\n')}
+              onChange={(e) => setPatternRepositorySources(e.target.value)}
+              placeholder={'../shared-patterns\ngit@github.com:org/security-patterns.git'}
+              rows={4}
+              className="w-full bg-surface border border-border rounded px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code resize-y"
+            />
+            <p className="text-[10px] text-text-muted mt-1">
+              One source per line. Existing scope and rule-pattern settings are preserved for matching sources; newly added sources use default limits until advanced editing is surfaced.
+            </p>
+          </div>
+          {field('Max Active Rules', 'max_active_rules', 'number', '32', 'Upper bound for active rule loading across repository-local and shared rule sources')}
+        </div>
       </Section>
     </div>
   )
