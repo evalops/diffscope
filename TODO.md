@@ -109,7 +109,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 67. [ ] Add pattern-repository utilization analytics showing when extra context actually affected findings.
 68. [ ] Add eval-vs-production dashboards comparing benchmark strength against real-world acceptance.
 69. [ ] Add drill-downs from trend charts directly into the affected reviews, findings, and rules.
-70. [ ] Add exportable JSON/CSV reports for review quality, lifecycle, and reinforcement metrics.
+70. [x] Add exportable JSON/CSV reports for review quality, lifecycle, and reinforcement metrics.
 
 ## 8. APIs, Automation, and MCP-Like Surfaces
 
@@ -171,5 +171,6 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Close TODO drift for existing comment lifecycle update APIs now that read and write surfaces are both shipped.
 - [x] Make PR readiness explicitly call out incremental review coverage when newer commits were not part of the latest pass.
 - [x] Add grouped PR findings API responses for severity, file, and lifecycle automation workflows.
+- [x] Add Analytics JSON/CSV exports covering review quality, lifecycle, and reinforcement metrics.
 - [x] Add learned-rules, attention-gap, and rejected-pattern analytics API endpoints for automation consumers.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.

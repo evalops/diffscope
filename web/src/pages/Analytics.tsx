@@ -4,199 +4,18 @@ import {
   ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
 import { useAnalyticsTrends, useReviews } from '../api/hooks'
-import { AlertTriangle, Loader2 } from 'lucide-react'
+import { AlertTriangle, Download, Loader2 } from 'lucide-react'
+import type { FeedbackEvalTrendGap } from '../api/types'
+import {
+  buildAnalyticsExportReport,
+  computeAnalytics,
+  computeTrendAnalytics,
+  exportAnalyticsCsv,
+  exportAnalyticsJson,
+  formatPercent,
+} from '../lib/analytics'
 import { scoreColorClass } from '../lib/scores'
 import { SEV_COLORS, CHART_THEME } from '../lib/constants'
-import type {
-  AnalyticsTrendsResponse,
-  FeedbackEvalTrendGap,
-  ReviewSession,
-  Severity,
-} from '../api/types'
-
-function computeAnalytics(reviews: ReviewSession[]) {
-  const reviewTimestamp = (value: ReviewSession['started_at']) =>
-    typeof value === 'number' ? value : Date.parse(value)
-
-  const completed = reviews
-    .filter(r => r.status === 'Complete' && r.summary)
-    .sort((a, b) => reviewTimestamp(a.started_at) - reviewTimestamp(b.started_at))
-
-  // Score over time
-  const scoreOverTime = completed.map((r, i) => ({
-    idx: i + 1,
-    label: `#${i + 1}`,
-    score: r.summary!.overall_score,
-    findings: r.summary!.total_comments,
-    files: r.files_reviewed,
-  }))
-
-  // Findings by severity over time
-  const severityOverTime = completed.map((r, i) => ({
-    idx: i + 1,
-    label: `#${i + 1}`,
-    Error: r.summary!.by_severity['Error'] || 0,
-    Warning: r.summary!.by_severity['Warning'] || 0,
-    Info: r.summary!.by_severity['Info'] || 0,
-    Suggestion: r.summary!.by_severity['Suggestion'] || 0,
-  }))
-
-  // Category distribution
-  const catTotals: Record<string, number> = {}
-  for (const r of completed) {
-    for (const [cat, count] of Object.entries(r.summary!.by_category)) {
-      catTotals[cat] = (catTotals[cat] || 0) + count
-    }
-  }
-  const categoryData = Object.entries(catTotals)
-    .sort((a, b) => b[1] - a[1])
-    .map(([name, value]) => ({ name, value }))
-
-  const feedbackTotalsByCategory: Record<string, { accepted: number; rejected: number }> = {}
-  const feedbackTotalsByRule: Record<string, { accepted: number; rejected: number }> = {}
-  const feedbackCoverageSeries = completed.map((r, i) => {
-    let accepted = 0
-    let rejected = 0
-
-    for (const comment of r.comments) {
-      if (comment.feedback === 'accept') {
-        accepted += 1
-      } else if (comment.feedback === 'reject') {
-        rejected += 1
-      } else {
-        continue
-      }
-
-      const current = feedbackTotalsByCategory[comment.category] ?? { accepted: 0, rejected: 0 }
-      if (comment.feedback === 'accept') {
-        current.accepted += 1
-      } else {
-        current.rejected += 1
-      }
-      feedbackTotalsByCategory[comment.category] = current
-
-      const ruleId = comment.rule_id?.trim()
-      if (ruleId) {
-        const currentRule = feedbackTotalsByRule[ruleId] ?? { accepted: 0, rejected: 0 }
-        if (comment.feedback === 'accept') {
-          currentRule.accepted += 1
-        } else {
-          currentRule.rejected += 1
-        }
-        feedbackTotalsByRule[ruleId] = currentRule
-      }
-    }
-
-    const totalComments = r.comments.length
-    const labeled = accepted + rejected
-
-    return {
-      idx: i + 1,
-      label: `#${i + 1}`,
-      coverage: totalComments > 0 ? labeled / totalComments : 0,
-      acceptanceRate: labeled > 0 ? accepted / labeled : 0,
-      labeled,
-      accepted,
-      rejected,
-      totalComments,
-    }
-  })
-
-  const feedbackCategoryData = Object.entries(feedbackTotalsByCategory)
-    .map(([name, totals]) => {
-      const total = totals.accepted + totals.rejected
-      return {
-        name,
-        accepted: totals.accepted,
-        rejected: totals.rejected,
-        total,
-        acceptanceRate: total > 0 ? totals.accepted / total : 0,
-      }
-    })
-    .sort((left, right) => right.total - left.total || right.accepted - left.accepted)
-
-  const feedbackRuleData = Object.entries(feedbackTotalsByRule)
-    .map(([name, totals]) => {
-      const total = totals.accepted + totals.rejected
-      return {
-        name,
-        accepted: totals.accepted,
-        rejected: totals.rejected,
-        total,
-        acceptanceRate: total > 0 ? totals.accepted / total : 0,
-      }
-    })
-    .sort((left, right) => right.total - left.total || right.accepted - left.accepted)
-
-  const topAcceptedCategories = feedbackCategoryData
-    .filter(item => item.accepted > 0)
-    .sort((left, right) => right.accepted - left.accepted || right.total - left.total)
-    .slice(0, 5)
-
-  const topRejectedCategories = feedbackCategoryData
-    .filter(item => item.rejected > 0)
-    .sort((left, right) => right.rejected - left.rejected || right.total - left.total)
-    .slice(0, 5)
-
-  const topAcceptedRules = feedbackRuleData
-    .filter(item => item.accepted > 0)
-    .sort((left, right) => right.accepted - left.accepted || right.total - left.total)
-    .slice(0, 5)
-
-  const topRejectedRules = feedbackRuleData
-    .filter(item => item.rejected > 0)
-    .sort((left, right) => right.rejected - left.rejected || right.total - left.total)
-    .slice(0, 5)
-
-  // Aggregate stats
-  const totalFindings = completed.reduce((s, r) => s + r.summary!.total_comments, 0)
-  const avgFindings = completed.length > 0 ? totalFindings / completed.length : 0
-  const avgScore = completed.length > 0
-    ? completed.reduce((s, r) => s + r.summary!.overall_score, 0) / completed.length : 0
-  const totalFiles = completed.reduce((s, r) => s + r.files_reviewed, 0)
-  const labeledFeedbackTotal = feedbackCoverageSeries.reduce((sum, point) => sum + point.labeled, 0)
-  const acceptedFeedbackTotal = feedbackCoverageSeries.reduce((sum, point) => sum + point.accepted, 0)
-  const rejectedFeedbackTotal = feedbackCoverageSeries.reduce((sum, point) => sum + point.rejected, 0)
-  const totalCommentCount = completed.reduce((sum, r) => sum + r.comments.length, 0)
-  const reviewsWithFeedback = feedbackCoverageSeries.filter(point => point.labeled > 0).length
-
-  const sevTotals: Record<Severity, number> = { Error: 0, Warning: 0, Info: 0, Suggestion: 0 }
-  for (const r of completed) {
-    for (const [sev, count] of Object.entries(r.summary!.by_severity)) {
-      sevTotals[sev as Severity] = (sevTotals[sev as Severity] || 0) + count
-    }
-  }
-
-  // Critical ratio
-  const criticalReviews = completed.filter(r => r.summary!.critical_issues > 0).length
-  const criticalRate = completed.length > 0 ? (criticalReviews / completed.length * 100) : 0
-
-  return {
-    scoreOverTime,
-    severityOverTime,
-    categoryData,
-    feedbackCoverageSeries,
-    topAcceptedCategories,
-    topRejectedCategories,
-    topAcceptedRules,
-    topRejectedRules,
-    stats: {
-      totalReviews: completed.length,
-      avgScore,
-      totalFindings,
-      avgFindings,
-      totalFiles,
-      sevTotals,
-      criticalRate,
-      labeledFeedbackTotal,
-      acceptedFeedbackTotal,
-      rejectedFeedbackTotal,
-      feedbackCoverageRate: totalCommentCount > 0 ? labeledFeedbackTotal / totalCommentCount : 0,
-      feedbackAcceptanceRate: labeledFeedbackTotal > 0 ? acceptedFeedbackTotal / labeledFeedbackTotal : 0,
-      reviewsWithFeedback,
-    },
-  }
-}
 
 const tooltipStyle = {
   contentStyle: { background: CHART_THEME.tooltipBg, border: `1px solid ${CHART_THEME.tooltipBorder}`, borderRadius: 6, fontSize: 11 },
@@ -204,53 +23,6 @@ const tooltipStyle = {
 }
 const axisTick = { fontSize: 10, fill: CHART_THEME.tick }
 const gridProps = { strokeDasharray: '3 3' as const, stroke: CHART_THEME.grid }
-
-function formatTrendLabel(timestamp: string, index: number): string {
-  const parsed = new Date(timestamp)
-  if (Number.isNaN(parsed.getTime())) return `#${index + 1}`
-  return `${parsed.getMonth() + 1}/${parsed.getDate()}`
-}
-
-function formatPercent(value: number | undefined): string {
-  return value == null ? 'n/a' : `${(value * 100).toFixed(0)}%`
-}
-
-function computeTrendAnalytics(trends: AnalyticsTrendsResponse | undefined) {
-  const evalEntries = trends?.eval_trend.entries ?? []
-  const feedbackEntries = trends?.feedback_eval_trend.entries ?? []
-
-  const evalSeries = evalEntries.map((entry, index) => ({
-    idx: index + 1,
-    label: formatTrendLabel(entry.timestamp, index),
-    microF1: entry.micro_f1,
-    weightedScore: entry.weighted_score ?? entry.micro_f1,
-    fixtures: entry.fixture_count,
-    warnings: entry.verification_warning_count ?? 0,
-    parseFailures: entry.verification_parse_failure_count ?? 0,
-    requestFailures: entry.verification_request_failure_count ?? 0,
-  }))
-
-  const feedbackSeries = feedbackEntries.map((entry, index) => ({
-    idx: index + 1,
-    label: formatTrendLabel(entry.timestamp, index),
-    acceptanceRate: entry.acceptance_rate,
-    confidenceF1: entry.confidence_f1 ?? 0,
-    confidenceAgreement: entry.confidence_agreement_rate ?? 0,
-    labeledComments: entry.labeled_comments,
-  }))
-
-  return {
-    warnings: trends?.warnings ?? [],
-    evalEntries,
-    feedbackEntries,
-    evalSeries,
-    feedbackSeries,
-    latestEval: evalEntries[evalEntries.length - 1],
-    latestFeedback: feedbackEntries[feedbackEntries.length - 1],
-    evalTrendPath: trends?.eval_trend_path ?? '.diffscope.eval-trend.json',
-    feedbackTrendPath: trends?.feedback_eval_trend_path ?? '.diffscope.feedback-eval-trend.json',
-  }
-}
 
 function TrendList({ items, emptyLabel }: { items: FeedbackEvalTrendGap[]; emptyLabel: string }) {
   if (items.length === 0) {
@@ -324,6 +96,10 @@ export function Analytics() {
     return computeAnalytics(reviews || [])
   }, [reviews])
   const trendAnalytics = useMemo(() => computeTrendAnalytics(trends), [trends])
+  const exportReport = useMemo(
+    () => buildAnalyticsExportReport(reviews || [], trends),
+    [reviews, trends],
+  )
 
   if (isLoading || trendsLoading) {
     return (
@@ -361,7 +137,24 @@ export function Analytics() {
   if (!hasReviewAnalytics && !hasTrendAnalytics) {
     return (
       <div className="p-6 max-w-6xl mx-auto">
-        <h1 className="text-xl font-semibold text-text-primary mb-6">Analytics</h1>
+        <div className="mb-6 flex items-center justify-between gap-3">
+          <h1 className="text-xl font-semibold text-text-primary">Analytics</h1>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => exportAnalyticsCsv(exportReport)}
+              className="inline-flex items-center gap-1.5 bg-surface-1 border border-border rounded px-2.5 py-1.5 text-[12px] text-text-secondary hover:text-text-primary font-code transition-colors"
+            >
+              <Download size={13} />
+              Export CSV
+            </button>
+            <button
+              onClick={() => exportAnalyticsJson(exportReport)}
+              className="inline-flex items-center gap-1.5 bg-surface-1 border border-border rounded px-2.5 py-1.5 text-[12px] text-text-secondary hover:text-text-primary font-code transition-colors"
+            >
+              Export JSON
+            </button>
+          </div>
+        </div>
         <div className="bg-surface-1 border border-border rounded-lg p-12 text-center text-text-muted text-sm">
           No completed reviews or eval trend history yet. Run reviews, `diffscope eval`, or `diffscope feedback-eval` to start building analytics.
         </div>
@@ -374,7 +167,24 @@ export function Analytics() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      <h1 className="text-xl font-semibold text-text-primary mb-6">Analytics</h1>
+      <div className="mb-6 flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold text-text-primary">Analytics</h1>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => exportAnalyticsCsv(exportReport)}
+            className="inline-flex items-center gap-1.5 bg-surface-1 border border-border rounded px-2.5 py-1.5 text-[12px] text-text-secondary hover:text-text-primary font-code transition-colors"
+          >
+            <Download size={13} />
+            Export CSV
+          </button>
+          <button
+            onClick={() => exportAnalyticsJson(exportReport)}
+            className="inline-flex items-center gap-1.5 bg-surface-1 border border-border rounded px-2.5 py-1.5 text-[12px] text-text-secondary hover:text-text-primary font-code transition-colors"
+          >
+            Export JSON
+          </button>
+        </div>
+      </div>
 
       {warnings.length > 0 && (
         <div className="mb-6 flex items-start gap-3 rounded-lg border border-sev-warning/30 bg-sev-warning/10 px-4 py-3 text-[12px] text-text-secondary">
