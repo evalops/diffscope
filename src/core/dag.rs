@@ -645,9 +645,7 @@ mod tests {
 
         let records = execute_dag_with_parallelism(
             &specs,
-            |node| {
-                Ok(async move { Ok(node.name().to_string()) }.boxed())
-            },
+            |node| Ok(async move { Ok(node.name().to_string()) }.boxed()),
             |_, output| {
                 applied.push(output);
                 Ok(())
@@ -657,7 +655,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            records.iter().map(|record| record.name.as_str()).collect::<Vec<_>>(),
+            records
+                .iter()
+                .map(|record| record.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["root", "branch", "leaf"]
         );
         assert_eq!(applied, vec!["root", "branch"]);

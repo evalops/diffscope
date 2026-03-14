@@ -32,7 +32,7 @@ jobs:
             echo "configured=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: ${{ steps.secret-check.outputs.configured == 'true' }}
         with:
           fetch-depth: 0
