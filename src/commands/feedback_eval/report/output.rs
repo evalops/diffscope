@@ -86,6 +86,18 @@ pub(in super::super) fn print_feedback_eval_report(report: &FeedbackEvalReport) 
                 );
             }
         }
+        for bucket in correlation.attention_by_category.iter().take(4) {
+            if let Some(gap) = bucket.high_confidence_vs_eval_gap {
+                println!(
+                    "Category attention {}: high-confidence={:.0}% eval-F1={:.0}% gap={:.0}pt ({})",
+                    bucket.name,
+                    bucket.high_confidence_acceptance_rate * 100.0,
+                    bucket.eval_micro_f1.unwrap_or_default() * 100.0,
+                    gap * 100.0,
+                    bucket.high_confidence_total
+                );
+            }
+        }
         for bucket in correlation.by_rule.iter().take(4) {
             if let Some(eval_f1) = bucket.eval_f1 {
                 println!(
@@ -94,6 +106,18 @@ pub(in super::super) fn print_feedback_eval_report(report: &FeedbackEvalReport) 
                     bucket.feedback_acceptance_rate * 100.0,
                     bucket.high_confidence_acceptance_rate * 100.0,
                     eval_f1 * 100.0
+                );
+            }
+        }
+        for bucket in correlation.attention_by_rule.iter().take(4) {
+            if let Some(gap) = bucket.high_confidence_vs_eval_gap {
+                println!(
+                    "Rule attention {}: high-confidence={:.0}% eval-F1={:.0}% gap={:.0}pt ({})",
+                    bucket.rule_id,
+                    bucket.high_confidence_acceptance_rate * 100.0,
+                    bucket.eval_f1.unwrap_or_default() * 100.0,
+                    gap * 100.0,
+                    bucket.high_confidence_total
                 );
             }
         }

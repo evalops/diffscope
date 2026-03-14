@@ -33,6 +33,10 @@ pub(in super::super) struct FeedbackEvalCategoryCorrelation {
     pub(in super::super) eval_micro_f1: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in super::super) eval_weighted_score: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) feedback_vs_eval_gap: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) high_confidence_vs_eval_gap: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +57,10 @@ pub(in super::super) struct FeedbackEvalRuleCorrelation {
     pub(in super::super) eval_recall: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in super::super) eval_f1: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) feedback_vs_eval_gap: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) high_confidence_vs_eval_gap: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +69,10 @@ pub(in super::super) struct FeedbackEvalCorrelationReport {
     pub(in super::super) by_category: Vec<FeedbackEvalCategoryCorrelation>,
     #[serde(default)]
     pub(in super::super) by_rule: Vec<FeedbackEvalRuleCorrelation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in super::super) attention_by_category: Vec<FeedbackEvalCategoryCorrelation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in super::super) attention_by_rule: Vec<FeedbackEvalRuleCorrelation>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
