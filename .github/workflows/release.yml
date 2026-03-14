@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Verify Cargo version matches tag
+        run: python3 .github/scripts/check_version_sync.py --tag "${{ github.ref_name }}"
         
       - name: Extract version
         id: get_version
