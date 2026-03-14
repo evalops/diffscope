@@ -23,6 +23,13 @@ Thumbs.db
 *.patch
 comments.json
 review.md
+mutants.out/
+mutants.out.old/
+
+# Eval and trends
+eval/*.json
+eval/artifacts/
+.diffscope.eval-trend.json
 
 # Docker
 .dockerignore

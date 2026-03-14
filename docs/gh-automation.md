@@ -76,6 +76,11 @@ gh workflow run "Prepare release" -f version=0.5.28
 
 ## CI and runs
 
+- **Lint**: actionlint, frontend build, `cargo fmt`, `cargo clippy`.
+- **Test**: `cargo nextest run` on ubuntu/macos/windows.
+- **Coverage**: `cargo llvm-cov` → upload to Codecov. Set repo secret `CODECOV_TOKEN` to enable uploads; CI does not fail if missing.
+- **PR merge comment**: When a PR is merged, a workflow comments on each issue linked via “Closes #N”, “Fixes #N”, or “Resolves #N” in the PR body.
+
 ```bash
 # Download artifacts from latest run
 gh run download

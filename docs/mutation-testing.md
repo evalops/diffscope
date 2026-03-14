@@ -56,4 +56,4 @@ To re-run: `cargo mutants -f '*state*'` and `cargo mutants -f '*storage_pg*'` (a
 
 ## CI
 
-The `mutation` job in `.github/workflows/ci.yml` runs mutation on the `storage_json` crate with a timeout. Update the "allowed missed" baseline in the job when you intentionally accept new equivalent mutants (and add them to the table above).
+The `mutation` job in `.github/workflows/ci.yml` runs mutation on the `storage_json` crate with a timeout. The current **allowed-missed baseline is 15**. Update the baseline in the workflow (and optionally this doc) when you intentionally accept new equivalent mutants (and add them to the table above).

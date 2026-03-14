@@ -36,6 +36,7 @@ This doc and GitHub Actions make releases repeatable with minimal manual steps.
 
 - Use the **PR template** (Summary, Test plan, **Closes #N**).
 - Linking “Closes #28” in the PR body auto-closes the issue when the PR is merged.
+- When the PR is merged, the **PR merge — comment on linked issues** workflow posts a comment on each linked issue (Closes/Fixes/Resolves #N).
 
 ## Automation summary
 
@@ -46,3 +47,4 @@ This doc and GitHub Actions make releases repeatable with minimal manual steps.
 | Release body | **Release** workflow reads `RELEASE_NOTES.md` for the tagged version. |
 | Binaries + Docker | **Release** workflow builds and uploads. |
 | Issue close | Add “Closes #N” in PR body. |
+| PR merge → issue comment | **PR merge — comment on linked issues** workflow comments on each linked issue when the PR is merged. |
