@@ -21,6 +21,9 @@ cargo run -- --help       # CLI usage
 - `eval/` — Evaluation and benchmarking
 - `examples/` — Usage examples
 
+## Development
+- Run `bash scripts/install-hooks.sh` once to install pre-commit and pre-push hooks (merge conflict check, trailing newline, conditional Rust/web checks, shellcheck; pre-push adds version sync, cargo audit, full web build+test).
+
 ## Conventions
 - Use frontier models for reviews — never default to smaller models
 - Vault integration for secrets management (HashiCorp Vault)

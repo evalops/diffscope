@@ -7,11 +7,24 @@ cd "$repo_root"
 echo "==> Validating GitHub workflows..."
 bash "./scripts/check-workflows.sh"
 
+echo "==> Verifying Cargo version vs git tags..."
+python3 .github/scripts/check_version_sync.py
+
 echo "==> Running cargo fmt --check..."
 cargo fmt --check
 
 echo "==> Running cargo clippy --all-targets..."
 cargo clippy --all-targets -- -D warnings
+
+if command -v cargo-audit >/dev/null 2>&1; then
+    echo "==> Running cargo audit..."
+    cargo audit
+else
+    echo "==> Skipping cargo audit (cargo-audit not installed; run: cargo install cargo-audit)."
+fi
+
+echo "==> Building and testing web..."
+(cd web && npm ci && npm run build && npm run test)
 
 echo "==> Running cargo test..."
 cargo test

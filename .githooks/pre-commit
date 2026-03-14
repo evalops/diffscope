@@ -7,7 +7,6 @@ cd "$repo_root"
 staged="$(git diff --cached --name-only)"
 
 # Reject merge conflict markers in staged files
-conflicts_file=""
 if [ -n "$staged" ]; then
     conflicts_file="$(mktemp)"
     echo "$staged" | while IFS= read -r f; do
@@ -22,19 +21,51 @@ if [ -n "$staged" ]; then
     rm -f "$conflicts_file"
 fi
 
+# Require text files to end with exactly one newline (skip binaries and fixtures)
+if [ -n "$staged" ]; then
+    noeol_file="$(mktemp)"
+    skip_ext='\.(png|jpg|jpeg|gif|ico|pdf|bin|wasm|woff2?|ttf|eot|otf|zip|gz|sqlite|db)$'
+    echo "$staged" | while IFS= read -r f; do
+        [ ! -f "$f" ] && continue
+        [ -d "$f" ] && continue
+        [ ! -s "$f" ] && continue
+        echo "$f" | grep -qE "$skip_ext" && continue
+        # Must end with newline (0a)
+        last="$(tail -c 1 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')" || last=""
+        [ "$last" = "0a" ] && continue
+        # Reject double newline at EOF
+        last2="$(tail -c 2 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')" || last2=""
+        [ "$last2" = "0a0a" ] && echo "$f" >> "$noeol_file" && continue
+        [ "$last" != "0a" ] && echo "$f" >> "$noeol_file"
+    done
+    if [ -s "$noeol_file" ] 2>/dev/null; then
+        echo "ERROR: These files must end with exactly one newline (no missing or double newline at EOF):"
+        cat "$noeol_file"
+        rm -f "$noeol_file"
+        exit 1
+    fi
+    rm -f "$noeol_file"
+fi
+
 echo "==> Validating GitHub workflows..."
 bash "./scripts/check-workflows.sh"
 
-echo "==> Running cargo fmt --check..."
-cargo fmt --check
+# Only run Rust checks when Rust-relevant files are staged
+rust_relevant() { echo "$staged" | grep -qE '^Cargo\.(toml|lock)$|\.rs$|^src/|^\.cargo/'; }
 
-echo "==> Running cargo clippy --all-targets..."
-cargo clippy --all-targets -- -D warnings
+if rust_relevant; then
+    echo "==> Running cargo fmt --check..."
+    cargo fmt --check
+
+    echo "==> Running cargo clippy --all-targets..."
+    cargo clippy --all-targets -- -D warnings
+fi
 
 if echo "$staged" | grep -q '^web/'; then
-    echo "==> Web files changed: running npm lint and tsc in web/..."
+    echo "==> Web files changed: running npm lint, tsc, and test in web/..."
     (cd web && npm run lint)
     (cd web && npx tsc -b --noEmit)
+    (cd web && npm run test)
 fi
 
 if command -v shellcheck >/dev/null 2>&1; then
@@ -46,11 +77,13 @@ if command -v shellcheck >/dev/null 2>&1; then
     fi
 fi
 
-if [ "${SKIP_TESTS:-0}" = "1" ]; then
-    echo "==> Skipping cargo test (SKIP_TESTS=1). Pre-push still enforces the full Rust gate."
-else
-    echo "==> Running cargo test..."
-    cargo test
+if rust_relevant; then
+    if [ "${SKIP_TESTS:-0}" = "1" ]; then
+        echo "==> Skipping cargo test (SKIP_TESTS=1). Pre-push still enforces the full Rust gate."
+    else
+        echo "==> Running cargo test..."
+        cargo test
+    fi
 fi
 
 echo "==> Pre-commit checks passed."
