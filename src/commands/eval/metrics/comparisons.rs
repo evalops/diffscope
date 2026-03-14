@@ -160,6 +160,29 @@ mod tests {
 
     use super::*;
 
+    fn empty_report() -> EvalReport {
+        EvalReport {
+            run: Default::default(),
+            fixtures_total: 0,
+            fixtures_passed: 0,
+            fixtures_failed: 0,
+            rule_metrics: vec![],
+            rule_summary: None,
+            benchmark_summary: None,
+            suite_results: vec![],
+            benchmark_by_category: HashMap::new(),
+            benchmark_by_language: HashMap::new(),
+            benchmark_by_difficulty: HashMap::new(),
+            suite_comparisons: vec![],
+            category_comparisons: vec![],
+            language_comparisons: vec![],
+            verification_health: None,
+            warnings: vec![],
+            threshold_failures: vec![],
+            results: vec![],
+        }
+    }
+
     fn metrics(micro_f1: f32, weighted_score: f32, fixture_count: usize) -> AggregateMetrics {
         AggregateMetrics {
             micro_f1,
@@ -167,6 +190,38 @@ mod tests {
             fixture_count,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn build_suite_comparisons_intersects_current_and_baseline() {
+        let current = vec![EvalSuiteResult {
+            suite: "review-depth-infra".to_string(),
+            fixture_count: 2,
+            aggregate: metrics(0.8, 0.75, 2),
+            thresholds_enforced: false,
+            threshold_pass: true,
+            threshold_failures: vec![],
+        }];
+        let baseline = EvalReport {
+            suite_results: vec![EvalSuiteResult {
+                suite: "review-depth-infra".to_string(),
+                fixture_count: 2,
+                aggregate: metrics(0.9, 0.85, 2),
+                thresholds_enforced: false,
+                threshold_pass: true,
+                threshold_failures: vec![],
+            }],
+            ..empty_report()
+        };
+
+        let comparisons = build_suite_comparisons(&current, Some(&baseline));
+
+        assert_eq!(comparisons.len(), 1);
+        assert_eq!(comparisons[0].name, "review-depth-infra");
+        assert!((comparisons[0].micro_f1_delta + 0.1).abs() < f32::EPSILON);
+        assert!((comparisons[0].weighted_score_delta + 0.1).abs() < f32::EPSILON);
+        assert_eq!(comparisons[0].current_fixture_count, 2);
+        assert_eq!(comparisons[0].baseline_fixture_count, 2);
     }
 
     #[test]
@@ -248,6 +303,108 @@ mod tests {
         assert_eq!(health.fail_open_warning_count, 2);
         assert_eq!(health.parse_failure_count, 1);
         assert_eq!(health.request_failure_count, 1);
+    }
+
+    #[test]
+    fn build_verification_health_returns_none_for_non_verification_warnings_only() {
+        let results = vec![EvalFixtureResult {
+            fixture: "suite/a".to_string(),
+            suite: Some("suite".to_string()),
+            passed: true,
+            total_comments: 1,
+            required_matches: 1,
+            required_total: 1,
+            benchmark_metrics: None,
+            suite_thresholds: None,
+            difficulty: None,
+            metadata: None,
+            rule_metrics: vec![],
+            rule_summary: None,
+            warnings: vec!["reproduction validator warning".to_string()],
+            verification_report: None,
+            agent_activity: None,
+            reproduction_summary: None,
+            artifact_path: None,
+            failures: vec![],
+            dag_traces: vec![],
+        }];
+
+        assert!(build_verification_health(&results).is_none());
+    }
+
+    #[test]
+    fn build_verification_health_detects_verifier_only_warning_text() {
+        let results = vec![EvalFixtureResult {
+            fixture: "suite/a".to_string(),
+            suite: Some("suite".to_string()),
+            passed: true,
+            total_comments: 1,
+            required_matches: 1,
+            required_total: 1,
+            benchmark_metrics: None,
+            suite_thresholds: None,
+            difficulty: None,
+            metadata: None,
+            rule_metrics: vec![],
+            rule_summary: None,
+            warnings: vec!["verifier request error: timeout".to_string()],
+            verification_report: None,
+            agent_activity: None,
+            reproduction_summary: None,
+            artifact_path: None,
+            failures: vec![],
+            dag_traces: vec![],
+        }];
+
+        let health = build_verification_health(&results).unwrap();
+
+        assert_eq!(health.warnings_total, 1);
+        assert_eq!(health.fixtures_with_warnings, 1);
+        assert_eq!(health.request_failure_count, 1);
+        assert_eq!(health.total_checks, 1);
+    }
+
+    #[test]
+    fn build_verification_health_keeps_zero_percent_when_no_checks_ran() {
+        let results = vec![EvalFixtureResult {
+            fixture: "suite/a".to_string(),
+            suite: Some("suite".to_string()),
+            passed: true,
+            total_comments: 0,
+            required_matches: 0,
+            required_total: 0,
+            benchmark_metrics: None,
+            suite_thresholds: None,
+            difficulty: None,
+            metadata: None,
+            rule_metrics: vec![],
+            rule_summary: None,
+            warnings: vec![],
+            verification_report: Some(EvalVerificationReport {
+                consensus_mode: "majority".to_string(),
+                required_votes: 1,
+                judge_count: 1,
+                judges: vec![EvalVerificationJudgeReport {
+                    model: "judge".to_string(),
+                    total_comments: 0,
+                    passed_comments: 0,
+                    filtered_comments: 0,
+                    abstained_comments: 0,
+                    warnings: vec![],
+                }],
+            }),
+            agent_activity: None,
+            reproduction_summary: None,
+            artifact_path: None,
+            failures: vec![],
+            dag_traces: vec![],
+        }];
+
+        let health = build_verification_health(&results).unwrap();
+
+        assert_eq!(health.total_checks, 0);
+        assert_eq!(health.verified_checks, 0);
+        assert_eq!(health.verified_pct, 0.0);
     }
 
     #[test]
