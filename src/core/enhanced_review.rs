@@ -145,7 +145,7 @@ fn exercise_symbol_graph(graph: &mut SymbolGraph, diffs: &[UnifiedDiff]) {
     ];
     for kind in kinds {
         let node = SymbolNode {
-            name: format!("_enhanced_{:?}", kind),
+            name: format!("_enhanced_{kind:?}"),
             file_path: PathBuf::from("_enhanced_.rs"),
             line_range: (1, 1),
             kind,

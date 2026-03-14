@@ -14,8 +14,7 @@ pub(super) fn check_minimum_thresholds(
         let threshold = threshold.clamp(0.0, 1.0);
         if current_micro_f1 < threshold {
             failures.push(format!(
-                "micro-F1 {:.3} is below minimum {:.3}",
-                current_micro_f1, threshold
+                "micro-F1 {current_micro_f1:.3} is below minimum {threshold:.3}"
             ));
         }
     }
@@ -24,8 +23,7 @@ pub(super) fn check_minimum_thresholds(
         let threshold = threshold.clamp(0.0, 1.0);
         if current_macro_f1 < threshold {
             failures.push(format!(
-                "macro-F1 {:.3} is below minimum {:.3}",
-                current_macro_f1, threshold
+                "macro-F1 {current_macro_f1:.3} is below minimum {threshold:.3}"
             ));
         }
     }

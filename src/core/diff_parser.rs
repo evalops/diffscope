@@ -450,13 +450,32 @@ impl DiffParser {
             .captures(header)
             .ok_or_else(|| anyhow::anyhow!("Invalid hunk header: {}", header))?;
 
-        let old_start = caps.get(1).unwrap().as_str().parse()?;
-        let old_lines = caps.get(2).map_or(1, |m| m.as_str().parse().unwrap_or(1));
-        let new_start = caps.get(3).unwrap().as_str().parse()?;
-        let new_lines = caps.get(4).map_or(1, |m| m.as_str().parse().unwrap_or(1));
+        let old_start = parse_required_capture(&caps, 1, header)?;
+        let old_lines = parse_optional_capture(&caps, 2).unwrap_or(1);
+        let new_start = parse_required_capture(&caps, 3, header)?;
+        let new_lines = parse_optional_capture(&caps, 4).unwrap_or(1);
 
         Ok((old_start, old_lines, new_start, new_lines))
     }
+}
+
+fn parse_required_capture(
+    captures: &regex::Captures<'_>,
+    group: usize,
+    header: &str,
+) -> Result<usize> {
+    captures
+        .get(group)
+        .ok_or_else(|| anyhow::anyhow!("Missing hunk header capture group {}: {}", group, header))?
+        .as_str()
+        .parse()
+        .map_err(Into::into)
+}
+
+fn parse_optional_capture(captures: &regex::Captures<'_>, group: usize) -> Option<usize> {
+    captures
+        .get(group)
+        .and_then(|value| value.as_str().parse::<usize>().ok())
 }
 
 #[cfg(test)]
@@ -537,6 +556,8 @@ index 83db48f..0000000\n\
         assert_eq!(diffs.len(), 1);
         assert!(diffs[0].is_deleted);
         assert!(!diffs[0].is_new);
+        assert_eq!(diffs[0].hunks[0].old_lines, 1);
+        assert_eq!(diffs[0].hunks[0].new_lines, 0);
     }
 
     #[test]
@@ -554,6 +575,8 @@ index 0000000..f735c20\n\
         assert_eq!(diffs.len(), 1);
         assert!(diffs[0].is_new);
         assert!(!diffs[0].is_deleted);
+        assert_eq!(diffs[0].hunks[0].old_lines, 0);
+        assert_eq!(diffs[0].hunks[0].new_lines, 1);
     }
 
     #[test]

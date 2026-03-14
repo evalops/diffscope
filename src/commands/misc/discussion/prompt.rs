@@ -29,7 +29,7 @@ pub(super) async fn answer_discussion_question(
         comment.content
     ));
     if let Some(suggestion) = &comment.suggestion {
-        prompt.push_str(&format!("- suggested fix: {}\n", suggestion));
+        prompt.push_str(&format!("- suggested fix: {suggestion}\n"));
     }
 
     if !history.trim().is_empty() {
@@ -37,7 +37,7 @@ pub(super) async fn answer_discussion_question(
         prompt.push_str(&history);
     }
 
-    prompt.push_str(&format!("\nNew question:\n{}\n", question));
+    prompt.push_str(&format!("\nNew question:\n{question}\n"));
 
     let request = adapters::llm::LLMRequest {
         system_prompt: "You are an expert reviewer assisting with follow-up questions on a specific code review comment. Answer directly, cite tradeoffs, and suggest concrete next steps. If the comment appears weak, say so and explain why.".to_string(),

@@ -32,7 +32,7 @@ fn build_probe_messages() -> Value {
 
 fn build_ollama_request(base_url: &str, model_name: &str, messages: Value) -> InferenceRequest {
     InferenceRequest {
-        url: format!("{}/api/chat", base_url),
+        url: format!("{base_url}/api/chat"),
         body: json!({
             "model": model_name,
             "messages": messages,
@@ -44,7 +44,7 @@ fn build_ollama_request(base_url: &str, model_name: &str, messages: Value) -> In
 
 fn build_openai_request(base_url: &str, model_name: &str, messages: Value) -> InferenceRequest {
     InferenceRequest {
-        url: format!("{}/v1/chat/completions", base_url),
+        url: format!("{base_url}/v1/chat/completions"),
         body: json!({
             "model": model_name,
             "messages": messages,

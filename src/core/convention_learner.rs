@@ -221,8 +221,7 @@ impl ConventionStore {
 
             if !boost.is_empty() {
                 guidance.push_str(&format!(
-                    "\nHigh-value {} patterns (team accepts these):\n",
-                    category
+                    "\nHigh-value {category} patterns (team accepts these):\n"
                 ));
                 for p in boost.iter().take(5) {
                     guidance.push_str(&format!(
@@ -234,8 +233,7 @@ impl ConventionStore {
 
             if !suppress.is_empty() {
                 guidance.push_str(&format!(
-                    "\nLow-value {} patterns (team rejects these):\n",
-                    category
+                    "\nLow-value {category} patterns (team rejects these):\n"
                 ));
                 for p in suppress.iter().take(5) {
                     guidance.push_str(&format!(
@@ -406,7 +404,7 @@ mod tests {
         }
 
         let score = store.score_comment("null check missing for user input", "Bug");
-        assert!(score > 0.0, "Expected positive score, got {}", score);
+        assert!(score > 0.0, "Expected positive score, got {score}");
     }
 
     #[test]
@@ -431,7 +429,7 @@ mod tests {
         );
 
         let score = store.score_comment("Consider adding more comments", "Style");
-        assert!(score < 0.0, "Expected negative score, got {}", score);
+        assert!(score < 0.0, "Expected negative score, got {score}");
     }
 
     #[test]

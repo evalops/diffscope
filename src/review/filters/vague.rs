@@ -36,7 +36,7 @@ pub fn is_vague_comment_text(text: &str) -> bool {
     let lower = trimmed.to_ascii_lowercase();
     if VAGUE_COMMENT_PREFIXES
         .iter()
-        .any(|prefix| lower == *prefix || lower.starts_with(&format!("{} ", prefix)))
+        .any(|prefix| lower == *prefix || lower.starts_with(&format!("{prefix} ")))
     {
         return true;
     }

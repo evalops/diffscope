@@ -20,7 +20,7 @@ pub(in super::super) async fn suggest_commit_message(config: config::Config) -> 
     let commit_message = core::CommitPromptBuilder::extract_commit_message(&response);
 
     println!("\nSuggested commit message:");
-    println!("{}", commit_message);
+    println!("{commit_message}");
 
     if commit_message.len() > 72 {
         println!(

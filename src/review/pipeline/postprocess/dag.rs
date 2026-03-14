@@ -372,7 +372,7 @@ fn build_postprocess_specs(
             id: ReviewPostprocessStage::Verification,
             dependencies: vec![ReviewPostprocessStage::PluginPostProcessors],
             hints: stage_hints(ReviewPostprocessStage::Verification),
-            enabled: config.verification_pass,
+            enabled: config.verification.enabled,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::SemanticFeedback,

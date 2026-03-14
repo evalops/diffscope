@@ -717,8 +717,7 @@ impl Authenticator for AdminAuth {
         let names: HashSet<&str> = related.iter().map(|r| r.name.as_str()).collect();
         assert!(
             names.contains("Role") || names.contains("Authenticator"),
-            "Expected colocated symbols, got: {:?}",
-            names
+            "Expected colocated symbols, got: {names:?}"
         );
     }
 

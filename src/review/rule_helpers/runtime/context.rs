@@ -40,13 +40,13 @@ fn format_rule_context_line(rule: &core::ReviewRule) -> String {
 fn rule_context_attributes(rule: &core::ReviewRule) -> Vec<String> {
     let mut attrs = Vec::new();
     if let Some(scope) = &rule.scope {
-        attrs.push(format!("scope={}", scope));
+        attrs.push(format!("scope={scope}"));
     }
     if let Some(severity) = &rule.severity {
-        attrs.push(format!("severity={}", severity));
+        attrs.push(format!("severity={severity}"));
     }
     if let Some(category) = &rule.category {
-        attrs.push(format!("category={}", category));
+        attrs.push(format!("category={category}"));
     }
     if !rule.tags.is_empty() {
         attrs.push(format!("tags={}", rule.tags.join("|")));

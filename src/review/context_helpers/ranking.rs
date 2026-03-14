@@ -82,7 +82,7 @@ mod tests {
         };
         let chunks: Vec<core::LLMContextChunk> = (0..5)
             .map(|i| core::LLMContextChunk {
-                content: format!("chunk {}", i),
+                content: format!("chunk {i}"),
                 context_type: core::ContextType::Documentation,
                 file_path: PathBuf::from("test.rs"),
                 line_range: None,
@@ -106,7 +106,7 @@ mod tests {
         };
         let chunks: Vec<core::LLMContextChunk> = (0..5)
             .map(|i| core::LLMContextChunk {
-                content: format!("chunk {} with some content here", i),
+                content: format!("chunk {i} with some content here"),
                 context_type: core::ContextType::Documentation,
                 file_path: PathBuf::from("test.rs"),
                 line_range: None,

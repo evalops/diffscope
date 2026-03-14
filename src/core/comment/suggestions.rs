@@ -12,7 +12,7 @@ pub(super) fn generate_code_suggestion(raw: &RawComment) -> Option<CodeSuggestio
                 original_code: "// Original code would be extracted from context".to_string(),
                 suggested_code: suggestion.clone(),
                 explanation: "Improved implementation following best practices".to_string(),
-                diff: format!("- original\n+ {}", suggestion),
+                diff: format!("- original\n+ {suggestion}"),
             });
         }
     }

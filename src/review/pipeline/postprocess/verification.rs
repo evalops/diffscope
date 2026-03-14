@@ -21,9 +21,9 @@ pub(super) async fn apply_verification_pass(
     let (analyzer_comments, llm_comments): (Vec<_>, Vec<_>) =
         comments.into_iter().partition(is_analyzer_comment);
 
-    let (verified_llm_comments, warnings, report) = if services.config.verification_pass
+    let (verified_llm_comments, warnings, report) = if services.config.verification.enabled
         && !llm_comments.is_empty()
-        && llm_comments.len() <= services.config.verification_max_comments
+        && llm_comments.len() <= services.config.verification.max_comments
     {
         let comment_count_before = llm_comments.len();
         let summary = super::super::super::verification::verify_comments_with_judges(
@@ -33,9 +33,9 @@ pub(super) async fn apply_verification_pass(
             &session.verification_context,
             VerificationJudgeConfig {
                 adapters: &services.verification_adapters,
-                min_score: services.config.verification_min_score,
-                fail_open: services.config.verification_fail_open,
-                consensus_mode: services.config.verification_consensus_mode,
+                min_score: services.config.verification.min_score,
+                fail_open: services.config.verification.fail_open,
+                consensus_mode: services.config.verification.consensus_mode,
             },
         )
         .await;

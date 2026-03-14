@@ -109,7 +109,7 @@ impl MultiPassReview {
 
         guidance.push_str("\nRisk factors identified:\n");
         for reason in &hotspot.reasons {
-            guidance.push_str(&format!("- {}\n", reason));
+            guidance.push_str(&format!("- {reason}\n"));
         }
 
         guidance.push_str(&format!(
@@ -220,10 +220,10 @@ fn analyze_file_risk(diff: &UnifiedDiff) -> HotspotResult {
 
     if total_changes > 100 {
         risk_score += 0.2;
-        reasons.push(format!("Large change volume ({} lines)", total_changes));
+        reasons.push(format!("Large change volume ({total_changes} lines)"));
     } else if total_changes > 50 {
         risk_score += 0.1;
-        reasons.push(format!("Moderate change volume ({} lines)", total_changes));
+        reasons.push(format!("Moderate change volume ({total_changes} lines)"));
     }
 
     // Content risk patterns
@@ -352,7 +352,7 @@ mod tests {
 
     fn make_comment(file: &str, line: usize, content: &str) -> Comment {
         Comment {
-            id: format!("cmt_{}", line),
+            id: format!("cmt_{line}"),
             file_path: PathBuf::from(file),
             line_number: line,
             content: content.to_string(),

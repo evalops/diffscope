@@ -106,7 +106,7 @@ fn build_prompt_for_tests_with_context(
                 "let query = format!(\"SELECT * FROM users WHERE id = {}\", user_id);".to_string()
             }
             20 => "let user = maybe_user.unwrap();".to_string(),
-            _ => format!("// line {}", line),
+            _ => format!("// line {line}"),
         })
         .collect::<Vec<_>>()
         .join("\n");

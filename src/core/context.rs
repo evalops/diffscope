@@ -209,13 +209,13 @@ impl ContextFetcher {
                     // Look for function/class/interface definitions
                     for (line_num, line) in lines.iter().enumerate() {
                         let trimmed = line.trim();
-                        if trimmed.contains(&format!("function {}", symbol))
-                            || trimmed.contains(&format!("class {}", symbol))
-                            || trimmed.contains(&format!("interface {}", symbol))
-                            || trimmed.contains(&format!("fn {}", symbol))
-                            || trimmed.contains(&format!("struct {}", symbol))
-                            || trimmed.contains(&format!("enum {}", symbol))
-                            || trimmed.contains(&format!("impl {}", symbol))
+                        if trimmed.contains(&format!("function {symbol}"))
+                            || trimmed.contains(&format!("class {symbol}"))
+                            || trimmed.contains(&format!("interface {symbol}"))
+                            || trimmed.contains(&format!("fn {symbol}"))
+                            || trimmed.contains(&format!("struct {symbol}"))
+                            || trimmed.contains(&format!("enum {symbol}"))
+                            || trimmed.contains(&format!("impl {symbol}"))
                         {
                             // Extract a few lines around the definition for context
                             let start_line = line_num.saturating_sub(2);

@@ -16,16 +16,14 @@ pub(super) fn append_total_comment_failures(
     if let Some(min_total) = expectations.min_total {
         if total_comments < min_total {
             failures.push(format!(
-                "Expected at least {} comments, got {}",
-                min_total, total_comments
+                "Expected at least {min_total} comments, got {total_comments}"
             ));
         }
     }
     if let Some(max_total) = expectations.max_total {
         if total_comments > max_total {
             failures.push(format!(
-                "Expected at most {} comments, got {}",
-                max_total, total_comments
+                "Expected at most {max_total} comments, got {total_comments}"
             ));
         }
     }

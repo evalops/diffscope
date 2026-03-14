@@ -75,13 +75,10 @@ impl InteractiveCommand {
     ) -> Result<String> {
         if let Some(diff) = diff_content {
             let prompt = if self.args.is_empty() {
-                format!("Review the following code changes:\n\n{}", diff)
+                format!("Review the following code changes:\n\n{diff}")
             } else {
                 let focus = self.args.join(" ");
-                format!(
-                    "Review the following code changes with focus on {}:\n\n{}",
-                    focus, diff
-                )
+                format!("Review the following code changes with focus on {focus}:\n\n{diff}")
             };
 
             let request = LLMRequest {
@@ -108,7 +105,7 @@ impl InteractiveCommand {
             )
         } else {
             let patterns = self.args.join(", ");
-            Ok(format!("✅ Will ignore: {}\n\nAdd these patterns to your .diffscope.yml for permanent configuration.", patterns))
+            Ok(format!("✅ Will ignore: {patterns}\n\nAdd these patterns to your .diffscope.yml for permanent configuration."))
         }
     }
 
@@ -122,17 +119,14 @@ impl InteractiveCommand {
         } else {
             // Try to find specific line or section
             let target = self.args.join(" ");
-            format!(
-                "Explain the following in the context of the code changes: {}",
-                target
-            )
+            format!("Explain the following in the context of the code changes: {target}")
         };
 
         let request = LLMRequest {
             system_prompt:
                 "You are a helpful code explainer. Provide clear, educational explanations."
                     .to_string(),
-            user_prompt: format!("Explain this code or change:\n\n{}", context),
+            user_prompt: format!("Explain this code or change:\n\n{context}"),
             temperature: Some(0.5),
             max_tokens: Some(800),
             response_schema: None,
@@ -155,19 +149,19 @@ impl InteractiveCommand {
         let (system_prompt, user_prompt) = match target {
             "tests" => (
                 "You are a test generation expert. Generate comprehensive tests.",
-                format!("Generate unit tests for the following context: {}", context),
+                format!("Generate unit tests for the following context: {context}"),
             ),
             "docs" => (
                 "You are a documentation expert. Generate clear, comprehensive documentation.",
-                format!("Generate documentation for: {}", context),
+                format!("Generate documentation for: {context}"),
             ),
             "types" => (
                 "You are a TypeScript/type system expert. Generate proper type definitions.",
-                format!("Generate type definitions for: {}", context),
+                format!("Generate type definitions for: {context}"),
             ),
             _ => (
                 "You are a helpful code generator.",
-                format!("Generate {} for: {}", target, context),
+                format!("Generate {target} for: {context}"),
             ),
         };
 
@@ -270,7 +264,7 @@ impl InteractiveProcessor {
     pub fn add_ignore_pattern(&mut self, pattern: &str) {
         if pattern.contains('*') {
             let escaped = regex::escape(pattern).replace(r"\*", ".*");
-            let regex_pattern = format!("^{}$", escaped);
+            let regex_pattern = format!("^{escaped}$");
             if let Ok(re) = Regex::new(&regex_pattern) {
                 self.glob_regexes.push(re);
             }

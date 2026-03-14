@@ -167,7 +167,7 @@ impl SupplyChainAnalyzer {
                         findings.push(SupplyChainFinding {
                             rule_id: "sec.supply-chain.non-registry-source",
                             severity: "warning",
-                            description: format!("Git-sourced dependency: {}", trimmed),
+                            description: format!("Git-sourced dependency: {trimmed}"),
                             line_number: line_num,
                         });
                     }
@@ -184,8 +184,7 @@ impl SupplyChainAnalyzer {
                 rule_id: "sec.supply-chain.non-registry-source",
                 severity: "warning",
                 description: format!(
-                    "Git dependency bypasses crates.io checksums — pin to specific rev: {}",
-                    line
+                    "Git dependency bypasses crates.io checksums — pin to specific rev: {line}"
                 ),
                 line_number: line_num,
             });
@@ -194,10 +193,7 @@ impl SupplyChainAnalyzer {
             findings.push(SupplyChainFinding {
                 rule_id: "sec.supply-chain.non-registry-source",
                 severity: "info",
-                description: format!(
-                    "Path dependency (verify this is a workspace member): {}",
-                    line
-                ),
+                description: format!("Path dependency (verify this is a workspace member): {line}"),
                 line_number: line_num,
             });
         }
@@ -205,7 +201,7 @@ impl SupplyChainAnalyzer {
             findings.push(SupplyChainFinding {
                 rule_id: "sec.supply-chain.unpinned-version",
                 severity: "warning",
-                description: format!("Wildcard version allows arbitrary major bumps: {}", line),
+                description: format!("Wildcard version allows arbitrary major bumps: {line}"),
                 line_number: line_num,
             });
         }
@@ -214,8 +210,7 @@ impl SupplyChainAnalyzer {
                 rule_id: "sec.supply-chain.override-directive",
                 severity: "warning",
                 description: format!(
-                    "[patch]/[replace] section can silently redirect dependencies: {}",
-                    line
+                    "[patch]/[replace] section can silently redirect dependencies: {line}"
                 ),
                 line_number: line_num,
             });
@@ -228,8 +223,7 @@ impl SupplyChainAnalyzer {
                 rule_id: "sec.supply-chain.install-scripts",
                 severity: "warning",
                 description: format!(
-                    "Install script detected — executes during npm install: {}",
-                    line
+                    "Install script detected — executes during npm install: {line}"
                 ),
                 line_number: line_num,
             });
@@ -238,7 +232,7 @@ impl SupplyChainAnalyzer {
             findings.push(SupplyChainFinding {
                 rule_id: "sec.supply-chain.non-registry-source",
                 severity: "warning",
-                description: format!("Non-registry dependency source: {}", line),
+                description: format!("Non-registry dependency source: {line}"),
                 line_number: line_num,
             });
         }
@@ -246,10 +240,7 @@ impl SupplyChainAnalyzer {
             findings.push(SupplyChainFinding {
                 rule_id: "sec.supply-chain.unpinned-version",
                 severity: "warning",
-                description: format!(
-                    "Wildcard/latest version — pin to specific version: {}",
-                    line
-                ),
+                description: format!("Wildcard/latest version — pin to specific version: {line}"),
                 line_number: line_num,
             });
         }
@@ -257,10 +248,7 @@ impl SupplyChainAnalyzer {
             findings.push(SupplyChainFinding {
                 rule_id: "sec.supply-chain.override-directive",
                 severity: "info",
-                description: format!(
-                    "Resolution/override section can redirect packages: {}",
-                    line
-                ),
+                description: format!("Resolution/override section can redirect packages: {line}"),
                 line_number: line_num,
             });
         }
@@ -271,10 +259,7 @@ impl SupplyChainAnalyzer {
             findings.push(SupplyChainFinding {
                 rule_id: "sec.supply-chain.non-registry-source",
                 severity: "warning",
-                description: format!(
-                    "Extra/custom index URL — dependency confusion risk: {}",
-                    line
-                ),
+                description: format!("Extra/custom index URL — dependency confusion risk: {line}"),
                 line_number: line_num,
             });
         }
@@ -282,7 +267,7 @@ impl SupplyChainAnalyzer {
             findings.push(SupplyChainFinding {
                 rule_id: "sec.supply-chain.non-registry-source",
                 severity: "warning",
-                description: format!("Git-sourced Python dependency: {}", line),
+                description: format!("Git-sourced Python dependency: {line}"),
                 line_number: line_num,
             });
         }
@@ -290,7 +275,7 @@ impl SupplyChainAnalyzer {
             findings.push(SupplyChainFinding {
                 rule_id: "sec.supply-chain.unpinned-version",
                 severity: "info",
-                description: format!("Unpinned or loosely pinned dependency: {}", line),
+                description: format!("Unpinned or loosely pinned dependency: {line}"),
                 line_number: line_num,
             });
         }
@@ -302,8 +287,7 @@ impl SupplyChainAnalyzer {
                 rule_id: "sec.supply-chain.override-directive",
                 severity: "warning",
                 description: format!(
-                    "Go replace directive — redirects module resolution, risky in production: {}",
-                    line
+                    "Go replace directive — redirects module resolution, risky in production: {line}"
                 ),
                 line_number: line_num,
             });
@@ -318,8 +302,7 @@ impl SupplyChainAnalyzer {
                     rule_id: "sec.supply-chain.ci-injection",
                     severity: "warning",
                     description: format!(
-                        "Action not pinned to full SHA — mutable tag can be hijacked: {}",
-                        line
+                        "Action not pinned to full SHA — mutable tag can be hijacked: {line}"
                     ),
                     line_number: line_num,
                 });
@@ -330,8 +313,7 @@ impl SupplyChainAnalyzer {
                 rule_id: "sec.supply-chain.ci-injection",
                 severity: "error",
                 description: format!(
-                    "Script injection via github.event context — attacker-controlled PR title/body/branch: {}",
-                    line
+                    "Script injection via github.event context — attacker-controlled PR title/body/branch: {line}"
                 ),
                 line_number: line_num,
             });
@@ -341,8 +323,7 @@ impl SupplyChainAnalyzer {
                 rule_id: "sec.supply-chain.ci-injection",
                 severity: "warning",
                 description: format!(
-                    "pull_request_target trigger — if it checks out PR code, it executes untrusted code with write permissions: {}",
-                    line
+                    "pull_request_target trigger — if it checks out PR code, it executes untrusted code with write permissions: {line}"
                 ),
                 line_number: line_num,
             });
@@ -360,8 +341,7 @@ impl SupplyChainAnalyzer {
                 rule_id: "sec.supply-chain.lockfile-tampering",
                 severity: "error",
                 description: format!(
-                    "HTTP (not HTTPS) registry URL in lockfile — MITM risk: {}",
-                    line
+                    "HTTP (not HTTPS) registry URL in lockfile — MITM risk: {line}"
                 ),
                 line_number: line_num,
             });
@@ -374,8 +354,7 @@ impl SupplyChainAnalyzer {
                     rule_id: "sec.supply-chain.lockfile-tampering",
                     severity: "warning",
                     description: format!(
-                        "Non-standard registry URL in lockfile — verify this is intentional: {}",
-                        line
+                        "Non-standard registry URL in lockfile — verify this is intentional: {line}"
                     ),
                     line_number: line_num,
                 });

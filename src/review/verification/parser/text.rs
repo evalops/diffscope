@@ -22,19 +22,11 @@ fn parse_finding_line(line: &str, comments: &[Comment]) -> Option<VerificationRe
         return None;
     }
 
-    let accurate = capture_bool(&captures, 3)
-        .expect("capture group 3 (accurate) must exist after regex match");
-    let score = capture_u8(&captures, 2)
-        .expect("capture group 2 (score) must exist after regex match")
-        .min(10);
+    let accurate = capture_bool(&captures, 3)?;
+    let score = capture_u8(&captures, 2)?.min(10);
     let line_correct = capture_bool(&captures, 4).unwrap_or(accurate);
     let suggestion_sound = capture_bool(&captures, 5).unwrap_or(true);
-    let reason = captures
-        .get(6)
-        .expect("capture group 6 (reason) must exist after regex match")
-        .as_str()
-        .trim()
-        .to_string();
+    let reason = captures.get(6)?.as_str().trim().to_string();
 
     Some(VerificationResult {
         comment_id: comments[index - 1].id.clone(),

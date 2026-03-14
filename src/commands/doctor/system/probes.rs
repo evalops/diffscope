@@ -109,8 +109,8 @@ mod tests {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let gb = ram.unwrap();
-            assert!(gb > 0.5, "RAM should be at least 0.5 GB, got {}", gb);
-            assert!(gb < 4096.0, "RAM should be under 4 TB, got {}", gb);
+            assert!(gb > 0.5, "RAM should be at least 0.5 GB, got {gb}");
+            assert!(gb < 4096.0, "RAM should be under 4 TB, got {gb}");
         }
 
         let _ = ram;

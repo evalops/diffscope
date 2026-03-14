@@ -122,9 +122,14 @@ fn parse_primary(content: &str, file_path: &Path) -> Result<Vec<core::comment::R
         }
 
         if let Some(caps) = LINE_PATTERN.captures(line) {
-            let line_number: usize = caps.get(1).unwrap().as_str().parse()?;
+            let Some(line_number) = capture_usize(&caps, 1)? else {
+                continue;
+            };
             let metadata = caps.get(2).map(|value| value.as_str()).unwrap_or("");
-            let comment_text = caps.get(3).unwrap().as_str().trim();
+            let Some(comment_text) = capture_text(&caps, 3) else {
+                continue;
+            };
+            let comment_text = comment_text.trim();
             let (inline_rule_id, comment_text) = extract_rule_id_from_text(comment_text);
             let metadata_rule_id = extract_rule_id_from_metadata(metadata);
             let rule_id = inline_rule_id.or(metadata_rule_id);
@@ -184,8 +189,11 @@ fn parse_numbered_list(content: &str, file_path: &Path) -> Vec<core::comment::Ra
     let mut comments = Vec::new();
     for line in content.lines() {
         if let Some(caps) = NUMBERED_PATTERN.captures(line) {
-            if let Ok(line_number) = caps.get(1).unwrap().as_str().parse::<usize>() {
-                let text = caps.get(2).unwrap().as_str().trim().to_string();
+            if let Some(line_number) = capture_usize_lossy(&caps, 1) {
+                let Some(text) = capture_text(&caps, 2) else {
+                    continue;
+                };
+                let text = text.trim().to_string();
                 comments.push(make_raw_comment(file_path, line_number, text));
             }
         }
@@ -205,8 +213,11 @@ fn parse_markdown_bullets(content: &str, file_path: &Path) -> Vec<core::comment:
     let mut comments = Vec::new();
     for line in content.lines() {
         if let Some(caps) = BULLET_PATTERN.captures(line) {
-            if let Ok(line_number) = caps.get(1).unwrap().as_str().parse::<usize>() {
-                let text = caps.get(2).unwrap().as_str().trim().to_string();
+            if let Some(line_number) = capture_usize_lossy(&caps, 1) {
+                let Some(text) = capture_text(&caps, 2) else {
+                    continue;
+                };
+                let text = text.trim().to_string();
                 comments.push(make_raw_comment(file_path, line_number, text));
             }
         }
@@ -226,8 +237,11 @@ fn parse_file_line_format(content: &str, file_path: &Path) -> Vec<core::comment:
     let mut comments = Vec::new();
     for line in content.lines() {
         if let Some(caps) = FILE_LINE_PATTERN.captures(line) {
-            if let Ok(line_number) = caps.get(1).unwrap().as_str().parse::<usize>() {
-                let text = caps.get(2).unwrap().as_str().trim().to_string();
+            if let Some(line_number) = capture_usize_lossy(&caps, 1) {
+                let Some(text) = capture_text(&caps, 2) else {
+                    continue;
+                };
+                let text = text.trim().to_string();
                 comments.push(make_raw_comment(file_path, line_number, text));
             }
         }
@@ -267,7 +281,10 @@ fn extract_json_from_code_block(content: &str) -> Option<String> {
         Lazy::new(|| Regex::new(r"(?s)```(?:json)?\s*\n(.*?)```").unwrap());
 
     for caps in CODE_BLOCK.captures_iter(content) {
-        let block = caps.get(1).unwrap().as_str().trim();
+        let Some(block) = capture_text(&caps, 1) else {
+            continue;
+        };
+        let block = block.trim();
         if block.starts_with('[') || block.starts_with('{') {
             return Some(block.to_string());
         }
@@ -452,7 +469,7 @@ fn json_issue_text(item: &serde_json::Value) -> String {
         .filter(|value| !value.is_empty());
 
     match impact {
-        Some(impact) if !issue.contains(impact) => format!("{} Impact: {}", issue, impact),
+        Some(impact) if !issue.contains(impact) => format!("{issue} Impact: {impact}"),
         _ => issue,
     }
 }
@@ -580,14 +597,29 @@ fn make_raw_comment(
     }
 }
 
+fn capture_text<'a>(captures: &'a regex::Captures<'_>, group: usize) -> Option<&'a str> {
+    captures.get(group).map(|value| value.as_str())
+}
+
+fn capture_usize(captures: &regex::Captures<'_>, group: usize) -> Result<Option<usize>> {
+    capture_text(captures, group)
+        .map(|value| value.parse::<usize>())
+        .transpose()
+        .map_err(Into::into)
+}
+
+fn capture_usize_lossy(captures: &regex::Captures<'_>, group: usize) -> Option<usize> {
+    capture_text(captures, group).and_then(|value| value.parse::<usize>().ok())
+}
+
 /// Build a unified-diff-style string from original and suggested code.
 fn build_suggestion_diff(original: &str, suggested: &str) -> String {
     let mut diff = String::new();
     for line in original.lines() {
-        diff.push_str(&format!("- {}\n", line));
+        diff.push_str(&format!("- {line}\n"));
     }
     for line in suggested.lines() {
-        diff.push_str(&format!("+ {}\n", line));
+        diff.push_str(&format!("+ {line}\n"));
     }
     // Remove trailing newline for consistency
     if diff.ends_with('\n') {

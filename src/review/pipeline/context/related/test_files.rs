@@ -22,11 +22,8 @@ fn build_test_chunk(test_path: &Path, repo_path: &Path) -> Option<core::LLMConte
     }
 
     Some(
-        core::LLMContextChunk::reference(
-            relative.to_path_buf(),
-            format!("[Test file]\n{}", snippet),
-        )
-        .with_provenance(core::ContextProvenance::RelatedTestFile),
+        core::LLMContextChunk::reference(relative.to_path_buf(), format!("[Test file]\n{snippet}"))
+            .with_provenance(core::ContextProvenance::RelatedTestFile),
     )
 }
 
@@ -39,26 +36,18 @@ fn find_test_files(file_path: &Path, repo_path: &Path) -> Vec<PathBuf> {
     let parent = file_path.parent().unwrap_or(Path::new(""));
 
     vec![
-        repo_path
-            .join(parent)
-            .join(format!("test_{}.{}", stem, ext)),
-        repo_path
-            .join(parent)
-            .join(format!("{}_test.{}", stem, ext)),
-        repo_path
-            .join(parent)
-            .join(format!("{}.test.{}", stem, ext)),
-        repo_path
-            .join(parent)
-            .join(format!("{}.spec.{}", stem, ext)),
+        repo_path.join(parent).join(format!("test_{stem}.{ext}")),
+        repo_path.join(parent).join(format!("{stem}_test.{ext}")),
+        repo_path.join(parent).join(format!("{stem}.test.{ext}")),
+        repo_path.join(parent).join(format!("{stem}.spec.{ext}")),
         repo_path
             .join(parent)
             .join("tests")
-            .join(format!("{}.{}", stem, ext)),
+            .join(format!("{stem}.{ext}")),
         repo_path
             .join(parent)
             .join("__tests__")
-            .join(format!("{}.{}", stem, ext)),
+            .join(format!("{stem}.{ext}")),
     ]
     .into_iter()
     .filter(|path| path.is_file())

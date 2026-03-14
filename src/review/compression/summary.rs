@@ -25,7 +25,7 @@ pub fn build_skipped_summary(diffs: &[UnifiedDiff], skipped_indices: &[usize]) -
     if !deleted.is_empty() {
         summary.push_str("Deleted files (not reviewed):\n");
         for file in &deleted {
-            summary.push_str(&format!("  - {}\n", file));
+            summary.push_str(&format!("  - {file}\n"));
         }
     }
     if !modified.is_empty() {
@@ -34,7 +34,7 @@ pub fn build_skipped_summary(diffs: &[UnifiedDiff], skipped_indices: &[usize]) -
         }
         summary.push_str("Additional modified files (not reviewed due to context budget):\n");
         for file in &modified {
-            summary.push_str(&format!("  - {}\n", file));
+            summary.push_str(&format!("  - {file}\n"));
         }
     }
     summary

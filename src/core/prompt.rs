@@ -446,11 +446,11 @@ impl PromptBuilder {
                 chunk.file_path.display(),
                 chunk
                     .line_range
-                    .map(|(s, e)| format!(":{}-{}", s, e))
+                    .map(|(s, e)| format!(":{s}-{e}"))
                     .unwrap_or_default(),
                 chunk
                     .provenance_label()
-                    .map(|value| format!(" | {}", value))
+                    .map(|value| format!(" | {value}"))
                     .unwrap_or_default(),
                 chunk.content
             );

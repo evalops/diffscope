@@ -18,7 +18,7 @@ impl EndpointProbe {
 
     pub(super) fn model_flag(&self, model_name: &str) -> String {
         if self.is_ollama() {
-            format!("ollama:{}", model_name)
+            format!("ollama:{model_name}")
         } else {
             model_name.to_string()
         }
@@ -49,7 +49,7 @@ pub(super) async fn probe_endpoint(
 }
 
 async fn probe_ollama_endpoint(client: &Client, base_url: &str) -> Result<Option<Vec<LocalModel>>> {
-    let url = format!("{}/api/tags", base_url);
+    let url = format!("{base_url}/api/tags");
     let response = match client.get(&url).send().await {
         Ok(response) => response,
         Err(_) => return Ok(None),
@@ -65,7 +65,7 @@ async fn probe_ollama_endpoint(client: &Client, base_url: &str) -> Result<Option
 }
 
 async fn probe_openai_endpoint(client: &Client, base_url: &str) -> Result<Option<Vec<LocalModel>>> {
-    let url = format!("{}/v1/models", base_url);
+    let url = format!("{base_url}/v1/models");
     let response = match client.get(&url).send().await {
         Ok(response) => response,
         Err(_) => return Ok(None),

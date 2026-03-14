@@ -407,8 +407,7 @@ mod tests {
         let err_msg = format!("{:#}", result.unwrap_err());
         assert!(
             err_msg.contains("401") || err_msg.contains("Unauthorized"),
-            "Error should mention 401 or Unauthorized, got: {}",
-            err_msg
+            "Error should mention 401 or Unauthorized, got: {err_msg}"
         );
         mock.assert_async().await;
     }
@@ -502,8 +501,7 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(
             err.contains("Unsupported content type"),
-            "Error should mention unsupported type, got: {}",
-            err
+            "Error should mention unsupported type, got: {err}"
         );
     }
 
@@ -534,8 +532,7 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(
             err.contains("empty content"),
-            "Error should mention empty content: {}",
-            err
+            "Error should mention empty content: {err}"
         );
     }
 

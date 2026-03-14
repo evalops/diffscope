@@ -15,7 +15,7 @@ pub(super) fn audit_language_map(
         let ext = ext.trim().to_ascii_lowercase();
         let language = language.trim().to_string();
         if ext.is_empty() || language.is_empty() {
-            invalid_entries.push(format!("{}:{}", ext, language));
+            invalid_entries.push(format!("{ext}:{language}"));
             continue;
         }
         normalized.insert(ext, language);

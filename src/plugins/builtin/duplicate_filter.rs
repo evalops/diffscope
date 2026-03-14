@@ -42,7 +42,7 @@ mod tests {
 
     fn make_comment(file: &str, line: usize, content: &str) -> Comment {
         Comment {
-            id: format!("c-{}-{}", file, line),
+            id: format!("c-{file}-{line}"),
             file_path: PathBuf::from(file),
             line_number: line,
             content: content.to_string(),

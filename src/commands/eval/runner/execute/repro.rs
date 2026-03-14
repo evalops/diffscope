@@ -363,12 +363,12 @@ async fn gather_reproduction_evidence(
     {
         Ok((output, log)) => {
             if output.starts_with("Error:") {
-                warnings.push(format!("read_file returned '{}'", output));
+                warnings.push(format!("read_file returned '{output}'"));
             }
-            evidence_sections.push(format!("read_file\n{}", output));
+            evidence_sections.push(format!("read_file\n{output}"));
             tool_logs.push(log);
         }
-        Err(error) => warnings.push(format!("read_file failed: {}", error)),
+        Err(error) => warnings.push(format!("read_file failed: {error}")),
     }
 
     if include_git_tools {
@@ -385,12 +385,12 @@ async fn gather_reproduction_evidence(
         {
             Ok((output, log)) => {
                 if output.starts_with("Error:") {
-                    warnings.push(format!("get_blame returned '{}'", output));
+                    warnings.push(format!("get_blame returned '{output}'"));
                 }
-                evidence_sections.push(format!("get_blame\n{}", output));
+                evidence_sections.push(format!("get_blame\n{output}"));
                 tool_logs.push(log);
             }
-            Err(error) => warnings.push(format!("get_blame failed: {}", error)),
+            Err(error) => warnings.push(format!("get_blame failed: {error}")),
         }
     }
 

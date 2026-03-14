@@ -109,7 +109,7 @@ pub fn summarize_code_heuristic(
     let mut summary_parts = Vec::new();
 
     // Symbol kind and name
-    summary_parts.push(format!("{} `{}`", kind, symbol_name));
+    summary_parts.push(format!("{kind} `{symbol_name}`"));
 
     // Parameters
     if !params.is_empty() {
@@ -118,7 +118,7 @@ pub fn summarize_code_heuristic(
 
     // Return type
     if let Some(ret) = &returns {
-        summary_parts.push(format!("returns {}", ret));
+        summary_parts.push(format!("returns {ret}"));
     }
 
     // Docstring
@@ -140,9 +140,9 @@ pub fn summarize_code_heuristic(
 
     // Complexity
     if complexity > 5 {
-        summary_parts.push(format!("complexity: high ({})", complexity));
+        summary_parts.push(format!("complexity: high ({complexity})"));
     } else if complexity > 2 {
-        summary_parts.push(format!("complexity: medium ({})", complexity));
+        summary_parts.push(format!("complexity: medium ({complexity})"));
     }
 
     let summary = summary_parts.join(". ");
@@ -170,10 +170,7 @@ pub fn build_embedding_text(symbol_name: &str, summary: &str, code: &str) -> Str
     } else {
         code
     };
-    format!(
-        "Symbol: {}\nSummary: {}\nCode:\n{}",
-        symbol_name, summary, code_truncated
-    )
+    format!("Symbol: {symbol_name}\nSummary: {summary}\nCode:\n{code_truncated}")
 }
 
 /// Batch-summarize all symbols in a file.
@@ -743,17 +740,12 @@ mod tests {
         let code = "pub fn process(items: Vec<String>, callback: fn(u32) -> bool) -> Result<()> {";
         let params = extract_parameters(code, "rs");
         // [^)]* stops at the `)` inside fn(u32), truncating the callback param's type
-        assert!(
-            !params.is_empty(),
-            "Should extract params, got: {:?}",
-            params
-        );
+        assert!(!params.is_empty(), "Should extract params, got: {params:?}");
         // callback param should have its full type including -> bool
         let callback_param = params.iter().find(|p| p.contains("callback"));
         assert!(
             callback_param.is_some(),
-            "Should find callback param, got: {:?}",
-            params
+            "Should find callback param, got: {params:?}"
         );
         let cb = callback_param.unwrap();
         assert!(

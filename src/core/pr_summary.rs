@@ -167,7 +167,7 @@ impl PRSummaryGenerator {
         if !commits.is_empty() {
             prompt.push_str("## Recent Commits\n");
             for commit in commits.iter().take(5) {
-                prompt.push_str(&format!("- {}\n", commit));
+                prompt.push_str(&format!("- {commit}\n"));
             }
             prompt.push('\n');
         }
@@ -189,7 +189,7 @@ impl PRSummaryGenerator {
                 .filter(|c| matches!(c.change_type, crate::core::diff_parser::ChangeType::Removed))
                 .count();
 
-            prompt.push_str(&format!("- {} (+{}, -{})\n", path, added, removed));
+            prompt.push_str(&format!("- {path} (+{added}, -{removed})\n"));
         }
 
         prompt.push_str("\n## Instructions\n");
@@ -243,10 +243,7 @@ impl PRSummaryGenerator {
             } else {
                 "modified"
             };
-            prompt.push_str(&format!(
-                "- {} ({}; +{}, -{})\n",
-                path, status, added, removed
-            ));
+            prompt.push_str(&format!("- {path} ({status}; +{added}, -{removed})\n"));
         }
 
         prompt
@@ -396,7 +393,7 @@ impl PRSummary {
         if !self.key_changes.is_empty() {
             output.push_str("## 🎯 Key Changes\n\n");
             for change in &self.key_changes {
-                output.push_str(&format!("- {}\n", change));
+                output.push_str(&format!("- {change}\n"));
             }
             output.push('\n');
         }
@@ -433,7 +430,7 @@ impl PRSummary {
         // Breaking changes
         if let Some(breaking) = &self.breaking_changes {
             output.push_str("## ⚠️ Breaking Changes\n\n");
-            output.push_str(&format!("{}\n\n", breaking));
+            output.push_str(&format!("{breaking}\n\n"));
         }
 
         // Testing notes

@@ -25,7 +25,7 @@ pub async fn eval_command(
     output_path: Option<PathBuf>,
     mut options: EvalRunOptions,
 ) -> Result<()> {
-    config.verification_fail_open = true;
+    config.verification.fail_open = true;
     if options.trend_file.is_none() {
         options.trend_file = Some(config.eval_trend_path.clone());
     }
@@ -76,8 +76,8 @@ fn build_eval_run_metadata(
     );
     let mut verification_judges = Vec::new();
     let mut seen_verification_judges = HashSet::new();
-    for role in std::iter::once(config.verification_model_role)
-        .chain(config.verification_additional_model_roles.iter().copied())
+    for role in std::iter::once(config.verification.model_role)
+        .chain(config.verification.additional_model_roles.iter().copied())
     {
         let model = config.model_for_role(role).to_string();
         if seen_verification_judges.insert(model.clone()) {
@@ -102,11 +102,12 @@ fn build_eval_run_metadata(
             fixture_name_filters: options.fixture_name_filters.clone(),
             max_fixtures: options.max_fixtures,
         },
-        verification_fail_open: config.verification_fail_open,
+        verification_fail_open: config.verification.fail_open,
         verification_judges,
         verification_consensus_mode: config
-            .verification_pass
-            .then(|| config.verification_consensus_mode.as_str().to_string()),
+            .verification
+            .enabled
+            .then(|| config.verification.consensus_mode.as_str().to_string()),
         trend_file: options
             .trend_file
             .as_ref()

@@ -18,7 +18,7 @@ pub fn default_semantic_feedback_path(feedback_path: &Path) -> PathBuf {
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("diffscope.feedback");
-    parent.join(format!("{}.semantic.json", stem))
+    parent.join(format!("{stem}.semantic.json"))
 }
 
 pub fn load_semantic_index(path: &Path) -> SemanticIndex {

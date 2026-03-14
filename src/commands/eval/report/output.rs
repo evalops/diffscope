@@ -13,7 +13,7 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
             report.run.fixtures_discovered
         );
         if let Some(label) = report.run.label.as_deref() {
-            println!("Run label: {}", label);
+            println!("Run label: {label}");
         }
         if !report.run.started_at.is_empty() {
             println!("Started at: {}", report.run.started_at);
@@ -36,18 +36,18 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
             );
         }
         if let Some(consensus_mode) = report.run.verification_consensus_mode.as_deref() {
-            println!("Verification consensus: {}", consensus_mode);
+            println!("Verification consensus: {consensus_mode}");
         }
         if let Some(trend_file) = report.run.trend_file.as_deref() {
-            println!("Trend file: {}", trend_file);
+            println!("Trend file: {trend_file}");
         }
         if let Some(artifact_dir) = report.run.artifact_dir.as_deref() {
-            println!("Artifact dir: {}", artifact_dir);
+            println!("Artifact dir: {artifact_dir}");
         }
         if let (Some(repeat_index), Some(repeat_total)) =
             (report.run.repeat_index, report.run.repeat_total)
         {
-            println!("Repeat: {}/{}", repeat_index, repeat_total);
+            println!("Repeat: {repeat_index}/{repeat_total}");
         }
         if report.run.reproduction_validation {
             println!("Reproduction validation: enabled");
@@ -76,7 +76,7 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
                 result.required_total
             );
             for failure in &result.failures {
-                println!("  - {}", failure);
+                println!("  - {failure}");
             }
         }
         if let Some(rule_summary) = result.rule_summary {
@@ -90,20 +90,20 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
         if let Some(metadata) = result.metadata.as_ref() {
             let mut labels = Vec::new();
             if let Some(category) = metadata.category.as_deref() {
-                labels.push(format!("category={}", category));
+                labels.push(format!("category={category}"));
             }
             if let Some(language) = metadata.language.as_deref() {
-                labels.push(format!("language={}", language));
+                labels.push(format!("language={language}"));
             }
             if let Some(source) = metadata.source.as_deref() {
-                labels.push(format!("source={}", source));
+                labels.push(format!("source={source}"));
             }
             if !labels.is_empty() {
                 println!("  metadata: {}", labels.join(", "));
             }
         }
         for warning in &result.warnings {
-            println!("  warning: {}", warning);
+            println!("  warning: {warning}");
         }
         if let Some(verification_report) = result.verification_report.as_ref() {
             println!(
@@ -138,7 +138,7 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
             );
         }
         if let Some(artifact_path) = result.artifact_path.as_deref() {
-            println!("  artifact: {}", artifact_path);
+            println!("  artifact: {artifact_path}");
         }
         if !result.dag_traces.is_empty() {
             let traces = result
@@ -200,7 +200,7 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
                 println!("  suite-thresholds: passed");
             } else {
                 for failure in &suite.threshold_failures {
-                    println!("  suite-threshold-failure: {}", failure);
+                    println!("  suite-threshold-failure: {failure}");
                 }
             }
         }
@@ -305,11 +305,11 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
     }
 
     for warning in &report.warnings {
-        println!("Warning: {}", warning);
+        println!("Warning: {warning}");
     }
 
     for failure in &report.threshold_failures {
-        println!("Threshold failure: {}", failure);
+        println!("Threshold failure: {failure}");
     }
 }
 

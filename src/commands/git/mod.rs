@@ -1,8 +1,6 @@
 use clap::Subcommand;
 
-#[path = "git/command.rs"]
 mod command;
-#[path = "git/suggest.rs"]
 mod suggest;
 
 #[derive(Subcommand)]

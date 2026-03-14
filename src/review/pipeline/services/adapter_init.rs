@@ -35,8 +35,8 @@ fn build_verification_adapters(
 ) -> Result<Vec<Arc<dyn adapters::llm::LLMAdapter>>> {
     let mut verification_adapters = Vec::new();
     let mut seen_models = HashSet::new();
-    let mut roles = vec![config.verification_model_role];
-    roles.extend(config.verification_additional_model_roles.iter().copied());
+    let mut roles = vec![config.verification.model_role];
+    roles.extend(config.verification.additional_model_roles.iter().copied());
 
     for role in roles {
         let verification_config = config.to_model_config_for_role(role);
@@ -47,7 +47,7 @@ fn build_verification_adapters(
         if verification_config.model_name != model_config.model_name {
             info!(
                 "Using '{}' model '{}' for verification pass",
-                format!("{:?}", role).to_lowercase(),
+                format!("{role:?}").to_lowercase(),
                 verification_config.model_name
             );
             verification_adapters.push(Arc::from(adapters::llm::create_adapter(

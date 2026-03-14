@@ -823,8 +823,7 @@ fn next_func() {
         assert_eq!(
             boundaries.len(),
             2,
-            "Should find both functions: {:?}",
-            boundaries
+            "Should find both functions: {boundaries:?}"
         );
         // render() should end at the } on line 5 (before next_func)
         assert!(
@@ -850,8 +849,7 @@ fn next_func() {
         assert_eq!(
             boundaries.len(),
             2,
-            "Should find both methods: {:?}",
-            boundaries
+            "Should find both methods: {boundaries:?}"
         );
         assert_eq!(boundaries[0].name, "handle_request");
         assert_eq!(boundaries[1].name, "process");

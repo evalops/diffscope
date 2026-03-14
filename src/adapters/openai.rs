@@ -771,8 +771,7 @@ mod tests {
         let err_msg = format!("{:#}", result.unwrap_err());
         assert!(
             err_msg.contains("401") || err_msg.contains("Unauthorized"),
-            "Error should mention 401 or Unauthorized, got: {}",
-            err_msg
+            "Error should mention 401 or Unauthorized, got: {err_msg}"
         );
         mock.assert_async().await;
     }
@@ -814,8 +813,7 @@ mod tests {
         let err_msg = format!("{:#}", result.unwrap_err());
         assert!(
             err_msg.contains("429") || err_msg.contains("Rate limited"),
-            "Error should mention rate limiting, got: {}",
-            err_msg
+            "Error should mention rate limiting, got: {err_msg}"
         );
         mock.assert_async().await;
     }
@@ -866,8 +864,7 @@ mod tests {
         let err = result.unwrap_err().to_string();
         assert!(
             err.contains("empty choices"),
-            "Error should mention empty choices: {}",
-            err
+            "Error should mention empty choices: {err}"
         );
     }
 

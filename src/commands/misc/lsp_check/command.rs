@@ -44,16 +44,16 @@ pub async fn lsp_check_command(path: PathBuf, config: config::Config) -> Result<
     };
 
     if let Some(command) = &configured_command {
-        println!("configured LSP command: {}", command);
+        println!("configured LSP command: {command}");
     }
     if let Some(command) = &detected_command {
-        println!("detected LSP command: {}", command);
+        println!("detected LSP command: {command}");
     }
 
     let effective_command = configured_command.or(detected_command);
     if let Some(command) = &effective_command {
         let available = core::SymbolIndex::lsp_command_available(command);
-        println!("effective LSP command: {}", command);
+        println!("effective LSP command: {command}");
         println!(
             "command available: {}",
             if available { "yes" } else { "no" }

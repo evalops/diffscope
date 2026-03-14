@@ -163,7 +163,7 @@ impl StorageBackend for JsonStorageBackend {
                 let status_ok = filters
                     .status
                     .as_ref()
-                    .is_none_or(|f| e.event_type.eq_ignore_ascii_case(&format!("review.{}", f)));
+                    .is_none_or(|f| e.event_type.eq_ignore_ascii_case(&format!("review.{f}")));
                 // Time filters: if a time bound is specified, events without a
                 // timestamp are excluded (they cannot satisfy the constraint).
                 let time_from_ok = filters
@@ -610,7 +610,7 @@ mod tests {
 
         let base = now_ts();
         for i in 0..5 {
-            let session = make_session(&format!("r{}", i), base + i as i64, ReviewStatus::Complete);
+            let session = make_session(&format!("r{i}"), base + i as i64, ReviewStatus::Complete);
             backend.save_review(&session).await.unwrap();
         }
 
@@ -628,7 +628,7 @@ mod tests {
 
         let base = now_ts();
         for i in 0..5 {
-            let session = make_session(&format!("r{}", i), base + i as i64, ReviewStatus::Complete);
+            let session = make_session(&format!("r{i}"), base + i as i64, ReviewStatus::Complete);
             backend.save_review(&session).await.unwrap();
         }
 
@@ -645,7 +645,7 @@ mod tests {
 
         let base = now_ts();
         for i in 0..5 {
-            let session = make_session(&format!("r{}", i), base + i as i64, ReviewStatus::Complete);
+            let session = make_session(&format!("r{i}"), base + i as i64, ReviewStatus::Complete);
             backend.save_review(&session).await.unwrap();
         }
 
@@ -749,7 +749,7 @@ mod tests {
         for i in 0..5 {
             backend
                 .save_review(&make_session(
-                    &format!("r{}", i),
+                    &format!("r{i}"),
                     now + i as i64,
                     ReviewStatus::Complete,
                 ))
@@ -967,7 +967,7 @@ mod tests {
         for i in 0..5 {
             backend
                 .save_review(&make_session_with_event(
-                    &format!("r{}", i),
+                    &format!("r{i}"),
                     now + i as i64,
                     ReviewStatus::Complete,
                     "review.completed",
@@ -1196,7 +1196,7 @@ mod tests {
         for i in 0..10 {
             backend
                 .save_review(&make_session_with_event(
-                    &format!("r{}", i),
+                    &format!("r{i}"),
                     now + i as i64,
                     ReviewStatus::Complete,
                     "review.completed",
@@ -1713,7 +1713,7 @@ mod tests {
             let b = backend.clone();
             let handle = tokio::spawn(async move {
                 let session = make_session(
-                    &format!("conc-{}", i),
+                    &format!("conc-{i}"),
                     base + i as i64,
                     ReviewStatus::Complete,
                 );
@@ -2032,7 +2032,7 @@ mod tests {
         for i in 0..3 {
             backend
                 .save_review(&make_session(
-                    &format!("r{}", i),
+                    &format!("r{i}"),
                     now - 100000 + i as i64, // old enough to expire
                     ReviewStatus::Complete,
                 ))
@@ -2065,7 +2065,7 @@ mod tests {
         for i in 0..10 {
             backend
                 .save_review(&make_session_with_event(
-                    &format!("r{}", i),
+                    &format!("r{i}"),
                     now + i as i64,
                     ReviewStatus::Complete,
                     "review.completed",

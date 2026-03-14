@@ -69,7 +69,7 @@ fn lookup_feedback_confidence_stats<'a>(
         .as_deref()
         .and_then(|rule_id| {
             file_patterns.iter().find_map(|pattern| {
-                let key = format!("{}|{}", rule_id, pattern);
+                let key = format!("{rule_id}|{pattern}");
                 feedback.by_rule_file_pattern.get(&key)
             })
         })
@@ -80,7 +80,7 @@ fn lookup_feedback_confidence_stats<'a>(
         })
         .or_else(|| {
             file_patterns.iter().find_map(|pattern| {
-                let key = format!("{}|{}", category, pattern);
+                let key = format!("{category}|{pattern}");
                 feedback.by_category_file_pattern.get(&key)
             })
         })

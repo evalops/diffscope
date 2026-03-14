@@ -13,7 +13,7 @@ pub(in super::super) fn chunk_diff_for_context(
         let section = if chunks.is_empty() && current_chunk.is_empty() {
             section.to_string()
         } else {
-            format!("diff --git {}", section)
+            format!("diff --git {section}")
         };
 
         if current_chunk.len() + section.len() > max_chars && !current_chunk.is_empty() {
@@ -72,7 +72,7 @@ mod tests {
         let file_a = "diff --git a/a.rs b/a.rs\n+alpha\n";
         let file_b = "\ndiff --git a/b.rs b/b.rs\n+beta\n";
         let file_c = "\ndiff --git a/c.rs b/c.rs\n+gamma\n";
-        let diff = format!("{}{}{}", file_a, file_b, file_c);
+        let diff = format!("{file_a}{file_b}{file_c}");
         let chunks = chunk_diff_for_context(&diff, 50);
         let rejoined = chunks.join("");
         assert!(rejoined.contains("+alpha"));

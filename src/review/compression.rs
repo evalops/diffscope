@@ -104,8 +104,8 @@ mod tests {
         let diff = make_simple_diff("file.rs", 400);
         let tokens = estimate_diff_tokens(&diff);
         // Should be approximately 100 + overhead
-        assert!(tokens >= 80, "tokens={} too low", tokens);
-        assert!(tokens <= 200, "tokens={} too high", tokens);
+        assert!(tokens >= 80, "tokens={tokens} too low");
+        assert!(tokens <= 200, "tokens={tokens} too high");
     }
 
     // --- is_deletion_only_hunk ---
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn test_multicall_respects_max_calls() {
         let diffs: Vec<_> = (0..10)
-            .map(|i| make_simple_diff(&format!("file{}.rs", i), 2000))
+            .map(|i| make_simple_diff(&format!("file{i}.rs"), 2000))
             .collect();
         let single_tokens = estimate_diff_tokens(&diffs[0]);
         let result = compress_diffs(&diffs, single_tokens + 10, 3);
@@ -317,7 +317,7 @@ mod tests {
     #[test]
     fn test_all_indices_accounted_for() {
         let diffs: Vec<_> = (0..5)
-            .map(|i| make_simple_diff(&format!("f{}.rs", i), 1000))
+            .map(|i| make_simple_diff(&format!("f{i}.rs"), 1000))
             .collect();
         let single_tokens = estimate_diff_tokens(&diffs[0]);
         let result = compress_diffs(&diffs, single_tokens * 2, 3);
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn test_batch_indices_sorted() {
         let diffs: Vec<_> = (0..5)
-            .map(|i| make_simple_diff(&format!("f{}.rs", i), 1000))
+            .map(|i| make_simple_diff(&format!("f{i}.rs"), 1000))
             .collect();
         let result = compress_diffs(&diffs, 500, 5);
         for batch in &result.batches {
@@ -383,18 +383,8 @@ mod tests {
         let t_small = estimate_diff_tokens(&small);
         let t_medium = estimate_diff_tokens(&medium);
         let t_large = estimate_diff_tokens(&large);
-        assert!(
-            t_small < t_medium,
-            "small={} >= medium={}",
-            t_small,
-            t_medium
-        );
-        assert!(
-            t_medium < t_large,
-            "medium={} >= large={}",
-            t_medium,
-            t_large
-        );
+        assert!(t_small < t_medium, "small={t_small} >= medium={t_medium}");
+        assert!(t_medium < t_large, "medium={t_medium} >= large={t_large}");
     }
 
     #[test]
@@ -412,9 +402,7 @@ mod tests {
         let clipped_tokens = estimate_diff_tokens(&clipped);
         assert!(
             clipped_tokens < original_tokens,
-            "Clipped ({}) should be smaller than original ({})",
-            clipped_tokens,
-            original_tokens
+            "Clipped ({clipped_tokens}) should be smaller than original ({original_tokens})"
         );
     }
 
@@ -506,15 +494,14 @@ mod tests {
         assert_eq!(
             result.skipped_indices.len(),
             2,
-            "Both deletion-only diffs should be skipped, got {:?}",
-            result
+            "Both deletion-only diffs should be skipped, got {result:?}"
         );
     }
 
     #[test]
     fn test_no_duplicate_indices_across_batches() {
         let diffs: Vec<_> = (0..8)
-            .map(|i| make_simple_diff(&format!("f{}.rs", i), 2000))
+            .map(|i| make_simple_diff(&format!("f{i}.rs"), 2000))
             .collect();
         let single_tokens = estimate_diff_tokens(&diffs[0]);
         let result = compress_diffs(&diffs, single_tokens * 2, 4);
@@ -522,14 +509,13 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for batch in &result.batches {
             for &idx in &batch.diff_indices {
-                assert!(seen.insert(idx), "Duplicate index {} across batches", idx);
+                assert!(seen.insert(idx), "Duplicate index {idx} across batches");
             }
         }
         for &idx in &result.skipped_indices {
             assert!(
                 seen.insert(idx),
-                "Index {} appears in both batches and skipped",
-                idx
+                "Index {idx} appears in both batches and skipped"
             );
         }
     }

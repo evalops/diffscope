@@ -211,11 +211,10 @@ mod tests {
     fn chat_response_body(content: &str, model: &str, done: bool) -> String {
         format!(
             r#"{{
-                "message": {{"role": "assistant", "content": "{}"}},
-                "model": "{}",
-                "done": {}
-            }}"#,
-            content, model, done
+                "message": {{"role": "assistant", "content": "{content}"}},
+                "model": "{model}",
+                "done": {done}
+            }}"#
         )
     }
 
@@ -227,13 +226,12 @@ mod tests {
     ) -> String {
         format!(
             r#"{{
-                "message": {{"role": "assistant", "content": "{}"}},
-                "model": "{}",
+                "message": {{"role": "assistant", "content": "{content}"}},
+                "model": "{model}",
                 "done": true,
-                "prompt_eval_count": {},
-                "eval_count": {}
-            }}"#,
-            content, model, prompt_eval, eval
+                "prompt_eval_count": {prompt_eval},
+                "eval_count": {eval}
+            }}"#
         )
     }
 

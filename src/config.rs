@@ -63,6 +63,153 @@ impl Default for ProviderConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct VaultConfig {
+    /// HashiCorp Vault server address (e.g., https://vault.example.com:8200).
+    #[serde(default, rename = "vault_addr")]
+    pub addr: Option<String>,
+
+    /// Vault authentication token.
+    #[serde(default, rename = "vault_token")]
+    pub token: Option<String>,
+
+    /// Secret path in Vault (e.g., "diffscope" or "ci/diffscope").
+    #[serde(default, rename = "vault_path")]
+    pub path: Option<String>,
+
+    /// Key within the Vault secret to extract as the API key (default: "api_key").
+    #[serde(default, rename = "vault_key")]
+    pub key: Option<String>,
+
+    /// Vault KV engine mount point (default: "secret").
+    #[serde(default, rename = "vault_mount")]
+    pub mount: Option<String>,
+
+    /// Vault Enterprise namespace.
+    #[serde(default, rename = "vault_namespace")]
+    pub namespace: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GitHubConfig {
+    #[serde(default, rename = "github_token")]
+    pub token: Option<String>,
+
+    /// GitHub App ID (from app settings page).
+    #[serde(default, rename = "github_app_id")]
+    pub app_id: Option<u64>,
+
+    /// GitHub App OAuth client ID (for device flow auth).
+    #[serde(default, rename = "github_client_id")]
+    pub client_id: Option<String>,
+
+    /// GitHub App OAuth client secret.
+    #[serde(default, rename = "github_client_secret")]
+    pub client_secret: Option<String>,
+
+    /// GitHub App private key (PEM content).
+    #[serde(default, rename = "github_private_key")]
+    pub private_key: Option<String>,
+
+    /// Webhook secret for verifying GitHub webhook signatures.
+    #[serde(default, rename = "github_webhook_secret")]
+    pub webhook_secret: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentConfig {
+    /// Enable agent loop for iterative tool-calling review (default false).
+    #[serde(default, rename = "agent_review")]
+    pub enabled: bool,
+
+    /// Maximum number of LLM round-trips in agent mode (default 10).
+    #[serde(
+        default = "default_agent_max_iterations",
+        rename = "agent_max_iterations"
+    )]
+    pub max_iterations: usize,
+
+    /// Optional total token budget for agent loop.
+    #[serde(default, rename = "agent_max_total_tokens")]
+    pub max_total_tokens: Option<usize>,
+
+    /// Which agent tools are enabled. None = all tools enabled.
+    #[serde(default, rename = "agent_tools_enabled")]
+    pub tools_enabled: Option<Vec<String>>,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_iterations: default_agent_max_iterations(),
+            max_total_tokens: None,
+            tools_enabled: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationConfig {
+    /// Whether to run the verification pass on review comments (default true).
+    #[serde(default = "default_true", rename = "verification_pass")]
+    pub enabled: bool,
+
+    /// Which model role to use for the verification pass (default Weak).
+    #[serde(
+        default = "default_verification_model_role",
+        rename = "verification_model_role"
+    )]
+    pub model_role: ModelRole,
+
+    /// Additional model roles used as verification judges.
+    #[serde(
+        default = "default_verification_additional_model_roles",
+        rename = "verification_additional_model_roles"
+    )]
+    pub additional_model_roles: Vec<ModelRole>,
+
+    /// How multiple verification judges should be combined.
+    #[serde(
+        default = "default_verification_consensus_mode",
+        rename = "verification_consensus_mode"
+    )]
+    pub consensus_mode: VerificationConsensusMode,
+
+    /// Minimum verification score to keep a comment (0-10, default 5).
+    #[serde(
+        default = "default_verification_min_score",
+        rename = "verification_min_score"
+    )]
+    pub min_score: u8,
+
+    /// Maximum number of comments to send through verification (default 20).
+    #[serde(
+        default = "default_verification_max_comments",
+        rename = "verification_max_comments"
+    )]
+    pub max_comments: usize,
+
+    /// When true, keep original comments if the verification pass fails or
+    /// returns an unparseable response (default false).
+    #[serde(default = "default_false", rename = "verification_fail_open")]
+    pub fail_open: bool,
+}
+
+impl Default for VerificationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            model_role: default_verification_model_role(),
+            additional_model_roles: default_verification_additional_model_roles(),
+            consensus_mode: default_verification_consensus_mode(),
+            min_score: default_verification_min_score(),
+            max_comments: default_verification_max_comments(),
+            fail_open: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_model")]
@@ -219,29 +366,8 @@ pub struct Config {
     #[serde(default = "default_feedback_suppression_margin")]
     pub feedback_suppression_margin: usize,
 
-    /// HashiCorp Vault server address (e.g., https://vault.example.com:8200).
-    #[serde(default)]
-    pub vault_addr: Option<String>,
-
-    /// Vault authentication token.
-    #[serde(default)]
-    pub vault_token: Option<String>,
-
-    /// Secret path in Vault (e.g., "diffscope" or "ci/diffscope").
-    #[serde(default)]
-    pub vault_path: Option<String>,
-
-    /// Key within the Vault secret to extract as the API key (default: "api_key").
-    #[serde(default)]
-    pub vault_key: Option<String>,
-
-    /// Vault KV engine mount point (default: "secret").
-    #[serde(default)]
-    pub vault_mount: Option<String>,
-
-    /// Vault Enterprise namespace.
-    #[serde(default)]
-    pub vault_namespace: Option<String>,
+    #[serde(default, flatten)]
+    pub vault: VaultConfig,
 
     #[serde(default)]
     pub plugins: PluginConfig,
@@ -270,78 +396,19 @@ pub struct Config {
     #[serde(default)]
     pub providers: HashMap<String, ProviderConfig>,
 
-    #[serde(default)]
-    pub github_token: Option<String>,
-
-    /// GitHub App ID (from app settings page).
-    #[serde(default)]
-    pub github_app_id: Option<u64>,
-
-    /// GitHub App OAuth client ID (for device flow auth).
-    #[serde(default)]
-    pub github_client_id: Option<String>,
-
-    /// GitHub App OAuth client secret.
-    #[serde(default)]
-    pub github_client_secret: Option<String>,
-
-    /// GitHub App private key (PEM content).
-    #[serde(default)]
-    pub github_private_key: Option<String>,
-
-    /// Webhook secret for verifying GitHub webhook signatures.
-    #[serde(default)]
-    pub github_webhook_secret: Option<String>,
+    #[serde(default, flatten)]
+    pub github: GitHubConfig,
 
     /// When true, run separate specialized LLM passes for security, correctness,
     /// and style instead of a single monolithic review prompt.
     #[serde(default = "default_false")]
     pub multi_pass_specialized: bool,
 
-    /// Enable agent loop for iterative tool-calling review (default false).
-    #[serde(default)]
-    pub agent_review: bool,
+    #[serde(default, flatten)]
+    pub agent: AgentConfig,
 
-    /// Maximum number of LLM round-trips in agent mode (default 10).
-    #[serde(default = "default_agent_max_iterations")]
-    pub agent_max_iterations: usize,
-
-    /// Optional total token budget for agent loop.
-    #[serde(default)]
-    pub agent_max_total_tokens: Option<usize>,
-
-    /// Which agent tools are enabled. None = all tools enabled.
-    #[serde(default)]
-    pub agent_tools_enabled: Option<Vec<String>>,
-
-    /// Whether to run the verification pass on review comments (default true).
-    #[serde(default = "default_true")]
-    pub verification_pass: bool,
-
-    /// Which model role to use for the verification pass (default Weak).
-    #[serde(default = "default_verification_model_role")]
-    pub verification_model_role: ModelRole,
-
-    /// Additional model roles used as verification judges.
-    #[serde(default = "default_verification_additional_model_roles")]
-    pub verification_additional_model_roles: Vec<ModelRole>,
-
-    /// How multiple verification judges should be combined.
-    #[serde(default = "default_verification_consensus_mode")]
-    pub verification_consensus_mode: VerificationConsensusMode,
-
-    /// Minimum verification score to keep a comment (0-10, default 5).
-    #[serde(default = "default_verification_min_score")]
-    pub verification_min_score: u8,
-
-    /// Maximum number of comments to send through verification (default 20).
-    #[serde(default = "default_verification_max_comments")]
-    pub verification_max_comments: usize,
-
-    /// When true, keep original comments if the verification pass fails or
-    /// returns an unparseable response (default false).
-    #[serde(default = "default_false")]
-    pub verification_fail_open: bool,
+    #[serde(default, flatten)]
+    pub verification: VerificationConfig,
 
     /// Enable enhanced feedback loop with per-category/file-pattern tracking
     /// and feedback-adjusted confidence scores (default false).
@@ -520,12 +587,7 @@ impl Default for Config {
             include_fix_suggestions: true,
             feedback_suppression_threshold: default_feedback_suppression_threshold(),
             feedback_suppression_margin: default_feedback_suppression_margin(),
-            vault_addr: None,
-            vault_token: None,
-            vault_path: None,
-            vault_key: None,
-            vault_mount: None,
-            vault_namespace: None,
+            vault: VaultConfig::default(),
             plugins: PluginConfig::default(),
             exclude_patterns: default_exclude_patterns(),
             paths: HashMap::new(),
@@ -535,24 +597,10 @@ impl Default for Config {
             max_active_rules: default_max_active_rules(),
             rule_priority: Vec::new(),
             providers: HashMap::new(),
-            github_token: None,
-            github_app_id: None,
-            github_client_id: None,
-            github_client_secret: None,
-            github_private_key: None,
-            github_webhook_secret: None,
+            github: GitHubConfig::default(),
             multi_pass_specialized: false,
-            agent_review: false,
-            agent_max_iterations: default_agent_max_iterations(),
-            agent_max_total_tokens: None,
-            agent_tools_enabled: None,
-            verification_pass: true,
-            verification_model_role: default_verification_model_role(),
-            verification_additional_model_roles: default_verification_additional_model_roles(),
-            verification_consensus_mode: default_verification_consensus_mode(),
-            verification_min_score: default_verification_min_score(),
-            verification_max_comments: default_verification_max_comments(),
-            verification_fail_open: false,
+            agent: AgentConfig::default(),
+            verification: VerificationConfig::default(),
             enhanced_feedback: false,
             feedback_min_observations: default_feedback_min_observations(),
             semantic_rag: false,
@@ -679,25 +727,25 @@ impl Config {
             self.output_language = Some(v);
         }
         if let Some(v) = cli.vault_addr {
-            self.vault_addr = Some(v);
+            self.vault.addr = Some(v);
         }
         if let Some(v) = cli.vault_path {
-            self.vault_path = Some(v);
+            self.vault.path = Some(v);
         }
         if let Some(v) = cli.vault_key {
-            self.vault_key = Some(v);
+            self.vault.key = Some(v);
         }
         if cli.agent_review {
-            self.agent_review = true;
+            self.agent.enabled = true;
         }
         if let Some(v) = cli.agent_max_iterations {
-            self.agent_max_iterations = v;
+            self.agent.max_iterations = v;
         }
         if let Some(v) = cli.agent_max_total_tokens {
-            self.agent_max_total_tokens = Some(v);
+            self.agent.max_total_tokens = Some(v);
         }
         if let Some(v) = cli.verification_pass {
-            self.verification_pass = v;
+            self.verification.enabled = v;
         }
     }
 
@@ -716,13 +764,13 @@ impl Config {
         }
 
         // Env var fallbacks for GitHub integration
-        if self.github_token.is_none() {
-            self.github_token = std::env::var("GITHUB_TOKEN")
+        if self.github.token.is_none() {
+            self.github.token = std::env::var("GITHUB_TOKEN")
                 .ok()
                 .filter(|s| !s.trim().is_empty());
         }
-        if self.github_webhook_secret.is_none() {
-            self.github_webhook_secret = std::env::var("DIFFSCOPE_WEBHOOK_SECRET")
+        if self.github.webhook_secret.is_none() {
+            self.github.webhook_secret = std::env::var("DIFFSCOPE_WEBHOOK_SECRET")
                 .ok()
                 .filter(|s| !s.trim().is_empty());
         }
@@ -1040,7 +1088,10 @@ impl Config {
         for (pattern, config) in &self.paths {
             if self.path_matches(&file_path_str, pattern) {
                 // Keep the most specific match (longest pattern)
-                if best_match.is_none() || pattern.len() > best_match.unwrap().0.len() {
+                if best_match
+                    .as_ref()
+                    .is_none_or(|(best_pattern, _)| pattern.len() > best_pattern.len())
+                {
                     best_match = Some((pattern, config));
                 }
             }
@@ -1215,12 +1266,12 @@ impl Config {
         }
 
         let vault_config = crate::vault::try_build_vault_config(
-            self.vault_addr.as_deref(),
-            self.vault_token.as_deref(),
-            self.vault_path.as_deref(),
-            self.vault_key.as_deref(),
-            self.vault_mount.as_deref(),
-            self.vault_namespace.as_deref(),
+            self.vault.addr.as_deref(),
+            self.vault.token.as_deref(),
+            self.vault.path.as_deref(),
+            self.vault.key.as_deref(),
+            self.vault.mount.as_deref(),
+            self.vault.namespace.as_deref(),
         );
 
         if let Some(vc) = vault_config {
@@ -2058,8 +2109,7 @@ temperature: 0.3
         let model = default_model();
         assert!(
             model.contains("opus"),
-            "Default model should be Opus (frontier), got: {}",
-            model
+            "Default model should be Opus (frontier), got: {model}"
         );
     }
 
@@ -2079,13 +2129,13 @@ temperature: 0.3
             config.model_reasoning,
             Some("anthropic/claude-opus-4.5".to_string())
         );
-        assert_eq!(config.verification_model_role, ModelRole::Weak);
+        assert_eq!(config.verification.model_role, ModelRole::Weak);
         assert_eq!(
-            config.verification_additional_model_roles,
+            config.verification.additional_model_roles,
             vec![ModelRole::Reasoning]
         );
         assert_eq!(
-            config.verification_consensus_mode,
+            config.verification.consensus_mode,
             VerificationConsensusMode::Any
         );
     }
@@ -2122,7 +2172,7 @@ temperature: 0.3
     fn test_agent_tools_enabled_default_is_none() {
         let config = Config::default();
         assert!(
-            config.agent_tools_enabled.is_none(),
+            config.agent.tools_enabled.is_none(),
             "Default should be None (all tools enabled)"
         );
     }
@@ -2141,7 +2191,10 @@ temperature: 0.3
     #[test]
     fn test_agent_tools_enabled_serialize_some() {
         let config = Config {
-            agent_tools_enabled: Some(vec!["read_file".to_string(), "search_code".to_string()]),
+            agent: AgentConfig {
+                tools_enabled: Some(vec!["read_file".to_string(), "search_code".to_string()]),
+                ..AgentConfig::default()
+            },
             ..Config::default()
         };
         let yaml = serde_yaml::to_string(&config).unwrap();
@@ -2158,7 +2211,7 @@ model: claude-opus-4-6
 temperature: 0.3
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
-        assert!(config.agent_tools_enabled.is_none());
+        assert!(config.agent.tools_enabled.is_none());
     }
 
     #[test]
@@ -2171,7 +2224,7 @@ agent_tools_enabled:
   - list_files
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
-        let tools = config.agent_tools_enabled.unwrap();
+        let tools = config.agent.tools_enabled.unwrap();
         assert_eq!(tools.len(), 3);
         assert_eq!(tools[0], "read_file");
         assert_eq!(tools[1], "search_code");
@@ -2185,7 +2238,7 @@ model: claude-opus-4-6
 agent_tools_enabled: []
 "#;
         let config: Config = serde_yaml::from_str(yaml).unwrap();
-        let tools = config.agent_tools_enabled.unwrap();
+        let tools = config.agent.tools_enabled.unwrap();
         assert!(
             tools.is_empty(),
             "Empty list should deserialize as Some([])"
@@ -2195,12 +2248,15 @@ agent_tools_enabled: []
     #[test]
     fn test_agent_tools_enabled_round_trip() {
         let original = Config {
-            agent_tools_enabled: Some(vec!["read_file".to_string(), "search_code".to_string()]),
+            agent: AgentConfig {
+                tools_enabled: Some(vec!["read_file".to_string(), "search_code".to_string()]),
+                ..AgentConfig::default()
+            },
             ..Config::default()
         };
         let yaml = serde_yaml::to_string(&original).unwrap();
         let restored: Config = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(original.agent_tools_enabled, restored.agent_tools_enabled);
+        assert_eq!(original.agent.tools_enabled, restored.agent.tools_enabled);
     }
 
     #[test]
@@ -2208,6 +2264,6 @@ agent_tools_enabled: []
         let original = Config::default();
         let yaml = serde_yaml::to_string(&original).unwrap();
         let restored: Config = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(original.agent_tools_enabled, restored.agent_tools_enabled);
+        assert_eq!(original.agent.tools_enabled, restored.agent.tools_enabled);
     }
 }

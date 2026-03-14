@@ -216,13 +216,11 @@ mod tests {
         let context = generate_feedback_context(&store);
         assert!(
             context.contains("Security"),
-            "Should mention Security: {}",
-            context
+            "Should mention Security: {context}"
         );
         assert!(
             context.contains("thorough"),
-            "Should advise thoroughness: {}",
-            context
+            "Should advise thoroughness: {context}"
         );
     }
 
@@ -236,15 +234,10 @@ mod tests {
             store.record_feedback("Style", None, false);
         }
         let context = generate_feedback_context(&store);
-        assert!(
-            context.contains("Style"),
-            "Should mention Style: {}",
-            context
-        );
+        assert!(context.contains("Style"), "Should mention Style: {context}");
         assert!(
             context.contains("rejected"),
-            "Should note rejection: {}",
-            context
+            "Should note rejection: {context}"
         );
     }
 
@@ -260,8 +253,7 @@ mod tests {
         let context = generate_feedback_context(&store);
         assert!(
             context.contains("*.test.ts"),
-            "Should mention file pattern: {}",
-            context
+            "Should mention file pattern: {context}"
         );
     }
 }

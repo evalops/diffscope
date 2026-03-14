@@ -14,7 +14,7 @@ pub async fn doctor_command(config: Config) -> Result<()> {
 
     let base_url = configured_base_url(&config);
 
-    print!("Checking endpoint {}... ", base_url);
+    print!("Checking endpoint {base_url}... ");
     let Some(endpoint) = discover_endpoint(&base_url).await? else {
         return print_unreachable(&base_url);
     };

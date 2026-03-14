@@ -38,7 +38,7 @@ pub(super) async fn run_eval_batch(
     output_path: Option<&Path>,
     options: &EvalRunOptions,
 ) -> Result<()> {
-    config.verification_fail_open = true;
+    config.verification.fail_open = true;
     let prepared_options = prepare_eval_options(options)?;
     let models = matrix_models(&config, options);
     let repeat_total = options.repeat.max(1);
@@ -108,7 +108,7 @@ pub(super) async fn run_eval_batch(
                     .label
                     .clone()
                     .unwrap_or_else(|| report.run.model.clone());
-                format!("{}: {}", label, message)
+                format!("{label}: {message}")
             })
         })
         .collect::<Vec<_>>();
@@ -151,12 +151,9 @@ fn build_run_label(
 ) -> String {
     let prefix = base_label.unwrap_or("eval");
     match (multi_model, repeating) {
-        (true, true) => format!(
-            "{} [{} repeat {}/{}]",
-            prefix, model, repeat_index, repeat_total
-        ),
-        (true, false) => format!("{} [{}]", prefix, model),
-        (false, true) => format!("{} [repeat {}/{}]", prefix, repeat_index, repeat_total),
+        (true, true) => format!("{prefix} [{model} repeat {repeat_index}/{repeat_total}]"),
+        (true, false) => format!("{prefix} [{model}]"),
+        (false, true) => format!("{prefix} [repeat {repeat_index}/{repeat_total}]"),
         (false, false) => prefix.to_string(),
     }
 }

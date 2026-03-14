@@ -57,7 +57,7 @@ pub fn format_top_findings_by_file(
             let rule = comment
                 .rule_id
                 .as_deref()
-                .map(|rule_id| format!(" rule:{}", rule_id))
+                .map(|rule_id| format!(" rule:{rule_id}"))
                 .unwrap_or_default();
             out.push_str(&format!(
                 "  - `L{}` [{:?}{}] {}\n",

@@ -52,8 +52,8 @@ pub(super) fn ensure_frontier_eval_models(
     for model in std::iter::once(config.model.clone())
         .chain(options.matrix_models.iter().cloned())
         .chain(
-            std::iter::once(config.verification_model_role)
-                .chain(config.verification_additional_model_roles.iter().copied())
+            std::iter::once(config.verification.model_role)
+                .chain(config.verification.additional_model_roles.iter().copied())
                 .map(|role| config.model_for_role(role).to_string()),
         )
         .chain(

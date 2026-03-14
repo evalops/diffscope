@@ -190,8 +190,7 @@ fn generate_recommendations(comments: &[Comment]) -> Vec<String> {
 
     if security_count > 0 {
         recommendations.push(format!(
-            "Address {} security issue(s) immediately",
-            security_count
+            "Address {security_count} security issue(s) immediately"
         ));
     }
     if performance_count > 2 {

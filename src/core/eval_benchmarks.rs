@@ -394,10 +394,10 @@ pub fn compare_results(
         ));
     }
     if precision_delta > max_regression {
-        improvements.push(format!("Precision improved by {:.3}", precision_delta));
+        improvements.push(format!("Precision improved by {precision_delta:.3}"));
     }
     if recall_delta > max_regression {
-        improvements.push(format!("Recall improved by {:.3}", recall_delta));
+        improvements.push(format!("Recall improved by {recall_delta:.3}"));
     }
 
     ComparisonResult {
@@ -1024,8 +1024,7 @@ mod tests {
         let (pass, failures) = evaluate_against_thresholds(&result, &thresholds);
         assert!(
             pass,
-            "FPR should be ~0.048 (FP/(FP+TN)), not 0.091 (FP/(FP+TP)): {:?}",
-            failures
+            "FPR should be ~0.048 (FP/(FP+TN)), not 0.091 (FP/(FP+TP)): {failures:?}"
         );
     }
 
