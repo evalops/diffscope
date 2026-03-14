@@ -848,6 +848,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         }];
         let summary = crate::core::CommentSynthesizer::generate_summary(&comments);
 
@@ -938,6 +939,7 @@ mod tests {
                 fix_effort: FixEffort::Low,
                 feedback: None,
                 status: crate::core::comment::CommentStatus::Open,
+                resolved_at: None,
             },
             Comment {
                 id: "c2".to_string(),
@@ -954,6 +956,7 @@ mod tests {
                 fix_effort: FixEffort::Low,
                 feedback: None,
                 status: crate::core::comment::CommentStatus::Open,
+                resolved_at: None,
             },
             Comment {
                 id: "c3".to_string(),
@@ -970,6 +973,7 @@ mod tests {
                 fix_effort: FixEffort::Medium,
                 feedback: None,
                 status: crate::core::comment::CommentStatus::Open,
+                resolved_at: None,
             },
         ];
         assert_eq!(count_reviewed_files(&comments), 2);
@@ -1389,6 +1393,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         }];
         let summary = crate::core::CommentSynthesizer::generate_summary(&comments);
 

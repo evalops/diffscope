@@ -54,6 +54,7 @@ mod tests {
             fix_effort: core::comment::FixEffort::Medium,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         }
     }
 

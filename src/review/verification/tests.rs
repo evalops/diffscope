@@ -62,6 +62,7 @@ fn make_comment(id: &str, content: &str, line: usize) -> Comment {
         fix_effort: FixEffort::Low,
         feedback: None,
         status: crate::core::comment::CommentStatus::Open,
+        resolved_at: None,
     }
 }
 

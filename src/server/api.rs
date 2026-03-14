@@ -1251,6 +1251,23 @@ pub async fn submit_feedback(
     Ok(Json(FeedbackResponse { ok: true }))
 }
 
+fn apply_comment_lifecycle_transition(
+    comment: &mut crate::core::comment::Comment,
+    next_status: CommentStatus,
+    timestamp: i64,
+) -> bool {
+    if comment.status == next_status {
+        return false;
+    }
+
+    comment.status = next_status;
+    comment.resolved_at = match next_status {
+        CommentStatus::Resolved => Some(timestamp),
+        _ => None,
+    };
+    true
+}
+
 pub async fn update_comment_lifecycle(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -1268,12 +1285,7 @@ pub async fn update_comment_lifecycle(
             .find(|c| c.id == request.comment_id)
             .ok_or(StatusCode::NOT_FOUND)?;
 
-        if comment.status == next_status {
-            false
-        } else {
-            comment.status = next_status;
-            true
-        }
+        apply_comment_lifecycle_transition(comment, next_status, current_timestamp())
     };
 
     if status_changed {
@@ -3827,6 +3839,40 @@ mod tests {
         assert!(req.post_results);
     }
 
+    #[test]
+    fn test_apply_comment_lifecycle_transition_sets_and_clears_resolved_at() {
+        let mut comment = make_search_comment("lifecycle", CommentStatus::Open);
+
+        assert!(apply_comment_lifecycle_transition(
+            &mut comment,
+            CommentStatus::Resolved,
+            123,
+        ));
+        assert_eq!(comment.status, CommentStatus::Resolved);
+        assert_eq!(comment.resolved_at, Some(123));
+
+        assert!(apply_comment_lifecycle_transition(
+            &mut comment,
+            CommentStatus::Open,
+            456,
+        ));
+        assert_eq!(comment.status, CommentStatus::Open);
+        assert_eq!(comment.resolved_at, None);
+    }
+
+    #[test]
+    fn test_apply_comment_lifecycle_transition_is_noop_when_status_matches() {
+        let mut comment = make_search_comment("lifecycle", CommentStatus::Resolved);
+        comment.resolved_at = Some(123);
+
+        assert!(!apply_comment_lifecycle_transition(
+            &mut comment,
+            CommentStatus::Resolved,
+            456,
+        ));
+        assert_eq!(comment.resolved_at, Some(123));
+    }
+
     fn make_search_comment(id: &str, status: CommentStatus) -> crate::core::Comment {
         crate::core::Comment {
             id: id.to_string(),
@@ -3843,6 +3889,7 @@ mod tests {
             fix_effort: crate::core::comment::FixEffort::Low,
             feedback: None,
             status,
+            resolved_at: None,
         }
     }
 

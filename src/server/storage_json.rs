@@ -475,6 +475,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         }
     }
 
@@ -525,6 +526,8 @@ mod tests {
             make_comment("c1", "src/main.rs"),
             make_comment("c2", "src/lib.rs"),
         ];
+        session.comments[1].status = crate::core::comment::CommentStatus::Resolved;
+        session.comments[1].resolved_at = Some(123);
         session.summary = Some(ReviewSummary {
             total_comments: 2,
             by_severity: HashMap::from([("Warning".to_string(), 2)]),
@@ -554,6 +557,7 @@ mod tests {
         backend.save_review(&session).await.unwrap();
         let loaded = backend.get_review("r-full").await.unwrap().unwrap();
         assert_eq!(loaded.comments.len(), 2);
+        assert_eq!(loaded.comments[1].resolved_at, Some(123));
         assert!(loaded.summary.is_some());
         assert_eq!(loaded.summary.unwrap().overall_score, 8.0);
     }

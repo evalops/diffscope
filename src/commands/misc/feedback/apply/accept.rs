@@ -37,6 +37,7 @@ mod tests {
             fix_effort: core::comment::FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let comments = vec![comment];

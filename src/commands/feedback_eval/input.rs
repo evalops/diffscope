@@ -39,6 +39,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: feedback.map(str::to_string),
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         }
     }
 

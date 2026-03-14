@@ -43,7 +43,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 16. [x] Distinguish informational findings from blocking findings in lifecycle and readiness calculations.
 17. [x] Add "critical blockers" summary cards for unresolved `Error` and `Warning` comments.
 18. [x] Add per-PR readiness timelines showing when a review became mergeable.
-19. [ ] Store resolution timestamps for findings so mean-time-to-fix can be measured.
+19. [x] Store resolution timestamps for findings so mean-time-to-fix can be measured.
 20. [x] Add CLI and API surfaces to query PR readiness without opening the web UI.
 
 ## 3. Agentic Validation Loops

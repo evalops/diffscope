@@ -275,6 +275,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status,
+            resolved_at: None,
         }
     }
 

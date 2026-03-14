@@ -120,6 +120,7 @@ impl CommentSynthesizer {
             fix_effort,
             feedback: None,
             status: CommentStatus::Open,
+            resolved_at: None,
         })
     }
 }

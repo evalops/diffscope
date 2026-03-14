@@ -53,6 +53,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let pattern = EvalPattern {
@@ -85,6 +86,7 @@ mod tests {
             fix_effort: FixEffort::Medium,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let pattern = EvalPattern {
@@ -116,6 +118,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let pattern = EvalPattern {
@@ -145,6 +148,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let pattern = EvalPattern {
@@ -178,6 +182,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let pattern = EvalPattern {
@@ -207,6 +212,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let pattern = EvalPattern {
@@ -238,6 +244,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let pattern = EvalPattern {
@@ -268,6 +275,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let pattern = EvalPattern {
@@ -302,6 +310,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let pattern = EvalPattern {
@@ -335,6 +344,7 @@ mod tests {
             fix_effort: FixEffort::Medium,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let pattern = EvalPattern {
@@ -371,6 +381,7 @@ mod tests {
             fix_effort: FixEffort::Medium,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let pattern = EvalPattern {
@@ -408,6 +419,7 @@ mod tests {
             fix_effort: FixEffort::Low,
             feedback: None,
             status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
         };
 
         let pattern = EvalPattern {

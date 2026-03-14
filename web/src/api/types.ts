@@ -30,6 +30,7 @@ export interface Comment {
   fix_effort: FixEffort
   feedback?: FeedbackAction
   status?: CommentLifecycleStatus
+  resolved_at?: string | number
 }
 
 export interface ReviewSummary {

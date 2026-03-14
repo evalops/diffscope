@@ -22,6 +22,8 @@ pub struct Comment {
     pub feedback: Option<String>,
     #[serde(default)]
     pub status: CommentStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

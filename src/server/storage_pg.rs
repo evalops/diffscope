@@ -133,14 +133,18 @@ impl StorageBackend for PgStorageBackend {
                     .as_ref()
                     .map(|cs| serde_json::to_value(cs).unwrap_or_default());
                 let tags: Vec<&str> = c.tags.iter().map(|t| t.as_str()).collect();
+                let resolved_at = c
+                    .resolved_at
+                    .and_then(|t| chrono::DateTime::from_timestamp(t, 0));
 
                 sqlx::query(
                     r#"
-                    INSERT INTO comments (id, review_id, file_path, line_number, content, rule_id, severity, category, suggestion, confidence, code_suggestion, tags, fix_effort, feedback, lifecycle_status)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                    INSERT INTO comments (id, review_id, file_path, line_number, content, rule_id, severity, category, suggestion, confidence, code_suggestion, tags, fix_effort, feedback, lifecycle_status, resolved_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                     ON CONFLICT (id) DO UPDATE SET
                         feedback = EXCLUDED.feedback,
-                        lifecycle_status = EXCLUDED.lifecycle_status
+                        lifecycle_status = EXCLUDED.lifecycle_status,
+                        resolved_at = EXCLUDED.resolved_at
                     "#,
                 )
                 .bind(&c.id)
@@ -158,6 +162,7 @@ impl StorageBackend for PgStorageBackend {
                 .bind(format!("{:?}", c.fix_effort))
                 .bind(&c.feedback)
                 .bind(c.status.to_string())
+                .bind(resolved_at)
                 .execute(&self.pool)
                 .await?;
             }
@@ -624,10 +629,11 @@ impl PgStorageBackend {
                 String,
                 Option<String>,
                 String,
+                Option<chrono::DateTime<chrono::Utc>>,
             ),
         >(
             "SELECT id, file_path, line_number, content, rule_id, severity, category, \
-             suggestion, confidence, code_suggestion, tags, fix_effort, feedback, lifecycle_status \
+             suggestion, confidence, code_suggestion, tags, fix_effort, feedback, lifecycle_status, resolved_at \
              FROM comments WHERE review_id = $1 ORDER BY created_at",
         )
         .bind(review_id)
@@ -654,6 +660,7 @@ impl PgStorageBackend {
                     fix_effort: parse_fix_effort(&r.11),
                     feedback: r.12,
                     status: parse_comment_status(&r.13),
+                    resolved_at: r.14.map(|ts| ts.timestamp()),
                 }
             })
             .collect())
