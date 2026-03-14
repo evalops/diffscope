@@ -97,6 +97,31 @@ pub struct SymbolGraph {
     file_symbols: HashMap<PathBuf, HashSet<String>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct NodeKey {
+    name: String,
+    file_path: PathBuf,
+    line: usize,
+}
+
+impl NodeKey {
+    fn from_node(node: &SymbolNode) -> Self {
+        Self {
+            name: node.name.clone(),
+            file_path: node.file_path.clone(),
+            line: node.line_range.0,
+        }
+    }
+
+    fn from_edge(edge: &SymbolEdge) -> Self {
+        Self {
+            name: edge.target.clone(),
+            file_path: edge.target_file.clone(),
+            line: edge.target_line,
+        }
+    }
+}
+
 impl SymbolGraph {
     pub fn new() -> Self {
         Self::default()
@@ -113,43 +138,58 @@ impl SymbolGraph {
 
     /// Add a directed edge between two symbols.
     pub fn add_edge(&mut self, from: &str, to: &str, relation: SymbolRelation) {
-        // Collect target info first to avoid borrow conflicts
         let to_info = self
             .nodes
             .get(to)
-            .and_then(|nodes| nodes.first())
-            .map(|n| (n.file_path.clone(), n.line_range.0));
+            .map(|nodes| {
+                nodes
+                    .iter()
+                    .map(|node| (node.file_path.clone(), node.line_range.0))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let from_info = self
             .nodes
             .get(from)
-            .and_then(|nodes| nodes.first())
-            .map(|n| (n.file_path.clone(), n.line_range.0));
+            .map(|nodes| {
+                nodes
+                    .iter()
+                    .map(|node| (node.file_path.clone(), node.line_range.0))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
         // Forward edge: from -> to
-        if let Some((target_file, target_line)) = &to_info {
-            if let Some(from_nodes) = self.nodes.get_mut(from) {
-                for node in from_nodes.iter_mut() {
-                    node.edges.push(SymbolEdge {
-                        target: to.to_string(),
-                        relation: relation.clone(),
-                        target_file: target_file.clone(),
-                        target_line: *target_line,
-                    });
+        if let Some(from_nodes) = self.nodes.get_mut(from) {
+            for node in from_nodes.iter_mut() {
+                for (target_file, target_line) in &to_info {
+                    push_edge_if_absent(
+                        node,
+                        SymbolEdge {
+                            target: to.to_string(),
+                            relation: relation.clone(),
+                            target_file: target_file.clone(),
+                            target_line: *target_line,
+                        },
+                    );
                 }
             }
         }
 
         // Inverse edge: to -> from
         let inverse = relation.inverse();
-        if let Some((source_file, source_line)) = &from_info {
-            if let Some(to_nodes) = self.nodes.get_mut(to) {
-                for node in to_nodes.iter_mut() {
-                    node.edges.push(SymbolEdge {
-                        target: from.to_string(),
-                        relation: inverse.clone(),
-                        target_file: source_file.clone(),
-                        target_line: *source_line,
-                    });
+        if let Some(to_nodes) = self.nodes.get_mut(to) {
+            for node in to_nodes.iter_mut() {
+                for (source_file, source_line) in &from_info {
+                    push_edge_if_absent(
+                        node,
+                        SymbolEdge {
+                            target: from.to_string(),
+                            relation: inverse.clone(),
+                            target_file: source_file.clone(),
+                            target_line: *source_line,
+                        },
+                    );
                 }
             }
         }
@@ -235,22 +275,28 @@ impl SymbolGraph {
             hops: usize,
         }
 
-        let seed_set: HashSet<String> = seed_symbols.iter().cloned().collect();
-        let mut best_states: HashMap<String, RankedState> = HashMap::new();
-        let mut frontier: Vec<(String, usize, f32, Vec<SymbolRelation>)> = Vec::new();
+        let mut seed_keys = HashSet::new();
+        let mut best_states: HashMap<NodeKey, RankedState> = HashMap::new();
+        let mut frontier: Vec<(NodeKey, usize, f32, Vec<SymbolRelation>)> = Vec::new();
 
         for seed in seed_symbols {
-            best_states.insert(
-                seed.clone(),
-                RankedState {
-                    cost: 0.0,
-                    file_path: PathBuf::new(),
-                    line: 0,
-                    relation_path: Vec::new(),
-                    hops: 0,
-                },
-            );
-            frontier.push((seed.clone(), 0, 0.0, Vec::new()));
+            if let Some(nodes) = self.nodes.get(seed) {
+                for node in nodes {
+                    let key = NodeKey::from_node(node);
+                    seed_keys.insert(key.clone());
+                    best_states.insert(
+                        key.clone(),
+                        RankedState {
+                            cost: 0.0,
+                            file_path: node.file_path.clone(),
+                            line: node.line_range.0,
+                            relation_path: Vec::new(),
+                            hops: 0,
+                        },
+                    );
+                    frontier.push((key, 0, 0.0, Vec::new()));
+                }
+            }
         }
 
         while !frontier.is_empty() {
@@ -265,38 +311,37 @@ impl SymbolGraph {
                 continue;
             }
 
-            if let Some(nodes) = self.nodes.get(&current) {
-                for node in nodes {
-                    for edge in &node.edges {
-                        let next_hops = depth + 1;
-                        if next_hops > max_hops {
-                            continue;
-                        }
+            if let Some(node) = self.lookup_node(&current) {
+                for edge in &node.edges {
+                    let next_hops = depth + 1;
+                    if next_hops > max_hops {
+                        continue;
+                    }
 
-                        let next_cost =
-                            accumulated_cost + edge.relation.relevance_weight() * next_hops as f32;
-                        let mut next_path = relation_path.clone();
-                        next_path.push(edge.relation.clone());
+                    let next_cost =
+                        accumulated_cost + edge.relation.relevance_weight() * next_hops as f32;
+                    let mut next_path = relation_path.clone();
+                    next_path.push(edge.relation.clone());
+                    let next_key = NodeKey::from_edge(edge);
 
-                        let should_update = best_states.get(&edge.target).is_none_or(|existing| {
-                            next_cost + f32::EPSILON < existing.cost
-                                || ((next_cost - existing.cost).abs() <= f32::EPSILON
-                                    && next_hops < existing.hops)
-                        });
+                    let should_update = best_states.get(&next_key).is_none_or(|existing| {
+                        next_cost + f32::EPSILON < existing.cost
+                            || ((next_cost - existing.cost).abs() <= f32::EPSILON
+                                && next_hops < existing.hops)
+                    });
 
-                        if should_update {
-                            best_states.insert(
-                                edge.target.clone(),
-                                RankedState {
-                                    cost: next_cost,
-                                    file_path: edge.target_file.clone(),
-                                    line: edge.target_line,
-                                    relation_path: next_path.clone(),
-                                    hops: next_hops,
-                                },
-                            );
-                            frontier.push((edge.target.clone(), next_hops, next_cost, next_path));
-                        }
+                    if should_update {
+                        best_states.insert(
+                            next_key.clone(),
+                            RankedState {
+                                cost: next_cost,
+                                file_path: edge.target_file.clone(),
+                                line: edge.target_line,
+                                relation_path: next_path.clone(),
+                                hops: next_hops,
+                            },
+                        );
+                        frontier.push((next_key, next_hops, next_cost, next_path));
                     }
                 }
             }
@@ -304,9 +349,9 @@ impl SymbolGraph {
 
         let mut results: Vec<RankedSymbol> = best_states
             .into_iter()
-            .filter(|(name, state)| !seed_set.contains(name) && !state.relation_path.is_empty())
-            .map(|(name, state)| RankedSymbol {
-                name,
+            .filter(|(key, state)| !seed_keys.contains(key) && !state.relation_path.is_empty())
+            .map(|(key, state)| RankedSymbol {
+                name: key.name,
                 file_path: state.file_path,
                 line: state.line,
                 relevance_score: 1.0 / (1.0 + state.cost),
@@ -328,31 +373,52 @@ impl SymbolGraph {
     pub fn ranked_to_locations(&self, ranked: &[RankedSymbol]) -> Vec<SymbolLocation> {
         let mut locations = Vec::new();
         for rs in ranked {
-            if let Some(nodes) = self.nodes.get(&rs.name) {
-                for node in nodes {
-                    if node.file_path == rs.file_path {
-                        let relation_path = relation_path_summary(&rs.relation_path);
-                        locations.push(SymbolLocation {
-                            file_path: node.file_path.clone(),
-                            line_range: node.line_range,
-                            snippet: format!(
-                                "[Graph: {}, hops={}, relevance={:.2}]\n{}",
-                                relation_path, rs.hops, rs.relevance_score, node.name
-                            ),
-                            provenance: Some(ContextProvenance::symbol_graph_path(
-                                rs.relation_path
-                                    .iter()
-                                    .map(|relation| relation.as_label().to_string())
-                                    .collect(),
-                                rs.hops,
-                                rs.relevance_score,
-                            )),
-                        });
-                    }
-                }
+            if let Some(node) = self.lookup_ranked_node(rs) {
+                let relation_path = relation_path_summary(&rs.relation_path);
+                locations.push(SymbolLocation {
+                    file_path: node.file_path.clone(),
+                    line_range: node.line_range,
+                    snippet: format!(
+                        "[Graph: {}, hops={}, relevance={:.2}]\n{}",
+                        relation_path, rs.hops, rs.relevance_score, node.name
+                    ),
+                    provenance: Some(ContextProvenance::symbol_graph_path(
+                        rs.relation_path
+                            .iter()
+                            .map(|relation| relation.as_label().to_string())
+                            .collect(),
+                        rs.hops,
+                        rs.relevance_score,
+                    )),
+                });
             }
         }
         locations
+    }
+
+    fn lookup_node(&self, key: &NodeKey) -> Option<&SymbolNode> {
+        self.nodes.get(&key.name).and_then(|nodes| {
+            nodes
+                .iter()
+                .find(|node| node.file_path == key.file_path && node.line_range.0 == key.line)
+        })
+    }
+
+    fn lookup_ranked_node(&self, ranked: &RankedSymbol) -> Option<&SymbolNode> {
+        self.nodes.get(&ranked.name).and_then(|nodes| {
+            nodes
+                .iter()
+                .filter(|node| node.file_path == ranked.file_path)
+                .min_by_key(|node| {
+                    let start = node.line_range.0;
+                    let end = node.line_range.1;
+                    if ranked.line < start {
+                        start - ranked.line
+                    } else {
+                        ranked.line.saturating_sub(end)
+                    }
+                })
+        })
     }
 
     pub fn node_count(&self) -> usize {
@@ -411,7 +477,20 @@ static RUST_IMPL_FOR: Lazy<Regex> = Lazy::new(|| {
 });
 static FN_CALL: Lazy<Regex> = Lazy::new(|| Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(").unwrap());
 static TYPE_REF: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r":\s*(?:&\s*)?(?:mut\s+)?([A-Z][A-Za-z0-9_]*)").unwrap());
+    Lazy::new(|| Regex::new(r":\s*(?:&\s*)?(?:mut\s+)?(?:dyn\s+)?([A-Z][A-Za-z0-9_]*)").unwrap());
+
+fn push_edge_if_absent(node: &mut SymbolNode, edge: SymbolEdge) {
+    if node.edges.iter().any(|existing| {
+        existing.target == edge.target
+            && existing.relation == edge.relation
+            && existing.target_file == edge.target_file
+            && existing.target_line == edge.target_line
+    }) {
+        return;
+    }
+
+    node.edges.push(edge);
+}
 static PY_DEF: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap());
 static PY_CLASS: Lazy<Regex> =
@@ -910,6 +989,77 @@ impl Authenticator for AdminAuth {
     }
 
     #[test]
+    fn test_related_symbols_keep_trait_and_impl_methods_distinct() {
+        let mut files = HashMap::new();
+        files.insert(
+            PathBuf::from("routes.rs"),
+            r#"
+use crate::request::Request;
+use crate::search::QueryRunner;
+
+pub fn get_profile(runner: &dyn QueryRunner, request: &Request) -> String {
+    runner.find_user(request.name())
+}
+"#
+            .to_string(),
+        );
+        files.insert(
+            PathBuf::from("search.rs"),
+            r#"
+pub trait QueryRunner {
+    fn find_user(&self, name: &str) -> String;
+}
+"#
+            .to_string(),
+        );
+        files.insert(
+            PathBuf::from("db.rs"),
+            r#"
+use crate::search::QueryRunner;
+
+pub struct PostgresQueryRunner;
+
+impl QueryRunner for PostgresQueryRunner {
+    fn find_user(&self, name: &str) -> String {
+        format!("SELECT * FROM users WHERE name = '{}'", name)
+    }
+}
+"#
+            .to_string(),
+        );
+        files.insert(
+            PathBuf::from("request.rs"),
+            r#"
+pub struct Request {
+    name: String,
+}
+
+impl Request {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+"#
+            .to_string(),
+        );
+
+        let graph = SymbolGraph::build_from_source(&files);
+        let related = graph.related_symbols(&["get_profile".to_string()], 2, 10);
+
+        let find_user_files = related
+            .iter()
+            .filter(|symbol| symbol.name == "find_user")
+            .map(|symbol| symbol.file_path.clone())
+            .collect::<HashSet<_>>();
+
+        assert!(find_user_files.contains(Path::new("search.rs")));
+        assert!(find_user_files.contains(Path::new("db.rs")));
+        assert!(related.iter().any(|symbol| {
+            symbol.name == "QueryRunner" && symbol.file_path == Path::new("search.rs")
+        }));
+    }
+
+    #[test]
     fn test_empty_graph_traversal() {
         let graph = SymbolGraph::new();
         let results = graph.related_symbols(&["nonexistent".to_string()], 2, 10);
@@ -963,9 +1113,8 @@ impl Authenticator for AdminAuth {
         });
         graph.add_edge("A", "B", SymbolRelation::Calls);
         graph.add_edge("A", "B", SymbolRelation::Calls);
-        // Duplicate edges are added (no deduplication)
         let a_edges = &graph.lookup("A").unwrap()[0].edges;
-        assert_eq!(a_edges.len(), 2);
+        assert_eq!(a_edges.len(), 1);
     }
 
     #[test]

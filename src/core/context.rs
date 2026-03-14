@@ -481,4 +481,60 @@ mod tests {
             .unwrap_or_default()
             .contains("calls"));
     }
+
+    #[tokio::test]
+    async fn test_fetch_related_definitions_with_index_surfaces_trait_impl_contract_edges() {
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(
+            dir.path().join("routes.rs"),
+            "use crate::request::Request;\nuse crate::search::QueryRunner;\n\npub fn get_profile(runner: &dyn QueryRunner, request: &Request) -> String {\n    runner.find_user(request.name())\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("search.rs"),
+            "pub trait QueryRunner {\n    fn find_user(&self, name: &str) -> String;\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("db.rs"),
+            "use crate::search::QueryRunner;\n\npub struct PostgresQueryRunner;\n\nimpl QueryRunner for PostgresQueryRunner {\n    fn find_user(&self, name: &str) -> String {\n        format!(\"SELECT * FROM users WHERE name = '{}'\", name)\n    }\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("request.rs"),
+            "pub struct Request {\n    name: String,\n}\n\nimpl Request {\n    pub fn name(&self) -> &str {\n        &self.name\n    }\n}\n",
+        )
+        .unwrap();
+
+        let index = SymbolIndex::build(dir.path(), 20, 200_000, 10, |_| false).unwrap();
+        let fetcher = ContextFetcher::new(dir.path().to_path_buf());
+
+        let chunks = fetcher
+            .fetch_related_definitions_with_index(
+                &PathBuf::from("routes.rs"),
+                &["get_profile".to_string()],
+                &index,
+                10,
+                2,
+                8,
+            )
+            .await
+            .unwrap();
+
+        let impl_chunk = chunks
+            .iter()
+            .find(|chunk| {
+                chunk.file_path == Path::new("db.rs") && chunk.content.contains("find_user")
+            })
+            .expect("expected trait implementation context for db.rs");
+
+        assert_eq!(impl_chunk.context_type, ContextType::Definition);
+        assert!(impl_chunk.content.contains("SELECT * FROM users"));
+        assert!(impl_chunk
+            .provenance_label()
+            .as_deref()
+            .unwrap_or_default()
+            .contains("calls"));
+    }
 }
