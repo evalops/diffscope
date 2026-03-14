@@ -4,7 +4,7 @@ import {
   AreaChart, Area, BarChart, Bar,
   ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
-import { useEvents } from '../api/hooks'
+import { useEvents, useEventStats } from '../api/hooks'
 import {
   Loader2, Search, ChevronDown, ChevronLeft, ChevronRight,
   Download, Radio, GitCompareArrows, ExternalLink,
@@ -439,6 +439,7 @@ function ensureStyles() {
 /* ---- Main Component ---- */
 export function Events() {
   const { data: events, isLoading } = useEvents()
+  const { data: serverStats } = useEventStats()
   const [search, setSearch] = useState('')
   const [sourceFilter, setSourceFilter] = useState<string>('all')
   const [modelFilter, setModelFilter] = useState<string>('all')
@@ -526,7 +527,17 @@ export function Events() {
     return list
   }, [allEvents, sourceFilter, modelFilter, search, sortField, sortDir])
 
-  const stats = useMemo(() => computeStats(allEvents), [allEvents])
+  const clientStats = useMemo(() => computeStats(allEvents), [allEvents])
+  const stats = serverStats != null
+    ? {
+        totalReviews: serverStats.total_reviews,
+        avgDuration: serverStats.avg_duration_ms,
+        totalTokens: serverStats.total_tokens,
+        avgScore: serverStats.avg_score ?? 0,
+        failedCount: serverStats.failed_count,
+        timeline: clientStats.timeline,
+      }
+    : clientStats
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
@@ -573,7 +584,7 @@ export function Events() {
         </button>
       </div>
 
-      {/* Stat cards */}
+      {/* Stat cards (server stats when available) */}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">
         {[
           { label: 'REVIEWS', value: String(stats.totalReviews), sub: stats.failedCount > 0 ? `${stats.failedCount} failed` : undefined, subColor: 'text-sev-error' },
@@ -581,7 +592,7 @@ export function Events() {
           { label: 'TOTAL TOKENS', value: fmtTokens(stats.totalTokens) },
           { label: 'AVG SCORE', value: stats.avgScore.toFixed(1), valueColor: stats.avgScore >= 7 ? 'text-sev-suggestion' : stats.avgScore >= 4 ? 'text-sev-warning' : 'text-sev-error' },
           { label: 'TOTAL FILES', value: String(allEvents.reduce((s, e) => s + e.diff_files_reviewed, 0)) },
-          { label: 'TOTAL COST', value: formatCost(totalCost(allEvents)) },
+          { label: 'TOTAL COST', value: formatCost(serverStats != null ? serverStats.total_cost_estimate : totalCost(allEvents)) },
         ].map(card => (
           <div key={card.label} className="bg-surface-1 border border-border rounded-lg p-3">
             <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code">{card.label}</div>
@@ -590,6 +601,61 @@ export function Events() {
           </div>
         ))}
       </div>
+
+      {/* Server latency percentiles + by-model + daily (when available) */}
+      {serverStats && (serverStats.p50_latency_ms > 0 || serverStats.p95_latency_ms > 0 || serverStats.p99_latency_ms > 0) && (
+        <div className="grid grid-cols-3 gap-3 mb-6">
+          <div className="bg-surface-1 border border-border rounded-lg p-3">
+            <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code">P50 LATENCY</div>
+            <div className="text-lg font-bold font-code mt-1 text-text-primary">{formatDuration(serverStats.p50_latency_ms)}</div>
+          </div>
+          <div className="bg-surface-1 border border-border rounded-lg p-3">
+            <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code">P95 LATENCY</div>
+            <div className="text-lg font-bold font-code mt-1 text-text-primary">{formatDuration(serverStats.p95_latency_ms)}</div>
+          </div>
+          <div className="bg-surface-1 border border-border rounded-lg p-3">
+            <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code">P99 LATENCY</div>
+            <div className="text-lg font-bold font-code mt-1 text-text-primary">{formatDuration(serverStats.p99_latency_ms)}</div>
+          </div>
+        </div>
+      )}
+      {serverStats && (serverStats.by_model.length > 0 || serverStats.daily_counts.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+          {serverStats.by_model.length > 0 && (
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">REVIEWS BY MODEL</div>
+              <div className="space-y-1.5">
+                {serverStats.by_model.map(m => (
+                  <div key={m.model} className="flex items-center justify-between text-[11px]">
+                    <span className="font-code text-text-primary truncate max-w-40" title={m.model}>{m.model}</span>
+                    <span className="font-code text-text-secondary tabular-nums">{m.count} reviews · {formatDuration(m.avg_duration_ms)} avg</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {serverStats.daily_counts.length > 0 && (
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">DAILY ACTIVITY</div>
+              <div className="h-28">
+                <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                  <BarChart
+                    data={serverStats.daily_counts.slice(-14).map(d => ({ date: d.date.slice(0, 10), completed: d.completed, failed: d.failed }))}
+                    margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="date" tick={{ ...axisTick, fontSize: 9 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={axisTick} axisLine={false} tickLine={false} />
+                    <Tooltip {...tooltipStyle} />
+                    <Bar dataKey="completed" name="Completed" fill={CHART_THEME.accent} radius={[2, 2, 0, 0]} stackId="a" />
+                    <Bar dataKey="failed" name="Failed" fill="#ef4444" radius={[2, 2, 0, 0]} stackId="a" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Charts */}
       {stats.timeline.length > 1 && (

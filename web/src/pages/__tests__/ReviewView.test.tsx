@@ -124,7 +124,6 @@ describe('ReviewView blocker mode', () => {
   })
 
   it.skip('shows only open blockers and hides non-blocking files when enabled', async () => {
-    const user = userEvent.setup()
     useReviewMock.mockReturnValue({ data: makeReview(), isLoading: false })
 
     render(<ReviewView />)
@@ -198,7 +197,6 @@ describe('ReviewView blocker mode', () => {
   })
 
   it.skip('groups list view comments into unresolved, informational, and fixed sections', async () => {
-    const user = userEvent.setup()
     useReviewMock.mockReturnValue({ data: makeReview(), isLoading: false })
 
     render(<ReviewView />)

@@ -699,6 +699,7 @@ impl ReviewEventBuilder {
 }
 
 /// Emit a review wide event via structured tracing.
+/// Also logs one full JSON line per event (target "review.event.json") for log pipelines / OTEL.
 pub fn emit_wide_event(event: &ReviewEvent) {
     info!(
         review_id = %event.review_id,
@@ -720,6 +721,9 @@ pub fn emit_wide_event(event: &ReviewEvent) {
         error = ?event.error,
         "review.event"
     );
+    if let Ok(json) = serde_json::to_string(event) {
+        info!(target: "review.event.json", "{}", json);
+    }
 }
 
 /// Build a progress callback that updates the review session during review.
