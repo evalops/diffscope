@@ -1,0 +1,7 @@
+# cargo-deny: https://embarkstudios.github.io/cargo-deny/
+# CI runs: cargo deny check advisories (licenses optional; expand allow list to enable).
+
+[advisories]
+version = 2
+unmaintained = "workspace"
+yanked = "warn"

@@ -42,7 +42,7 @@ This doc and GitHub Actions make releases repeatable with minimal manual steps.
 | Step | Automation |
 |------|------------|
 | Version sync (CI) | `check_version_sync.py` fails if `Cargo.toml` is behind latest tag. |
-| Tag and trigger release | **Prepare release** workflow (manual run with version input). |
+| Tag and trigger release | **Prepare release** workflow (manual run with version input). From CLI: `./scripts/gh-release.sh 0.5.28` or `gh workflow run "Prepare release" -f version=0.5.28`. See [gh-automation.md](gh-automation.md). |
 | Release body | **Release** workflow reads `RELEASE_NOTES.md` for the tagged version. |
 | Binaries + Docker | **Release** workflow builds and uploads. |
 | Issue close | Add “Closes #N” in PR body. |

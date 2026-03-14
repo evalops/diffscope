@@ -50,6 +50,18 @@ jobs:
       - name: Audit dependencies
         run: cargo audit
 
+  cargo-deny:
+    name: cargo-deny (advisories)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: Check advisories
+        run: cargo deny check advisories
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:
