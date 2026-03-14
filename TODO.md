@@ -70,7 +70,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 37. [x] Add graph-backed ranking of related files before semantic RAG retrieval.
 38. [x] Add graph query traces to `dag_traces` or review artifacts for explainability and debugging.
 39. [x] Add graph-aware eval fixtures that require multi-hop code understanding to pass.
-40. [ ] Split `src/core/symbol_graph.rs` into construction, persistence, traversal, and ranking modules as it grows.
+40. [x] Split `src/core/symbol_graph.rs` into construction, persistence, traversal, and ranking modules as it grows.
 
 ## 5. External Context and Pattern Repositories
 
