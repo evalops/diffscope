@@ -3810,6 +3810,7 @@ mod tests {
             diff_source: "pr:owner/repo#42".to_string(),
             current_head_sha: Some("abc123".to_string()),
             latest_review: None,
+            timeline: Vec::new(),
         };
         let json = serde_json::to_value(&snapshot).unwrap();
         assert_eq!(json["repo"], "owner/repo");

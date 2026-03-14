@@ -42,7 +42,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 15. [x] Show "needs re-review" state in review detail and history pages for incremental PR workflows.
 16. [x] Distinguish informational findings from blocking findings in lifecycle and readiness calculations.
 17. [x] Add "critical blockers" summary cards for unresolved `Error` and `Warning` comments.
-18. [ ] Add per-PR readiness timelines showing when a review became mergeable.
+18. [x] Add per-PR readiness timelines showing when a review became mergeable.
 19. [ ] Store resolution timestamps for findings so mean-time-to-fix can be measured.
 20. [x] Add CLI and API surfaces to query PR readiness without opening the web UI.
 
@@ -179,4 +179,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Add ReviewView keyboard shortcuts for next-finding navigation plus accept/reject/resolve actions.
 - [x] Add path-scoped reinforcement buckets so feedback can distinguish `tests/**`, `scripts/**`, and broader code areas.
 - [x] Add review completeness metrics across summaries, PR readiness, and ReviewView surfaces.
+- [x] Add per-PR readiness timelines that preserve historical mergeability checkpoints.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.

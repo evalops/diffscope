@@ -23,6 +23,8 @@ pub struct PrReadinessSnapshot {
     pub current_head_sha: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_review: Option<PrReadinessReview>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timeline: Vec<PrReadinessReview>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +209,7 @@ pub(crate) fn build_pr_readiness_snapshot(
 ) -> PrReadinessSnapshot {
     let diff_source = pr_diff_source(repo, pr_number);
     let latest_by_source = latest_review_head_by_source(reviews);
+    let timeline = pr_readiness_timeline(reviews, repo, pr_number);
     let latest_review = latest_pr_review_session(reviews, repo, pr_number)
         .map(|session| apply_dynamic_review_state(session, &latest_by_source, current_head_sha))
         .map(|session| PrReadinessReview::from_session(&session));
@@ -217,7 +220,26 @@ pub(crate) fn build_pr_readiness_snapshot(
         diff_source,
         current_head_sha: current_head_sha.map(str::to_string),
         latest_review,
+        timeline,
     }
+}
+
+fn pr_readiness_timeline(
+    reviews: &[ReviewSession],
+    repo: &str,
+    pr_number: u32,
+) -> Vec<PrReadinessReview> {
+    let diff_source = pr_diff_source(repo, pr_number);
+    let mut timeline = reviews
+        .iter()
+        .filter(|session| session.diff_source == diff_source && session.summary.is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    timeline.sort_by_key(|session| (session.started_at, session.completed_at.unwrap_or_default()));
+    timeline
+        .iter()
+        .map(PrReadinessReview::from_session)
+        .collect()
 }
 
 pub(crate) async fn get_pr_readiness_snapshot(
@@ -492,6 +514,49 @@ mod tests {
                 open_blockers: 1,
                 blocking_prs: 1,
             })
+        );
+    }
+
+    #[test]
+    fn readiness_timeline_preserves_historical_mergeability() {
+        let older = make_pr_review_session(
+            "r-older",
+            10,
+            "sha-a",
+            vec![make_comment("c1", Severity::Error, CommentStatus::Open)],
+        );
+        let ready = make_pr_review_session("r-ready", 20, "sha-b", Vec::new());
+
+        let snapshot =
+            build_pr_readiness_snapshot(&[older, ready], "owner/repo", 42, Some("sha-c"));
+
+        assert_eq!(snapshot.timeline.len(), 2);
+        assert_eq!(snapshot.timeline[0].id, "r-older");
+        assert_eq!(snapshot.timeline[1].id, "r-ready");
+        assert_eq!(
+            snapshot.timeline[0]
+                .summary
+                .as_ref()
+                .expect("older summary")
+                .merge_readiness,
+            crate::core::comment::MergeReadiness::NeedsAttention
+        );
+        assert_eq!(
+            snapshot.timeline[1]
+                .summary
+                .as_ref()
+                .expect("ready summary")
+                .merge_readiness,
+            crate::core::comment::MergeReadiness::Ready
+        );
+        assert_eq!(
+            snapshot
+                .latest_review
+                .as_ref()
+                .and_then(|review| review.summary.as_ref())
+                .expect("latest summary")
+                .merge_readiness,
+            crate::core::comment::MergeReadiness::NeedsReReview
         );
     }
 }

@@ -72,9 +72,11 @@ describe('PrReadinessSummary', () => {
   it('renders lifecycle-aware merge blockers for the latest review', () => {
     render(<PrReadinessSummary readiness={makeSnapshot()} />)
 
-    expect(screen.getByText('Needs Attention')).toBeInTheDocument()
+    expect(screen.getAllByText('Needs Attention').length).toBeGreaterThan(0)
     expect(screen.getByText('Incremental review coverage')).toBeInTheDocument()
     expect(screen.getByText(/does not include the newer delta yet/i)).toBeInTheDocument()
+    expect(screen.getByText('Readiness timeline')).toBeInTheDocument()
+    expect(screen.getByText('Superseded by newer commits')).toBeInTheDocument()
     expect(screen.getByText('Open blockers')).toBeInTheDocument()
     expect(screen.getByText('Completeness')).toBeInTheDocument()
     expect(screen.getByText('2/4 acknowledged')).toBeInTheDocument()
@@ -89,6 +91,61 @@ describe('PrReadinessSummary', () => {
     render(<PrReadinessSummary readiness={makeSnapshot({ current_head_sha: 'fedcba9876543210' })} />)
 
     expect(screen.queryByText('Incremental review coverage')).not.toBeInTheDocument()
+  })
+
+  it('shows when the PR first became mergeable in the readiness timeline', () => {
+    const blockedReview = {
+      id: 'blocked-1',
+      status: 'Complete',
+      started_at: 1,
+      completed_at: 2,
+      reviewed_head_sha: 'aaaaaaaaaaaa1111',
+      summary: makeSummary(),
+      files_reviewed: 2,
+      comment_count: 4,
+    } as const
+    const readyReview = {
+      id: 'ready-2',
+      status: 'Complete',
+      started_at: 3,
+      completed_at: 4,
+      reviewed_head_sha: 'bbbbbbbbbbbb2222',
+      summary: makeSummary({
+        total_comments: 0,
+        by_severity: {},
+        by_category: {},
+        open_comments: 0,
+        open_by_severity: {},
+        open_blocking_comments: 0,
+        open_informational_comments: 0,
+        resolved_comments: 0,
+        dismissed_comments: 0,
+        open_blockers: 0,
+        completeness: {
+          total_findings: 0,
+          acknowledged_findings: 0,
+          fixed_findings: 0,
+          stale_findings: 0,
+        },
+        merge_readiness: 'Ready',
+      }),
+      files_reviewed: 2,
+      comment_count: 0,
+    } as const
+
+    render(
+      <PrReadinessSummary
+        readiness={makeSnapshot({
+          current_head_sha: 'bbbbbbbbbbbb2222',
+          latest_review: readyReview,
+          timeline: [blockedReview, readyReview],
+        })}
+      />,
+    )
+
+    expect(screen.getByText('Readiness timeline')).toBeInTheDocument()
+    expect(screen.getByText('First mergeable')).toBeInTheDocument()
+    expect(screen.getByText(/Became mergeable on/i)).toBeInTheDocument()
   })
 
   it('opens the latest review when requested', async () => {

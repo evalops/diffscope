@@ -405,6 +405,7 @@ export interface PrReadinessSnapshot {
   diff_source: string
   current_head_sha?: string
   latest_review?: PrReadinessReview
+  timeline?: PrReadinessReview[]
 }
 
 export interface StartPrReviewRequest {

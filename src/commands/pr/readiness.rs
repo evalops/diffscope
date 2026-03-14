@@ -167,6 +167,7 @@ mod tests {
                 comment_count: 4,
                 error: None,
             }),
+            timeline: Vec::new(),
         };
 
         let output = format_pr_readiness_markdown(&snapshot);
@@ -187,6 +188,7 @@ mod tests {
             diff_source: "pr:owner/repo#42".to_string(),
             current_head_sha: None,
             latest_review: None,
+            timeline: Vec::new(),
         };
 
         let output = format_pr_readiness_markdown(&snapshot);

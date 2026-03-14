@@ -24,6 +24,13 @@ const READINESS_LABELS: Record<MergeReadiness, string> = {
 export function PrReadinessSummary({ readiness, isLoading = false, error, onOpenReview }: Props) {
   const latestReview = readiness?.latest_review
   const summary = latestReview?.summary
+  const timeline = readiness?.timeline?.length
+    ? readiness.timeline.filter(review => review.summary)
+    : latestReview?.summary
+      ? [latestReview]
+      : []
+  const firstMergeableReview = timeline.find(review => review.summary?.merge_readiness === 'Ready')
+  const latestTimelineReviewId = timeline.length > 0 ? timeline[timeline.length - 1].id : undefined
   const isIncrementalReview = Boolean(
     readiness?.current_head_sha
     && latestReview?.reviewed_head_sha
@@ -113,6 +120,53 @@ export function PrReadinessSummary({ readiness, isLoading = false, error, onOpen
             </div>
           )}
 
+          {timeline.length > 0 && (
+            <div className="rounded border border-border-subtle bg-surface-1 p-3 mb-3">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="text-[11px] font-medium text-text-primary">Readiness timeline</div>
+                <div className="text-[10px] text-text-muted">
+                  {firstMergeableReview
+                    ? `Became mergeable on ${formatReviewTimestamp(firstMergeableReview.completed_at ?? firstMergeableReview.started_at)}`
+                    : 'No merge-ready checkpoint yet'}
+                </div>
+              </div>
+              <ol className="space-y-2">
+                {timeline.map(review => {
+                  const reviewSummary = review.summary
+                  if (!reviewSummary) return null
+                  const isFirstMergeable = review.id === firstMergeableReview?.id
+                  const isSuperseded = isIncrementalReview && review.id === latestTimelineReviewId
+
+                  return (
+                    <li key={review.id} className="flex items-start gap-2">
+                      <span className={`mt-1.5 h-2 w-2 rounded-full ${timelineDotClassName(reviewSummary.merge_readiness)}`} />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-code ${READINESS_STYLES[reviewSummary.merge_readiness]}`}>
+                            {READINESS_LABELS[reviewSummary.merge_readiness]}
+                          </span>
+                          {isFirstMergeable && (
+                            <span className="text-[10px] px-2 py-0.5 rounded border border-sev-suggestion/20 bg-sev-suggestion/10 text-sev-suggestion">
+                              First mergeable
+                            </span>
+                          )}
+                          {isSuperseded && (
+                            <span className="text-[10px] px-2 py-0.5 rounded border border-accent/20 bg-accent/10 text-accent">
+                              Superseded by newer commits
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-text-muted mt-1">
+                          {formatReviewTimestamp(review.completed_at ?? review.started_at)} · {reviewSummary.open_blockers} blocker{reviewSummary.open_blockers === 1 ? '' : 's'} · {reviewSummary.total_comments} finding{reviewSummary.total_comments === 1 ? '' : 's'} · Review {review.id.slice(0, 8)}
+                        </div>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ol>
+            </div>
+          )}
+
           <div className="rounded border border-border-subtle bg-surface-1 p-3">
             <div className="text-[11px] font-medium text-text-primary mb-2">What still blocks merge</div>
             <ul className="space-y-1 text-[11px] text-text-secondary list-disc pl-4">
@@ -139,6 +193,31 @@ function buildReadinessReasons(summary: ReviewSummary): string[] {
   }
 
   return reasons
+}
+
+function timelineDotClassName(readiness: MergeReadiness): string {
+  if (readiness === 'Ready') return 'bg-sev-suggestion'
+  if (readiness === 'NeedsAttention') return 'bg-sev-warning'
+  return 'bg-accent'
+}
+
+function formatReviewTimestamp(value: string | number): string {
+  const date = toDate(value)
+  return date
+    ? date.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    })
+    : 'Unknown time'
+}
+
+function toDate(value: string | number): Date | null {
+  const date = typeof value === 'number'
+    ? new Date(value * 1000)
+    : new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
 }
 
 function shortSha(sha: string): string {
