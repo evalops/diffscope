@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import type { AnalyticsTrendsResponse, ReviewSession } from '../../api/types'
-import { buildAnalyticsCsv, buildAnalyticsExportReport } from '../../lib/analytics'
+import {
+  buildAnalyticsCsv,
+  buildAnalyticsExportReport,
+  computeAnalytics,
+  formatDurationHours,
+} from '../../lib/analytics'
 
 function makeReview(): ReviewSession {
   return {
@@ -39,6 +44,7 @@ function makeReview(): ReviewSession {
         fix_effort: 'Low',
         feedback: 'reject',
         status: 'Resolved',
+        resolved_at: '2026-03-13T13:30:00Z',
       },
     ],
     summary: {
@@ -150,12 +156,37 @@ describe('Analytics exports', () => {
     expect(report.lifecycle.summary.totalOpenComments).toBe(1)
     expect(report.lifecycle.summary.totalResolvedComments).toBe(1)
     expect(report.lifecycle.summary.totalOpenBlockers).toBe(1)
+    expect(report.lifecycle.summary.totalAcknowledgedFindings).toBe(1)
+    expect(report.lifecycle.summary.totalFixedFindings).toBe(1)
+    expect(report.lifecycle.summary.completenessRate).toBe(0.5)
+    expect(report.lifecycle.summary.meanTimeToResolutionHours).toBeCloseTo(1.5)
+    expect(report.lifecycle.summary.resolvedWithTimestampCount).toBe(1)
+    expect(report.lifecycle.completenessByReview[0].acknowledgedRate).toBe(0.5)
+    expect(report.lifecycle.meanTimeToResolutionByReview[0].meanHours).toBeCloseTo(1.5)
     expect(report.reinforcement.summary.labeledFeedbackTotal).toBe(2)
     expect(report.reinforcement.summary.feedbackCoverageRate).toBe(1)
     expect(report.reinforcement.summary.feedbackAcceptanceRate).toBe(0.5)
     expect(report.reinforcement.latestAttentionGaps.byCategory[0].name).toBe('Security')
     expect(report.reinforcement.latestAttentionGaps.byRule[0].name).toBe('sec.auth.boundary')
     expect(report.sources.warnings).toContain('feedback trend lagging behind latest review')
+  })
+
+  it('computes completeness and resolution timing trends from review data', () => {
+    const analytics = computeAnalytics([makeReview()])
+
+    expect(analytics.completenessSeries[0]).toMatchObject({
+      totalFindings: 2,
+      acknowledged: 1,
+      fixed: 1,
+      stale: 0,
+      acknowledgedRate: 0.5,
+      fixedRate: 0.5,
+    })
+    expect(analytics.meanTimeToResolutionSeries[0].meanHours).toBeCloseTo(1.5)
+    expect(analytics.meanTimeToResolutionSeries[0].resolvedCount).toBe(1)
+    expect(analytics.stats.meanTimeToResolutionHours).toBeCloseTo(1.5)
+    expect(analytics.stats.resolvedWithTimestampCount).toBe(1)
+    expect(formatDurationHours(analytics.stats.meanTimeToResolutionHours)).toBe('1.5h')
   })
 
   it('flattens the analytics report into csv rows', () => {
@@ -166,6 +197,8 @@ describe('Analytics exports', () => {
     expect(csv).toContain('report,group,label,metric,value')
     expect(csv).toContain('"review_quality","summary","","totalReviews","1"')
     expect(csv).toContain('"lifecycle","summary","","totalOpenBlockers","1"')
+    expect(csv).toContain('"lifecycle","summary","","completenessRate","0.5"')
+    expect(csv).toContain('"lifecycle","mean_time_to_resolution_by_review","#1","mean_hours","1.5"')
     expect(csv).toContain('"reinforcement","summary","","feedbackCoverageRate","1"')
     expect(csv).toContain('"reinforcement","attention_gaps_by_category","Security","gap","-0.38"')
     expect(csv).toContain('"reinforcement","top_accepted_rules","sec.auth.boundary","accepted","1"')

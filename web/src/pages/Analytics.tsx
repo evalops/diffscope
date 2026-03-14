@@ -12,6 +12,7 @@ import {
   computeTrendAnalytics,
   exportAnalyticsCsv,
   exportAnalyticsJson,
+  formatDurationHours,
   formatPercent,
 } from '../lib/analytics'
 import { scoreColorClass } from '../lib/scores'
@@ -113,6 +114,8 @@ export function Analytics() {
     scoreOverTime,
     severityOverTime,
     categoryData,
+    completenessSeries,
+    meanTimeToResolutionSeries,
     feedbackCoverageSeries,
     topAcceptedCategories,
     topRejectedCategories,
@@ -341,6 +344,109 @@ export function Analytics() {
                   No category data yet
                 </div>
               )}
+            </div>
+          </div>
+
+          <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mt-8 mb-3">
+            LIFECYCLE FOLLOW-THROUGH
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                COMPLETENESS TREND
+              </div>
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className="text-2xl font-bold font-code text-accent">
+                  {formatPercent(stats.completenessRate)}
+                </span>
+                <span className="text-[11px] text-text-muted">acknowledged of findings</span>
+              </div>
+              <div className="h-32 mt-2">
+                <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                  <AreaChart data={completenessSeries}>
+                    <defs>
+                      <linearGradient id="completenessAckGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={CHART_THEME.accent} stopOpacity={0.35} />
+                        <stop offset="95%" stopColor={CHART_THEME.accent} stopOpacity={0.05} />
+                      </linearGradient>
+                      <linearGradient id="completenessFixedGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={SEV_COLORS.Suggestion} stopOpacity={0.25} />
+                        <stop offset="95%" stopColor={SEV_COLORS.Suggestion} stopOpacity={0.04} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                    <YAxis domain={[0, 1]} tick={axisTick} axisLine={false} tickLine={false} />
+                    <Tooltip {...tooltipStyle} />
+                    <Area type="monotone" dataKey="acknowledgedRate" stroke={CHART_THEME.accent} fill="url(#completenessAckGrad)" strokeWidth={1.5} dot={false} name="Acknowledged rate" />
+                    <Area type="monotone" dataKey="fixedRate" stroke={SEV_COLORS.Suggestion} fill="url(#completenessFixedGrad)" strokeWidth={1.5} dot={false} name="Fixed rate" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex items-center gap-6 mt-3 pt-3 border-t border-border-subtle">
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-text-primary">{stats.totalAcknowledgedFindings}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">ACKNOWLEDGED</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-sev-suggestion">{stats.totalFixedFindings}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">FIXED</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-sev-warning">{stats.totalStaleFindings}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">STALE</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                MEAN TIME TO RESOLUTION
+              </div>
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className="text-2xl font-bold font-code text-sev-suggestion">
+                  {formatDurationHours(stats.meanTimeToResolutionHours)}
+                </span>
+                <span className="text-[11px] text-text-muted">avg for fixed findings</span>
+              </div>
+              {stats.resolvedWithTimestampCount > 0 ? (
+                <div className="h-32 mt-2">
+                  <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                    <AreaChart data={meanTimeToResolutionSeries}>
+                      <defs>
+                        <linearGradient id="mttrGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={SEV_COLORS.Suggestion} stopOpacity={0.35} />
+                          <stop offset="95%" stopColor={SEV_COLORS.Suggestion} stopOpacity={0.05} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid {...gridProps} />
+                      <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                      <YAxis tick={axisTick} axisLine={false} tickLine={false} />
+                      <Tooltip {...tooltipStyle} />
+                      <Area type="monotone" dataKey="meanHours" stroke={SEV_COLORS.Suggestion} fill="url(#mttrGrad)" strokeWidth={1.5} dot={false} name="Mean hours" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-32 mt-2 flex items-center justify-center text-center text-text-muted text-sm px-6">
+                  Resolution timing appears once resolved findings include timestamps. Older reviews without tracked resolution times are skipped.
+                </div>
+              )}
+              <div className="flex items-center gap-6 mt-3 pt-3 border-t border-border-subtle">
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-sev-suggestion">{stats.totalFixedFindings}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">FIXED</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-text-primary">{stats.resolvedWithTimestampCount}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">TIMED</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-text-primary">{stats.reviewsWithTimedResolutions}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">REVIEWS</div>
+                </div>
+              </div>
             </div>
           </div>
 

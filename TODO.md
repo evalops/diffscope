@@ -104,7 +104,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 62. [x] Add acceptance/rejection trend lines over time for recent reviews.
 63. [x] Add top accepted categories/rules and top rejected categories/rules to Analytics.
 64. [x] Add unresolved blocker counts per repository and per PR.
-65. [ ] Add review completeness and mean-time-to-resolution charts.
+65. [x] Add review completeness and mean-time-to-resolution charts.
 66. [ ] Add feedback-learning effectiveness metrics: did reranked findings get higher acceptance after rollout?
 67. [ ] Add pattern-repository utilization analytics showing when extra context actually affected findings.
 68. [ ] Add eval-vs-production dashboards comparing benchmark strength against real-world acceptance.

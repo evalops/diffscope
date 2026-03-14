@@ -6,8 +6,7 @@ import type {
 } from '../api/types'
 
 export function computeAnalytics(reviews: ReviewSession[]) {
-  const reviewTimestamp = (value: ReviewSession['started_at']) =>
-    typeof value === 'number' ? value : Date.parse(value)
+  const reviewTimestamp = (value: ReviewSession['started_at']) => toTimestampMs(value) ?? 0
 
   const completed = reviews
     .filter(r => r.status === 'Complete' && r.summary)
@@ -145,6 +144,48 @@ export function computeAnalytics(reviews: ReviewSession[]) {
     openBlockers: r.summary!.open_blockers,
   }))
 
+  const completenessSeries = completed.map((r, i) => {
+    const completeness = getCompletenessSummary(r.summary!)
+    const totalFindings = completeness.total_findings
+
+    return {
+      idx: i + 1,
+      label: `#${i + 1}`,
+      totalFindings,
+      acknowledged: completeness.acknowledged_findings,
+      fixed: completeness.fixed_findings,
+      stale: completeness.stale_findings,
+      acknowledgedRate: totalFindings > 0 ? completeness.acknowledged_findings / totalFindings : 0,
+      fixedRate: totalFindings > 0 ? completeness.fixed_findings / totalFindings : 0,
+    }
+  })
+
+  const meanTimeToResolutionSeries = completed.map((r, i) => {
+    const startedAtMs = toTimestampMs(r.started_at)
+    const resolutionHours = startedAtMs == null
+      ? []
+      : r.comments.flatMap(comment => {
+        if (comment.status !== 'Resolved') {
+          return []
+        }
+
+        const resolvedAtMs = toTimestampMs(comment.resolved_at)
+        if (resolvedAtMs == null || resolvedAtMs < startedAtMs) {
+          return []
+        }
+
+        return [(resolvedAtMs - startedAtMs) / (1000 * 60 * 60)]
+      })
+    const totalHours = resolutionHours.reduce((sum, hours) => sum + hours, 0)
+
+    return {
+      idx: i + 1,
+      label: `#${i + 1}`,
+      meanHours: resolutionHours.length > 0 ? totalHours / resolutionHours.length : null,
+      resolvedCount: resolutionHours.length,
+    }
+  })
+
   const totalFindings = completed.reduce((s, r) => s + r.summary!.total_comments, 0)
   const avgFindings = completed.length > 0 ? totalFindings / completed.length : 0
   const avgScore = completed.length > 0
@@ -154,6 +195,31 @@ export function computeAnalytics(reviews: ReviewSession[]) {
   const totalResolvedComments = completed.reduce((sum, r) => sum + r.summary!.resolved_comments, 0)
   const totalDismissedComments = completed.reduce((sum, r) => sum + r.summary!.dismissed_comments, 0)
   const totalOpenBlockers = completed.reduce((sum, r) => sum + r.summary!.open_blockers, 0)
+  const totalAcknowledgedFindings = completed.reduce(
+    (sum, r) => sum + getCompletenessSummary(r.summary!).acknowledged_findings,
+    0,
+  )
+  const totalFixedFindings = completed.reduce(
+    (sum, r) => sum + getCompletenessSummary(r.summary!).fixed_findings,
+    0,
+  )
+  const totalStaleFindings = completed.reduce(
+    (sum, r) => sum + getCompletenessSummary(r.summary!).stale_findings,
+    0,
+  )
+  const totalCompletenessFindings = completed.reduce(
+    (sum, r) => sum + getCompletenessSummary(r.summary!).total_findings,
+    0,
+  )
+  const resolvedWithTimestampCount = meanTimeToResolutionSeries.reduce(
+    (sum, point) => sum + point.resolvedCount,
+    0,
+  )
+  const totalResolutionHours = meanTimeToResolutionSeries.reduce(
+    (sum, point) => sum + (point.meanHours ?? 0) * point.resolvedCount,
+    0,
+  )
+  const reviewsWithTimedResolutions = meanTimeToResolutionSeries.filter(point => point.resolvedCount > 0).length
   const totalLifecycleComments = totalOpenComments + totalResolvedComments + totalDismissedComments
   const labeledFeedbackTotal = feedbackCoverageSeries.reduce((sum, point) => sum + point.labeled, 0)
   const acceptedFeedbackTotal = feedbackCoverageSeries.reduce((sum, point) => sum + point.accepted, 0)
@@ -176,6 +242,8 @@ export function computeAnalytics(reviews: ReviewSession[]) {
     severityOverTime,
     categoryData,
     lifecycleSeries,
+    completenessSeries,
+    meanTimeToResolutionSeries,
     feedbackCoverageSeries,
     topAcceptedCategories,
     topRejectedCategories,
@@ -196,6 +264,15 @@ export function computeAnalytics(reviews: ReviewSession[]) {
       totalResolvedComments,
       totalDismissedComments,
       totalOpenBlockers,
+      totalAcknowledgedFindings,
+      totalFixedFindings,
+      totalStaleFindings,
+      completenessRate: totalCompletenessFindings > 0 ? totalAcknowledgedFindings / totalCompletenessFindings : 0,
+      meanTimeToResolutionHours: resolvedWithTimestampCount > 0
+        ? totalResolutionHours / resolvedWithTimestampCount
+        : null,
+      resolvedWithTimestampCount,
+      reviewsWithTimedResolutions,
       resolutionRate: totalLifecycleComments > 0
         ? (totalResolvedComments + totalDismissedComments) / totalLifecycleComments
         : 0,
@@ -214,6 +291,19 @@ export function formatTrendLabel(timestamp: string, index: number): string {
 
 export function formatPercent(value: number | undefined): string {
   return value == null ? 'n/a' : `${(value * 100).toFixed(0)}%`
+}
+
+export function formatDurationHours(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) {
+    return 'n/a'
+  }
+  if (value >= 48) {
+    return `${(value / 24).toFixed(1)}d`
+  }
+  if (value >= 1) {
+    return `${value.toFixed(1)}h`
+  }
+  return `${Math.round(value * 60)}m`
 }
 
 export function computeTrendAnalytics(trends: AnalyticsTrendsResponse | undefined) {
@@ -290,9 +380,17 @@ export interface AnalyticsExportReport {
       totalResolvedComments: number
       totalDismissedComments: number
       totalOpenBlockers: number
+      totalAcknowledgedFindings: number
+      totalFixedFindings: number
+      totalStaleFindings: number
+      completenessRate: number
+      meanTimeToResolutionHours?: number
+      resolvedWithTimestampCount: number
       resolutionRate: number
     }
     byReview: AnalyticsSnapshot['lifecycleSeries']
+    completenessByReview: AnalyticsSnapshot['completenessSeries']
+    meanTimeToResolutionByReview: AnalyticsSnapshot['meanTimeToResolutionSeries']
   }
   reinforcement: {
     summary: {
@@ -401,9 +499,17 @@ export function buildAnalyticsExportReport(
         totalResolvedComments: analytics.stats.totalResolvedComments,
         totalDismissedComments: analytics.stats.totalDismissedComments,
         totalOpenBlockers: analytics.stats.totalOpenBlockers,
+        totalAcknowledgedFindings: analytics.stats.totalAcknowledgedFindings,
+        totalFixedFindings: analytics.stats.totalFixedFindings,
+        totalStaleFindings: analytics.stats.totalStaleFindings,
+        completenessRate: analytics.stats.completenessRate,
+        meanTimeToResolutionHours: analytics.stats.meanTimeToResolutionHours ?? undefined,
+        resolvedWithTimestampCount: analytics.stats.resolvedWithTimestampCount,
         resolutionRate: analytics.stats.resolutionRate,
       },
       byReview: analytics.lifecycleSeries,
+      completenessByReview: analytics.completenessSeries,
+      meanTimeToResolutionByReview: analytics.meanTimeToResolutionSeries,
     },
     reinforcement: {
       summary: {
@@ -463,6 +569,20 @@ export function buildAnalyticsCsv(report: AnalyticsExportReport): string {
     rows.push({ report: 'lifecycle', group: 'by_review', label: point.label, metric: 'dismissed', value: point.dismissed })
     rows.push({ report: 'lifecycle', group: 'by_review', label: point.label, metric: 'open_blockers', value: point.openBlockers })
   })
+  report.lifecycle.completenessByReview.forEach(point => {
+    rows.push({ report: 'lifecycle', group: 'completeness_by_review', label: point.label, metric: 'total_findings', value: point.totalFindings })
+    rows.push({ report: 'lifecycle', group: 'completeness_by_review', label: point.label, metric: 'acknowledged', value: point.acknowledged })
+    rows.push({ report: 'lifecycle', group: 'completeness_by_review', label: point.label, metric: 'fixed', value: point.fixed })
+    rows.push({ report: 'lifecycle', group: 'completeness_by_review', label: point.label, metric: 'stale', value: point.stale })
+    rows.push({ report: 'lifecycle', group: 'completeness_by_review', label: point.label, metric: 'acknowledged_rate', value: point.acknowledgedRate })
+    rows.push({ report: 'lifecycle', group: 'completeness_by_review', label: point.label, metric: 'fixed_rate', value: point.fixedRate })
+  })
+  report.lifecycle.meanTimeToResolutionByReview.forEach(point => {
+    if (point.meanHours != null) {
+      rows.push({ report: 'lifecycle', group: 'mean_time_to_resolution_by_review', label: point.label, metric: 'mean_hours', value: point.meanHours })
+    }
+    rows.push({ report: 'lifecycle', group: 'mean_time_to_resolution_by_review', label: point.label, metric: 'resolved_count', value: point.resolvedCount })
+  })
 
   appendSummaryRows(rows, 'reinforcement', 'summary', report.reinforcement.summary)
   report.reinforcement.coverageByReview.forEach(point => {
@@ -514,4 +634,28 @@ export function exportAnalyticsJson(report: AnalyticsExportReport) {
     new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }),
     'diffscope-analytics-report.json',
   )
+}
+
+function toDate(value: string | number | undefined): Date | null {
+  if (value == null) {
+    return null
+  }
+
+  const date = typeof value === 'number'
+    ? new Date(value * 1000)
+    : new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function toTimestampMs(value: string | number | undefined): number | null {
+  return toDate(value)?.getTime() ?? null
+}
+
+function getCompletenessSummary(summary: NonNullable<ReviewSession['summary']>) {
+  return summary.completeness ?? {
+    total_findings: summary.total_comments,
+    acknowledged_findings: summary.resolved_comments + summary.dismissed_comments,
+    fixed_findings: summary.resolved_comments,
+    stale_findings: 0,
+  }
 }
