@@ -1,5 +1,6 @@
 pub mod api;
 pub mod github;
+pub mod pr_readiness;
 pub mod state;
 pub mod storage;
 pub mod storage_json;
@@ -115,6 +116,7 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .route("/gh/status", get(api::get_gh_status))
         .route("/gh/repos", get(api::get_gh_repos))
         .route("/gh/prs", get(api::get_gh_prs))
+        .route("/gh/pr-readiness", get(api::get_gh_pr_readiness))
         .route("/gh/review", post(api::start_pr_review))
         .route("/agent/tools", get(api::get_agent_tools))
         .route("/gh/auth/device", post(github::start_device_flow))

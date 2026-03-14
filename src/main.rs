@@ -189,6 +189,13 @@ enum Commands {
 
         #[arg(long)]
         summary: bool,
+
+        #[arg(
+            long,
+            conflicts_with_all = ["post_comments", "summary"],
+            help = "Show the latest stored DiffScope readiness summary for this PR"
+        )]
+        readiness: bool,
     },
     Compare {
         #[arg(long)]
@@ -634,12 +641,14 @@ async fn main() -> Result<()> {
             repo,
             post_comments,
             summary,
+            readiness,
         } => {
             commands::pr_command(
                 number,
                 repo,
                 post_comments,
                 summary,
+                readiness,
                 config,
                 cli.output_format,
             )

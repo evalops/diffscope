@@ -44,7 +44,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 17. [x] Add "critical blockers" summary cards for unresolved `Error` and `Warning` comments.
 18. [ ] Add per-PR readiness timelines showing when a review became mergeable.
 19. [ ] Store resolution timestamps for findings so mean-time-to-fix can be measured.
-20. [ ] Add CLI and API surfaces to query PR readiness without opening the web UI.
+20. [x] Add CLI and API surfaces to query PR readiness without opening the web UI.
 
 ## 3. Agentic Validation Loops
 
@@ -114,7 +114,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 ## 8. APIs, Automation, and MCP-Like Surfaces
 
 71. [ ] Expose unresolved/resolved comment search through the HTTP API.
-72. [ ] Expose PR readiness through the HTTP API for CI and agent integrations.
+72. [x] Expose PR readiness through the HTTP API for CI and agent integrations.
 73. [ ] Add API endpoints to fetch learned rules, attention gaps, and top rejected patterns.
 74. [ ] Add machine-friendly APIs to fetch findings grouped by severity, file, and lifecycle state.
 75. [ ] Add a "trigger re-review" API that reuses existing PR metadata and loop policy.
@@ -159,4 +159,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Make merge readiness verification-aware and surface stale PR reviews as needs re-review in history/detail views.
 - [x] Make stale-review detection compare PR head SHAs so same-head reruns do not look stale.
 - [x] Split open findings into blocking vs informational buckets and surface critical blocker cards in review detail.
+- [x] Add PR readiness query surfaces in the CLI and HTTP API for non-UI workflows.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.

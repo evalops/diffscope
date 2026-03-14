@@ -7,6 +7,8 @@ mod comments;
 mod context;
 #[path = "pr/gh.rs"]
 mod gh;
+#[path = "pr/readiness.rs"]
+mod readiness;
 #[path = "pr/review_flow.rs"]
 mod review_flow;
 #[path = "pr/summary_flow.rs"]
@@ -16,6 +18,7 @@ use crate::config;
 use crate::output::OutputFormat;
 
 use context::prepare_pr_context;
+use readiness::run_pr_readiness_flow;
 use review_flow::run_pr_review_flow;
 use summary_flow::run_pr_summary_flow;
 
@@ -24,9 +27,14 @@ pub async fn pr_command(
     repo: Option<String>,
     post_comments: bool,
     summary: bool,
+    readiness: bool,
     config: config::Config,
     format: OutputFormat,
 ) -> Result<()> {
+    if readiness {
+        return run_pr_readiness_flow(number, repo.as_deref(), config, format).await;
+    }
+
     let context = prepare_pr_context(number, repo.as_deref())?;
 
     info!("Reviewing PR #{}", context.pr_number);

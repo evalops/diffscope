@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use super::pr_readiness::{
+    apply_dynamic_review_state, get_pr_readiness_snapshot, latest_review_head_by_source,
+    load_review_inventory, PrReadinessSnapshot,
+};
 use super::state::{
     build_progress_callback, count_diff_files, count_reviewed_files, current_timestamp,
     emit_wide_event, AppState, FileMetricEvent, HotspotDetail, ReviewEventBuilder, ReviewListItem,
@@ -706,79 +710,6 @@ fn get_diff_from_git(
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-const REVIEW_STATE_SCAN_LIMIT: i64 = 1000;
-
-async fn load_review_inventory(state: &Arc<AppState>) -> Vec<ReviewSession> {
-    let mut sessions: Vec<ReviewSession> = {
-        let reviews = state.reviews.read().await;
-        reviews.values().cloned().collect()
-    };
-
-    if let Ok(stored) = state.storage.list_reviews(REVIEW_STATE_SCAN_LIMIT, 0).await {
-        let in_memory_ids: std::collections::HashSet<String> =
-            sessions.iter().map(|session| session.id.clone()).collect();
-        for session in stored {
-            if !in_memory_ids.contains(&session.id) {
-                sessions.push(session);
-            }
-        }
-    }
-
-    sessions
-}
-
-#[derive(Debug, Clone)]
-struct LatestGitHubHead {
-    started_at: i64,
-    head_sha: String,
-}
-
-fn latest_review_head_by_source(
-    reviews: &[ReviewSession],
-) -> std::collections::HashMap<String, LatestGitHubHead> {
-    let mut latest: std::collections::HashMap<String, LatestGitHubHead> =
-        std::collections::HashMap::new();
-    for review in reviews {
-        let Some(head_sha) = review.github_head_sha.as_ref() else {
-            continue;
-        };
-        if !review.diff_source.starts_with("pr:") {
-            continue;
-        }
-        let candidate = LatestGitHubHead {
-            started_at: review.started_at,
-            head_sha: head_sha.clone(),
-        };
-        match latest.get(&review.diff_source) {
-            Some(current) if current.started_at >= review.started_at => {}
-            _ => {
-                latest.insert(review.diff_source.clone(), candidate);
-            }
-        }
-    }
-    latest
-}
-
-fn apply_dynamic_review_state(
-    mut session: ReviewSession,
-    latest_by_source: &std::collections::HashMap<String, LatestGitHubHead>,
-) -> ReviewSession {
-    let stale_review = session
-        .github_head_sha
-        .as_ref()
-        .zip(latest_by_source.get(&session.diff_source))
-        .is_some_and(|(current_head, latest)| latest.head_sha != *current_head);
-
-    if let Some(summary) = session.summary.take() {
-        session.summary = Some(CommentSynthesizer::apply_runtime_review_state(
-            summary,
-            stale_review,
-        ));
-    }
-
-    session
-}
-
 pub async fn get_review(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -797,7 +728,11 @@ pub async fn get_review(
 
     let inventory = load_review_inventory(&state).await;
     let latest_by_source = latest_review_head_by_source(&inventory);
-    Ok(Json(apply_dynamic_review_state(session, &latest_by_source)))
+    Ok(Json(apply_dynamic_review_state(
+        session,
+        &latest_by_source,
+        None,
+    )))
 }
 
 pub async fn list_reviews(
@@ -811,7 +746,7 @@ pub async fn list_reviews(
     let latest_by_source = latest_review_head_by_source(&reviews);
     reviews = reviews
         .into_iter()
-        .map(|session| apply_dynamic_review_state(session, &latest_by_source))
+        .map(|session| apply_dynamic_review_state(session, &latest_by_source, None))
         .collect();
     reviews.sort_by(|a, b| b.started_at.cmp(&a.started_at));
 
@@ -1865,6 +1800,12 @@ pub struct GhPrsParams {
     pub state: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct PrReadinessParams {
+    pub repo: String,
+    pub pr_number: u32,
+}
+
 #[derive(Serialize)]
 pub struct GhPullRequest {
     pub number: u32,
@@ -2035,6 +1976,58 @@ pub async fn get_gh_prs(
         .collect();
 
     Ok(Json(prs))
+}
+
+pub async fn get_gh_pr_readiness(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PrReadinessParams>,
+) -> Result<Json<PrReadinessSnapshot>, (StatusCode, String)> {
+    if !is_valid_repo_name(&params.repo) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid repo format. Expected 'owner/repo'.".to_string(),
+        ));
+    }
+
+    if params.pr_number == 0 || params.pr_number > 999_999_999 {
+        return Err((StatusCode::BAD_REQUEST, "Invalid PR number.".to_string()));
+    }
+
+    let token = state
+        .config
+        .read()
+        .await
+        .github_token
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    let current_head_sha = if let Some(token) = token {
+        match fetch_github_pr_head_sha(&state.http_client, &token, &params.repo, params.pr_number)
+            .await
+        {
+            Ok(head_sha) => Some(head_sha),
+            Err(err) => {
+                warn!(
+                    repo = %params.repo,
+                    pr_number = params.pr_number,
+                    "Failed to fetch current PR head SHA for readiness: {}",
+                    err
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    Ok(Json(
+        get_pr_readiness_snapshot(
+            &state,
+            &params.repo,
+            params.pr_number,
+            current_head_sha.as_deref(),
+        )
+        .await,
+    ))
 }
 
 // === GitHub PR Review ===
@@ -3137,65 +3130,26 @@ mod tests {
     }
 
     #[test]
+    fn test_pr_readiness_snapshot_serialize() {
+        let snapshot = PrReadinessSnapshot {
+            repo: "owner/repo".to_string(),
+            pr_number: 42,
+            diff_source: "pr:owner/repo#42".to_string(),
+            current_head_sha: Some("abc123".to_string()),
+            latest_review: None,
+        };
+        let json = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(json["repo"], "owner/repo");
+        assert_eq!(json["pr_number"], 42);
+        assert_eq!(json["current_head_sha"], "abc123");
+    }
+
+    #[test]
     fn test_start_pr_review_request_deserialize() {
         let json = r#"{"repo": "owner/repo", "pr_number": 42, "post_results": true}"#;
         let req: StartPrReviewRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.repo, "owner/repo");
         assert_eq!(req.pr_number, 42);
         assert!(req.post_results);
-    }
-
-    fn make_pr_review_session(
-        id: &str,
-        started_at: i64,
-        head_sha: &str,
-    ) -> crate::server::state::ReviewSession {
-        crate::server::state::ReviewSession {
-            id: id.to_string(),
-            status: crate::server::state::ReviewStatus::Complete,
-            diff_source: "pr:owner/repo#42".to_string(),
-            github_head_sha: Some(head_sha.to_string()),
-            started_at,
-            completed_at: Some(started_at + 1),
-            comments: Vec::new(),
-            summary: Some(crate::core::CommentSynthesizer::generate_summary(&[])),
-            files_reviewed: 0,
-            error: None,
-            pr_summary_text: None,
-            diff_content: None,
-            event: None,
-            progress: None,
-        }
-    }
-
-    #[test]
-    fn stale_detection_ignores_same_head_reruns() {
-        let older = make_pr_review_session("r1", 10, "sha-a");
-        let newer_same_head = make_pr_review_session("r2", 20, "sha-a");
-        let latest_by_source = latest_review_head_by_source(&[older.clone(), newer_same_head]);
-        let updated = apply_dynamic_review_state(older, &latest_by_source);
-        let summary = updated.summary.expect("summary");
-        assert_eq!(
-            summary.merge_readiness,
-            crate::core::comment::MergeReadiness::Ready
-        );
-        assert!(summary.readiness_reasons.is_empty());
-    }
-
-    #[test]
-    fn stale_detection_requires_newer_head_sha() {
-        let older = make_pr_review_session("r1", 10, "sha-a");
-        let newer_head = make_pr_review_session("r2", 20, "sha-b");
-        let latest_by_source = latest_review_head_by_source(&[older.clone(), newer_head]);
-        let updated = apply_dynamic_review_state(older, &latest_by_source);
-        let summary = updated.summary.expect("summary");
-        assert_eq!(
-            summary.merge_readiness,
-            crate::core::comment::MergeReadiness::NeedsReReview
-        );
-        assert_eq!(
-            summary.readiness_reasons,
-            vec!["new commits landed after this review".to_string()]
-        );
     }
 }
