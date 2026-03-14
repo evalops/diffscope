@@ -31,7 +31,7 @@
       "diff_content": "diff --git a/src/sync.rs b/src/sync.rs\nindex 1111111..2222222 100644\n--- a/src/sync.rs\n+++ b/src/sync.rs\n@@ -1,5 +1,6 @@\n pub async fn refresh_user(user_id: String) -> anyhow::Result<()> {\n-    sync_user(user_id).await?;\n+    tokio::spawn(async move {\n+        sync_user(user_id).await.unwrap();\n+    });\n     Ok(())\n }\n",
       "expected_findings": [
         {
-          "description": "Background task errors are detached from the caller and can fail silently.",
+          "description": "Detached background task cannot be awaited or monitored by the caller.",
           "severity": "Warning",
           "category": "Bug",
           "file_pattern": "src/sync.rs",
@@ -40,7 +40,32 @@
             "fire and forget",
             "spawned task is not awaited",
             "detached task error",
-            "background task may fail silently"
+            "background task may fail silently",
+            "no join handle",
+            "cannot await completion",
+            "errors are never returned to the caller",
+            "errors can never be returned to the caller",
+            "caller always receives ok",
+            "function contract is broken",
+            "contract violation",
+            "return type is misleading"
+          ]
+        },
+        {
+          "description": "Background task unwrap discards sync failures instead of propagating or logging them.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "src/sync.rs",
+          "line_hint": 3,
+          "contains_any": [
+            "unwrap",
+            "panic in background task",
+            "error propagation",
+            "breaking error contract",
+            "discarded sync_user errors",
+            "returns ok even when sync_user fails",
+            "without propagating the failure",
+            "silently lost"
           ]
         }
       ],

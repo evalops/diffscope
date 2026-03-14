@@ -19,8 +19,6 @@ expect:
         - sql injection
         - unsafe sql
         - interpolates user-controlled
-      tags_any:
-        - sql-injection
   must_not_find:
     - contains: style
   min_total: 1

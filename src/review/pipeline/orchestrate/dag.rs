@@ -5,8 +5,8 @@ use tracing::debug;
 
 use crate::config;
 use crate::core::dag::{
-    describe_dag, execute_dag, DagGraphContract, DagNode, DagNodeContract, DagNodeExecutionHints,
-    DagNodeKind, DagNodeSpec,
+    describe_dag, execute_dag, DagExecutionTrace, DagGraphContract, DagNode, DagNodeContract,
+    DagNodeExecutionHints, DagNodeKind, DagNodeSpec,
 };
 
 use super::super::contracts::{ExecutionSummary, PreparedReviewJobs, ReviewExecutionContext};
@@ -86,11 +86,19 @@ pub(super) async fn execute_review_pipeline_dag(
     let dag_description = describe_dag(&specs);
     debug!(?dag_description, "Executing review pipeline DAG");
     let mut context = ReviewPipelineDagContext::new(diff_content, config, repo_path, on_progress);
-    let _records = execute_dag(&specs, &mut context, |stage, context| {
+    let records = execute_dag(&specs, &mut context, |stage, context| {
         async move { execute_stage(stage, context).await }.boxed()
     })
     .await?;
-    context.into_result()
+    let mut result = context.into_result()?;
+    result.dag_traces.insert(
+        0,
+        DagExecutionTrace {
+            graph_name: "review_pipeline".to_string(),
+            records,
+        },
+    );
+    Ok(result)
 }
 
 pub(in super::super) fn describe_review_pipeline_graph() -> DagGraphContract {

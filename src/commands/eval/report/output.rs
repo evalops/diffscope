@@ -140,6 +140,15 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
         if let Some(artifact_path) = result.artifact_path.as_deref() {
             println!("  artifact: {}", artifact_path);
         }
+        if !result.dag_traces.is_empty() {
+            let traces = result
+                .dag_traces
+                .iter()
+                .map(|trace| format!("{}({})", trace.graph_name, trace.records.len()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("  dag: {}", traces);
+        }
     }
 
     if let Some(rule_summary) = report.rule_summary {

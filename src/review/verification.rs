@@ -90,6 +90,7 @@ For each finding, assess:
 5. Cross-file findings are valid when the changed line introduces a call path or tainted data flow into a vulnerable helper shown in supporting context.
 6. Mark `line_correct=true` when the changed line is the introduction point or risky call site, even if the sink or flawed helper implementation is in another file shown in supporting context.
 7. Treat supporting context with graph or semantic provenance as first-class evidence, not as a weak hint.
+8. Trust the diff evidence as authoritative for changed lines. Nearby file context may reflect a checkout before or after the patch, especially for deletions.
 If the evidence is missing, ambiguous, or the file/line cannot be confirmed, return a result anyway with accurate=false, line_correct=false, and a low score.
 
 Score each finding 0-10:

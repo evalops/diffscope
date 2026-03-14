@@ -282,7 +282,7 @@ mod tests {
                 make_line(2, ChangeType::Removed, "fn another_old() {}"),
             ],
         );
-        assert_eq!(triage_diff(&diff), TriageResult::SkipDeletionOnly);
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
     }
 
     #[test]
@@ -295,7 +295,24 @@ mod tests {
                 make_line(3, ChangeType::Context, "fn keep() {}"),
             ],
         );
-        assert_eq!(triage_diff(&diff), TriageResult::SkipDeletionOnly);
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+    }
+
+    #[test]
+    fn test_deletion_only_required_field_removal_needs_review() {
+        let diff = make_diff(
+            "src/parsing/llm_response.rs",
+            vec![
+                make_line(
+                    155,
+                    ChangeType::Context,
+                    "        comments.push(core::comment::RawComment {",
+                ),
+                make_line(159, ChangeType::Removed, "                rule_id,"),
+                make_line(160, ChangeType::Context, "                suggestion,"),
+            ],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
     }
 
     #[test]
@@ -612,7 +629,7 @@ mod tests {
             context: String::new(),
             changes: vec![make_line(10, ChangeType::Removed, "fn old2() {}")],
         });
-        assert_eq!(triage_diff(&diff), TriageResult::SkipDeletionOnly);
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
     }
 
     #[test]
@@ -638,7 +655,6 @@ mod tests {
     fn test_should_skip_returns_true_for_skip_variants() {
         assert!(TriageResult::SkipLockFile.should_skip());
         assert!(TriageResult::SkipWhitespaceOnly.should_skip());
-        assert!(TriageResult::SkipDeletionOnly.should_skip());
         assert!(TriageResult::SkipGenerated.should_skip());
         assert!(TriageResult::SkipCommentOnly.should_skip());
     }
@@ -653,7 +669,6 @@ mod tests {
         assert!(!TriageResult::NeedsReview.reason().is_empty());
         assert!(!TriageResult::SkipLockFile.reason().is_empty());
         assert!(!TriageResult::SkipWhitespaceOnly.reason().is_empty());
-        assert!(!TriageResult::SkipDeletionOnly.reason().is_empty());
         assert!(!TriageResult::SkipGenerated.reason().is_empty());
         assert!(!TriageResult::SkipCommentOnly.reason().is_empty());
     }
@@ -664,7 +679,6 @@ mod tests {
             TriageResult::NeedsReview.reason(),
             TriageResult::SkipLockFile.reason(),
             TriageResult::SkipWhitespaceOnly.reason(),
-            TriageResult::SkipDeletionOnly.reason(),
             TriageResult::SkipGenerated.reason(),
             TriageResult::SkipCommentOnly.reason(),
         ];

@@ -134,19 +134,17 @@ pub(super) fn matches_regex(pattern: &EvalPattern, comment: &core::Comment) -> b
 
 pub(super) fn matches_severity(pattern: &EvalPattern, comment: &core::Comment) -> bool {
     pattern.severity.as_ref().is_none_or(|severity| {
-        comment
-            .severity
-            .to_string()
-            .eq_ignore_ascii_case(severity.trim())
+        let expected = severity.trim();
+        comment.severity.to_string().eq_ignore_ascii_case(expected)
+            || severity_rank(comment.severity.as_str()) >= severity_rank(expected)
     })
 }
 
 pub(super) fn matches_category(pattern: &EvalPattern, comment: &core::Comment) -> bool {
     pattern.category.as_ref().is_none_or(|category| {
-        comment
-            .category
-            .to_string()
-            .eq_ignore_ascii_case(category.trim())
+        let expected = category.trim();
+        comment.category.to_string().eq_ignore_ascii_case(expected)
+            || semantic_category_matches(expected, comment)
     })
 }
 
@@ -195,6 +193,95 @@ fn semantic_text_matches(content: &str, needle: &str) -> bool {
         .all(|token| content_tokens.iter().any(|candidate| candidate == token))
 }
 
+fn semantic_category_matches(expected: &str, comment: &core::Comment) -> bool {
+    let expected = canonicalize_category(expected);
+    if expected.is_empty() {
+        return true;
+    }
+    if canonicalize_category(&comment.category.to_string()) == expected {
+        return true;
+    }
+
+    let search_space = format!(
+        "{} {}",
+        comment.content.to_ascii_lowercase(),
+        comment.tags.join(" ").to_ascii_lowercase()
+    );
+    category_aliases(&expected)
+        .iter()
+        .any(|alias| semantic_text_matches(&search_space, alias))
+}
+
+fn canonicalize_category(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect()
+}
+
+fn category_aliases(expected: &str) -> &'static [&'static str] {
+    match expected {
+        "security" => &[
+            "security",
+            "authorization",
+            "authentication",
+            "access control",
+            "permission",
+            "privilege escalation",
+            "authorization bypass",
+            "idor",
+            "injection",
+            "path traversal",
+            "open redirect",
+            "supply chain",
+            "secret",
+            "forbidden",
+            "unauthorized",
+        ],
+        "bug" => &[
+            "bug",
+            "panic",
+            "crash",
+            "nil",
+            "null",
+            "fire and forget",
+            "detached task",
+            "background task",
+            "spawned task",
+            "not awaited",
+            "missing await",
+            "promise is always truthy",
+            "swallowed error",
+            "logic error",
+            "race condition",
+            "deadlock",
+        ],
+        "performance" => &[
+            "performance",
+            "slow",
+            "latency",
+            "n plus one",
+            "query inside loop",
+            "memory leak",
+        ],
+        "style" => &["style", "format", "naming", "lint"],
+        "documentation" => &["documentation", "docstring", "docs"],
+        "bestpractice" => &["best practice", "robustness", "guardrail"],
+        "maintainability" => &[
+            "maintainability",
+            "readability",
+            "duplication",
+            "complexity",
+            "refactor",
+        ],
+        "testing" => &["testing", "test coverage", "missing test"],
+        "architecture" => &["architecture", "design", "abstraction", "coupling"],
+        _ => &[],
+    }
+}
+
 fn canonicalize_semantic_text(text: &str) -> String {
     let mut canonical = text.to_ascii_lowercase();
     for (source, replacement) in [
@@ -202,6 +289,14 @@ fn canonicalize_semantic_text(text: &str) -> String {
         ("authorisation", "authorization"),
         ("access control", "authorization"),
         ("broken access control", "authorization bypass"),
+        ("verbose-error", "information disclosure"),
+        ("verbose error", "information disclosure"),
+        ("debug-details", "information disclosure"),
+        ("debug details", "information disclosure"),
+        ("stack-trace", "information disclosure"),
+        ("stack trace", "information disclosure"),
+        ("cwe-209", "information disclosure"),
+        ("cwe 209", "information disclosure"),
         ("piping curl output directly to bash", "curl pipe to shell"),
         ("pipe curl output directly to bash", "curl pipe to shell"),
         (
@@ -209,8 +304,15 @@ fn canonicalize_semantic_text(text: &str) -> String {
             "curl pipe to shell",
         ),
         ("piping a remote script to bash", "curl pipe to shell"),
+        ("arbitrary shell command execution", "command injection"),
+        (
+            "without input validation or sanitization",
+            "user controlled command",
+        ),
         ("untrusted code", "remote script"),
         ("attack vector", "risk"),
+        ("silently discarded", "swallowed error"),
+        ("silent failure", "swallowed error"),
         ("sqli", "sql injection"),
         ("xss", "cross site scripting"),
         ("ssrf", "server side request forgery"),
@@ -237,6 +339,16 @@ fn canonicalize_semantic_text(text: &str) -> String {
         canonical = canonical.replace(source, replacement);
     }
     canonical
+}
+
+fn severity_rank(value: &str) -> usize {
+    match canonicalize_category(value).as_str() {
+        "error" => 3,
+        "warning" => 2,
+        "suggestion" => 1,
+        "info" => 0,
+        _ => 0,
+    }
 }
 
 fn semantic_tokens(text: &str) -> Vec<String> {

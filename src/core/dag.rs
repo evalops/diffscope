@@ -74,6 +74,7 @@ pub struct DagNodePlanState {
     pub name: String,
     pub enabled: bool,
     pub completed: bool,
+    pub satisfied: bool,
     pub ready: bool,
     pub unmet_dependencies: Vec<String>,
     pub subgraph: Option<String>,
@@ -83,15 +84,22 @@ pub struct DagNodePlanState {
 pub struct DagExecutionPlan {
     pub graph_name: String,
     pub completed: Vec<String>,
+    pub satisfied: Vec<String>,
     pub ready: Vec<String>,
     pub nodes: Vec<DagNodePlanState>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DagExecutionRecord {
     pub name: String,
     pub enabled: bool,
     pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DagExecutionTrace {
+    pub graph_name: String,
+    pub records: Vec<DagExecutionRecord>,
 }
 
 pub fn describe_dag<NodeId>(specs: &[DagNodeSpec<NodeId>]) -> Vec<DagNodeDescription>
@@ -160,6 +168,7 @@ pub fn plan_dag_execution(
     completed: &[String],
 ) -> Result<DagExecutionPlan> {
     let completed_set = completed.iter().cloned().collect::<HashSet<_>>();
+    let satisfied_set = derive_satisfied_nodes(graph, &completed_set);
 
     for name in &completed_set {
         if !graph.nodes.iter().any(|node| node.name == *name) {
@@ -168,16 +177,21 @@ pub fn plan_dag_execution(
     }
 
     let mut ready = Vec::new();
+    let mut satisfied = Vec::new();
     let mut nodes = Vec::with_capacity(graph.nodes.len());
     for node in &graph.nodes {
         let unmet_dependencies = node
             .dependencies
             .iter()
-            .filter(|dependency| !completed_set.contains(*dependency))
+            .filter(|dependency| !satisfied_set.contains(*dependency))
             .cloned()
             .collect::<Vec<_>>();
         let is_completed = completed_set.contains(&node.name);
+        let is_satisfied = satisfied_set.contains(&node.name);
         let is_ready = node.enabled && !is_completed && unmet_dependencies.is_empty();
+        if is_satisfied {
+            satisfied.push(node.name.clone());
+        }
         if is_ready {
             ready.push(node.name.clone());
         }
@@ -185,6 +199,7 @@ pub fn plan_dag_execution(
             name: node.name.clone(),
             enabled: node.enabled,
             completed: is_completed,
+            satisfied: is_satisfied,
             ready: is_ready,
             unmet_dependencies,
             subgraph: node.hints.subgraph.clone(),
@@ -194,9 +209,39 @@ pub fn plan_dag_execution(
     Ok(DagExecutionPlan {
         graph_name: graph.name.clone(),
         completed: completed.to_vec(),
+        satisfied,
         ready,
         nodes,
     })
+}
+
+fn derive_satisfied_nodes(
+    graph: &DagGraphContract,
+    completed: &HashSet<String>,
+) -> HashSet<String> {
+    let mut satisfied = completed.clone();
+
+    loop {
+        let mut changed = false;
+        for node in &graph.nodes {
+            if node.enabled || satisfied.contains(&node.name) {
+                continue;
+            }
+            if node
+                .dependencies
+                .iter()
+                .all(|dependency| satisfied.contains(dependency))
+            {
+                satisfied.insert(node.name.clone());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    satisfied
 }
 
 #[cfg(test)]
@@ -319,8 +364,62 @@ mod tests {
 
         let plan = plan_dag_execution(&graph, &["root".to_string()]).unwrap();
 
+        assert_eq!(plan.satisfied, vec!["root"]);
         assert_eq!(plan.ready, vec!["leaf"]);
         assert!(plan.nodes[0].completed);
+        assert!(plan.nodes[0].satisfied);
+        assert!(!plan.nodes[1].satisfied);
         assert_eq!(plan.nodes[1].subgraph.as_deref(), Some("child"));
+    }
+
+    #[test]
+    fn plan_dag_execution_auto_satisfies_disabled_dependencies() {
+        let graph = DagGraphContract {
+            name: "disabled".to_string(),
+            description: "disabled graph".to_string(),
+            entry_nodes: vec!["skip".to_string()],
+            terminal_nodes: vec!["work".to_string()],
+            nodes: vec![
+                DagNodeContract {
+                    name: "skip".to_string(),
+                    description: "skip".to_string(),
+                    kind: DagNodeKind::Setup,
+                    dependencies: vec![],
+                    inputs: vec![],
+                    outputs: vec![],
+                    hints: DagNodeExecutionHints {
+                        parallelizable: false,
+                        retryable: true,
+                        side_effects: false,
+                        subgraph: None,
+                    },
+                    enabled: false,
+                },
+                DagNodeContract {
+                    name: "work".to_string(),
+                    description: "work".to_string(),
+                    kind: DagNodeKind::Execution,
+                    dependencies: vec!["skip".to_string()],
+                    inputs: vec![],
+                    outputs: vec![],
+                    hints: DagNodeExecutionHints {
+                        parallelizable: true,
+                        retryable: true,
+                        side_effects: false,
+                        subgraph: None,
+                    },
+                    enabled: true,
+                },
+            ],
+        };
+
+        let plan = plan_dag_execution(&graph, &[]).unwrap();
+
+        assert_eq!(plan.satisfied, vec!["skip"]);
+        assert_eq!(plan.ready, vec!["work"]);
+        assert!(!plan.nodes[0].completed);
+        assert!(plan.nodes[0].satisfied);
+        assert!(plan.nodes[1].ready);
+        assert!(plan.nodes[1].unmet_dependencies.is_empty());
     }
 }

@@ -79,4 +79,22 @@ mod tests {
 
         assert_eq!(plan.ready, vec!["build_session"]);
     }
+
+    #[test]
+    fn dag_planner_reports_postprocess_entry_node() {
+        let plan = plan_dag_graph(
+            &config::Config::default(),
+            DagGraphSelection::Postprocess {
+                convention_store_path: false,
+            },
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(plan.ready, vec!["specialized_dedup"]);
+        assert!(plan
+            .nodes
+            .iter()
+            .any(|node| node.name == "specialized_dedup" && node.enabled && node.ready));
+    }
 }

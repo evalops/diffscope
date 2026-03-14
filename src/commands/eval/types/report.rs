@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::dag::DagExecutionTrace;
 use crate::core::eval_benchmarks::{
     AggregateMetrics as BenchmarkAggregateMetrics, BenchmarkThresholds, Difficulty,
     FixtureResult as BenchmarkFixtureResult,
@@ -251,6 +252,8 @@ pub struct EvalFixtureResult {
     pub artifact_path: Option<String>,
     #[serde(default)]
     pub failures: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dag_traces: Vec<DagExecutionTrace>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

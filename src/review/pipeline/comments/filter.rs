@@ -31,8 +31,8 @@ pub fn is_line_in_diff(diff: &core::UnifiedDiff, line_number: usize) -> bool {
         return false;
     }
     diff.hunks.iter().any(|hunk| {
-        hunk.changes
-            .iter()
-            .any(|line| line.new_line_no == Some(line_number))
+        hunk.changes.iter().any(|line| {
+            line.new_line_no == Some(line_number) || line.old_line_no == Some(line_number)
+        })
     })
 }

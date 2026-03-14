@@ -45,6 +45,7 @@ mod tests {
         };
 
         assert!(is_line_in_diff(&diff, 5));
+        assert!(is_line_in_diff(&diff, 1));
         assert!(!is_line_in_diff(&diff, 6));
         assert!(!is_line_in_diff(&diff, 0));
     }

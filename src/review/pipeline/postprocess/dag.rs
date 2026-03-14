@@ -4,8 +4,8 @@ use tracing::{debug, info};
 
 use crate::core;
 use crate::core::dag::{
-    describe_dag, execute_dag, DagGraphContract, DagNode, DagNodeContract, DagNodeExecutionHints,
-    DagNodeKind, DagNodeSpec,
+    describe_dag, execute_dag, DagExecutionTrace, DagGraphContract, DagNode, DagNodeContract,
+    DagNodeExecutionHints, DagNodeKind, DagNodeSpec,
 };
 
 use super::super::super::filters::{apply_feedback_confidence_adjustment, apply_review_filters};
@@ -101,6 +101,7 @@ impl<'a> ReviewPostprocessDagContext<'a> {
             agent_activity: self.agent_activity,
             verification_report,
             warnings,
+            dag_traces: Vec::new(),
         }
     }
 }
@@ -114,11 +115,16 @@ pub(super) async fn run_postprocess_dag(
     let dag_description = describe_dag(&specs);
     debug!(?dag_description, "Executing review postprocess DAG");
     let mut context = ReviewPostprocessDagContext::new(execution, services, session);
-    let _records = execute_dag(&specs, &mut context, |stage, context| {
+    let records = execute_dag(&specs, &mut context, |stage, context| {
         async move { execute_stage(stage, context).await }.boxed()
     })
     .await?;
-    Ok(context.into_result())
+    let mut result = context.into_result();
+    result.dag_traces.push(DagExecutionTrace {
+        graph_name: "review_postprocess".to_string(),
+        records,
+    });
+    Ok(result)
 }
 
 pub(in super::super) fn describe_review_postprocess_graph(
@@ -131,7 +137,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
             ReviewPostprocessStage::SpecializedDedup => DagNodeContract {
                 name: spec.id.name().to_string(),
                 description:
-                    "Deduplicate overlapping specialized-pass comments before later transforms."
+                    "Deduplicate semantically overlapping comments on the same file and line before later transforms."
                         .to_string(),
                 kind: DagNodeKind::Transformation,
                 dependencies: spec
@@ -345,11 +351,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
         description:
             "Granular postprocess DAG that transforms raw execution comments into a filtered review result."
                 .to_string(),
-        entry_nodes: vec![if config.multi_pass_specialized {
-            "specialized_dedup".to_string()
-        } else {
-            "plugin_postprocessors".to_string()
-        }],
+        entry_nodes: vec!["specialized_dedup".to_string()],
         terminal_nodes: vec![if has_convention_store_path {
             "save_convention_store".to_string()
         } else {
@@ -367,7 +369,7 @@ fn build_postprocess_specs(
         DagNodeSpec {
             id: ReviewPostprocessStage::SpecializedDedup,
             dependencies: vec![],
-            enabled: config.multi_pass_specialized,
+            enabled: true,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::PluginPostProcessors,
@@ -440,7 +442,7 @@ fn execute_specialized_dedup_stage(context: &mut ReviewPostprocessDagContext<'_>
     let after = context.comments.len();
     if before != after {
         info!(
-            "Deduplicated {} comment(s) across specialized passes ({} -> {})",
+            "Deduplicated {} semantically overlapping comment(s) ({} -> {})",
             before - after,
             before,
             after
@@ -557,6 +559,7 @@ mod tests {
         let graph = describe_review_postprocess_graph(&crate::config::Config::default(), true);
 
         assert_eq!(graph.name, "review_postprocess");
+        assert_eq!(graph.entry_nodes, vec!["specialized_dedup"]);
         assert!(graph.nodes.iter().any(|node| node.name == "verification"
             && node.outputs.contains(&"verification_report".to_string())));
         assert!(graph

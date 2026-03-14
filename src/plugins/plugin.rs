@@ -34,6 +34,11 @@ impl PluginManager {
                 crate::plugins::builtin::SupplyChainAnalyzer::new(),
             ));
         }
+        if config.rust_compile {
+            self.register_pre_analyzer(Arc::new(
+                crate::plugins::builtin::RustCompileAnalyzer::new(),
+            ));
+        }
         if config.duplicate_filter {
             self.register_post_processor(Arc::new(crate::plugins::builtin::DuplicateFilter::new()));
         }
@@ -125,6 +130,7 @@ mod tests {
             duplicate_filter: false,
             secret_scanner: false,
             supply_chain: false,
+            rust_compile: false,
         };
 
         manager.load_builtin_plugins(&config).await.unwrap();
@@ -142,11 +148,30 @@ mod tests {
             duplicate_filter: false,
             secret_scanner: true,
             supply_chain: true,
+            rust_compile: false,
         };
 
         manager.load_builtin_plugins(&config).await.unwrap();
 
         assert_eq!(manager.pre_analyzers.len(), 2);
+        assert_eq!(manager.post_processors.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn load_builtin_plugins_registers_rust_compile_analyzer() {
+        let mut manager = PluginManager::new();
+        let config = PluginConfig {
+            eslint: false,
+            semgrep: false,
+            duplicate_filter: false,
+            secret_scanner: false,
+            supply_chain: false,
+            rust_compile: true,
+        };
+
+        manager.load_builtin_plugins(&config).await.unwrap();
+
+        assert_eq!(manager.pre_analyzers.len(), 1);
         assert_eq!(manager.post_processors.len(), 0);
     }
 }

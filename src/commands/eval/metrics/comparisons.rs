@@ -170,6 +170,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec![],
+                dag_traces: vec![],
             },
             EvalFixtureResult {
                 fixture: "suite/b".to_string(),
@@ -190,6 +191,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec![],
+                dag_traces: vec![],
             },
         ];
 

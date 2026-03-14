@@ -445,6 +445,10 @@ pub struct PluginConfig {
     /// Supply-chain risk analysis for dependency manifest changes.
     #[serde(default = "default_true")]
     pub supply_chain: bool,
+
+    /// Rust compile-regression analysis for high-confidence struct initializer removals.
+    #[serde(default = "default_true")]
+    pub rust_compile: bool,
 }
 
 impl Default for PluginConfig {
@@ -455,6 +459,7 @@ impl Default for PluginConfig {
             duplicate_filter: true,
             secret_scanner: true,
             supply_chain: true,
+            rust_compile: true,
         }
     }
 }

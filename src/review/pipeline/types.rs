@@ -24,6 +24,7 @@ pub struct ReviewResult {
     pub agent_activity: Option<AgentActivity>,
     pub verification_report: Option<crate::review::verification::VerificationReport>,
     pub warnings: Vec<String>,
+    pub dag_traces: Vec<crate::core::dag::DagExecutionTrace>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

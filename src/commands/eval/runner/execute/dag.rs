@@ -5,8 +5,8 @@ use tracing::debug;
 use crate::config;
 use crate::core;
 use crate::core::dag::{
-    describe_dag, execute_dag, DagGraphContract, DagNode, DagNodeContract, DagNodeExecutionHints,
-    DagNodeKind, DagNodeSpec,
+    describe_dag, execute_dag, DagExecutionRecord, DagExecutionTrace, DagGraphContract, DagNode,
+    DagNodeContract, DagNodeExecutionHints, DagNodeKind, DagNodeSpec,
 };
 use crate::core::eval_benchmarks::FixtureResult as BenchmarkFixtureResult;
 use crate::review::review_diff_content_raw;
@@ -73,6 +73,7 @@ struct EvalFixtureDagContext<'a> {
     failures: Vec<String>,
     benchmark_metrics: Option<BenchmarkFixtureResult>,
     artifact_path: Option<String>,
+    dag_traces: Vec<DagExecutionTrace>,
 }
 
 impl<'a> EvalFixtureDagContext<'a> {
@@ -90,10 +91,19 @@ impl<'a> EvalFixtureDagContext<'a> {
             failures: Vec::new(),
             benchmark_metrics: None,
             artifact_path: None,
+            dag_traces: Vec::new(),
         }
     }
 
-    fn into_outcome(self) -> Result<EvalFixtureExecutionOutcome> {
+    fn into_outcome(
+        self,
+        eval_records: Vec<DagExecutionRecord>,
+    ) -> Result<EvalFixtureExecutionOutcome> {
+        let mut dag_traces = self.dag_traces;
+        dag_traces.push(DagExecutionTrace {
+            graph_name: "eval_fixture_execution".to_string(),
+            records: eval_records,
+        });
         Ok(EvalFixtureExecutionOutcome {
             prepared: self.prepared,
             total_comments: self.total_comments,
@@ -108,6 +118,7 @@ impl<'a> EvalFixtureDagContext<'a> {
                 reproduction_summary: self.reproduction_summary,
                 artifact_path: self.artifact_path,
                 failures: self.failures,
+                dag_traces,
             },
         })
     }
@@ -122,12 +133,13 @@ pub(super) async fn execute_eval_fixture_dag(
     let dag_description = describe_dag(&specs);
     debug!(?dag_description, "Executing eval fixture DAG");
     let mut context = EvalFixtureDagContext::new(prepared, dag_config);
-    let _records = execute_dag(&specs, &mut context, |stage, context| {
+    let records = execute_dag(&specs, &mut context, |stage, context| {
         async move { execute_stage(stage, config, context).await }.boxed()
     })
     .await?;
+    rewrite_fixture_artifact_with_eval_trace(&mut context, &records).await?;
 
-    context.into_outcome()
+    context.into_outcome(records)
 }
 
 pub(in super::super::super) fn describe_eval_fixture_graph(
@@ -369,6 +381,7 @@ async fn execute_review_stage(
     .await?;
     context.verification_report = convert_verification_report(review_result.verification_report);
     context.agent_activity = convert_agent_activity(review_result.agent_activity);
+    context.dag_traces = review_result.dag_traces;
     context.comments = review_result.comments;
     context.warnings = review_result.warnings;
     context.total_comments = context.comments.len();
@@ -451,6 +464,42 @@ async fn execute_artifact_stage(context: &mut EvalFixtureDagContext<'_>) -> Resu
         verification_report: context.verification_report.as_ref(),
         agent_activity: context.agent_activity.as_ref(),
         reproduction_summary: context.reproduction_summary.as_ref(),
+        dag_traces: &context.dag_traces,
+    })
+    .await?;
+    Ok(())
+}
+
+async fn rewrite_fixture_artifact_with_eval_trace(
+    context: &mut EvalFixtureDagContext<'_>,
+    eval_records: &[DagExecutionRecord],
+) -> Result<()> {
+    if context.artifact_path.is_none() {
+        return Ok(());
+    }
+    let Some(match_summary) = context.match_summary.as_ref() else {
+        anyhow::bail!("artifact rewrite requires expectation matching output");
+    };
+
+    let mut dag_traces = context.dag_traces.clone();
+    dag_traces.push(DagExecutionTrace {
+        graph_name: "eval_fixture_execution".to_string(),
+        records: eval_records.to_vec(),
+    });
+    context.artifact_path = maybe_write_fixture_artifact(EvalFixtureArtifactInput {
+        context: context.dag_config.artifact_context,
+        prepared: &context.prepared,
+        total_comments: context.total_comments,
+        comments: &context.comments,
+        warnings: &context.warnings,
+        failures: &context.failures,
+        benchmark_metrics: context.benchmark_metrics.as_ref(),
+        rule_metrics: &match_summary.rule_metrics,
+        rule_summary: match_summary.rule_summary,
+        verification_report: context.verification_report.as_ref(),
+        agent_activity: context.agent_activity.as_ref(),
+        reproduction_summary: context.reproduction_summary.as_ref(),
+        dag_traces: &dag_traces,
     })
     .await?;
     Ok(())

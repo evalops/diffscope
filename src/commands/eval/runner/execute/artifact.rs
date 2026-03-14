@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::core;
+use crate::core::dag::DagExecutionTrace;
 use crate::core::eval_benchmarks::FixtureResult as BenchmarkFixtureResult;
 
 use super::super::super::{
@@ -31,6 +32,7 @@ pub(super) struct EvalFixtureArtifactInput<'a> {
     pub(super) verification_report: Option<&'a EvalVerificationReport>,
     pub(super) agent_activity: Option<&'a EvalAgentActivity>,
     pub(super) reproduction_summary: Option<&'a EvalReproductionSummary>,
+    pub(super) dag_traces: &'a [DagExecutionTrace],
 }
 
 #[derive(Debug, Serialize)]
@@ -53,6 +55,7 @@ struct EvalFixtureArtifact {
     verification_report: Option<EvalVerificationReport>,
     agent_activity: Option<EvalAgentActivity>,
     reproduction_summary: Option<EvalReproductionSummary>,
+    dag_traces: Vec<DagExecutionTrace>,
 }
 
 pub(super) async fn maybe_write_fixture_artifact(
@@ -90,6 +93,7 @@ pub(super) async fn maybe_write_fixture_artifact(
         verification_report: input.verification_report.cloned(),
         agent_activity: input.agent_activity.cloned(),
         reproduction_summary: input.reproduction_summary.cloned(),
+        dag_traces: input.dag_traces.to_vec(),
     };
     tokio::fs::write(&artifact_path, serde_json::to_string_pretty(&artifact)?).await?;
 

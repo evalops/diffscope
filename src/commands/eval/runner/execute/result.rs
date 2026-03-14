@@ -1,3 +1,4 @@
+use crate::core::dag::DagExecutionTrace;
 use crate::core::eval_benchmarks::FixtureResult as BenchmarkFixtureResult;
 
 use super::super::super::{
@@ -81,6 +82,7 @@ pub(super) fn build_fixture_result(
         reproduction_summary: details.reproduction_summary,
         artifact_path: details.artifact_path,
         failures: details.failures,
+        dag_traces: details.dag_traces,
     }
 }
 
@@ -91,6 +93,7 @@ pub(super) struct FixtureResultDetails {
     pub(super) reproduction_summary: Option<EvalReproductionSummary>,
     pub(super) artifact_path: Option<String>,
     pub(super) failures: Vec<String>,
+    pub(super) dag_traces: Vec<DagExecutionTrace>,
 }
 
 pub(super) fn convert_agent_activity(
