@@ -1303,6 +1303,77 @@ mod tests {
         assert_eq!(stats.total_cost_estimate, 4.0, "1.5 + 0.5 + 2.0");
     }
 
+    /// Exact aggregate values so mutations in get_event_stats (avg, percentile formula) are caught.
+    #[tokio::test]
+    async fn test_get_event_stats_exact_aggregates() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let now = now_ts();
+        for (i, &dur) in [100_u64, 200, 300].iter().enumerate() {
+            let mut s = make_session_with_event(
+                &format!("r{}", i),
+                now + i as i64,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "head",
+                dur,
+            );
+            if let Some(ref mut e) = s.event {
+                e.overall_score = Some((i as f32 + 1.0) * 2.0); // 2.0, 4.0, 6.0 -> avg 4.0
+            }
+            backend.save_review(&s).await.unwrap();
+        }
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+
+        assert_eq!(stats.total_reviews, 3);
+        assert_eq!(stats.avg_duration_ms, 200.0, " (100+200+300)/3 ");
+        assert_eq!(
+            stats.p50_latency_ms, 200,
+            " percentile 50 of [100,200,300] "
+        );
+        assert_eq!(stats.p95_latency_ms, 300, " percentile 95 ");
+        assert_eq!(stats.p99_latency_ms, 300, " percentile 99 ");
+        assert_eq!(stats.avg_score, Some(4.0), " (2+4+6)/3 ");
+        assert_eq!(stats.by_model.len(), 1);
+        assert_eq!(stats.by_model[0].model, "gpt-4o");
+        assert_eq!(stats.by_model[0].count, 3);
+        assert_eq!(stats.by_model[0].avg_duration_ms, 200.0);
+    }
+
+    /// time_to filter: event with created_at == time_to must be included (<=).
+    #[tokio::test]
+    async fn test_list_events_time_to_inclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let t = chrono::Utc::now();
+        let mut s = make_session_with_event(
+            "r1",
+            0,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "head",
+            100,
+        );
+        s.event.as_mut().unwrap().created_at = Some(t);
+        backend.save_review(&s).await.unwrap();
+
+        let filters = EventFilters {
+            time_from: Some(t - chrono::Duration::hours(1)),
+            time_to: Some(t),
+            ..EventFilters::default()
+        };
+        let events = backend.list_events(&filters).await.unwrap();
+        assert_eq!(events.len(), 1, "event at exactly time_to must be included");
+    }
+
     // ---------------------------------------------------------------
     // 7. is_empty (via internal state check)
     // ---------------------------------------------------------------
