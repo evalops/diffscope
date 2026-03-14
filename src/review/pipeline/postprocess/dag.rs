@@ -2,6 +2,9 @@ use anyhow::Result;
 use futures::FutureExt;
 use tracing::{debug, info};
 
+#[path = "blast_radius.rs"]
+mod blast_radius;
+
 use crate::core;
 use crate::core::dag::{
     describe_dag, execute_dag, DagExecutionTrace, DagGraphContract, DagNode, DagNodeContract,
@@ -18,6 +21,7 @@ use super::dedup::deduplicate_specialized_comments;
 use super::feedback::apply_semantic_feedback_adjustment;
 use super::suppression::apply_convention_suppression;
 use super::verification::{apply_verification_pass, VerificationPassOutput};
+use blast_radius::apply_blast_radius_summaries;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ReviewPostprocessStage {
@@ -29,6 +33,7 @@ enum ReviewPostprocessStage {
     ReviewFilters,
     EnhancedFilters,
     ConventionSuppression,
+    BlastRadius,
     PrioritizeFindings,
     SaveConventionStore,
 }
@@ -44,6 +49,7 @@ impl DagNode for ReviewPostprocessStage {
             Self::ReviewFilters => "review_filters",
             Self::EnhancedFilters => "enhanced_filters",
             Self::ConventionSuppression => "convention_suppression",
+            Self::BlastRadius => "blast_radius",
             Self::PrioritizeFindings => "prioritize_findings",
             Self::SaveConventionStore => "save_convention_store",
         }
@@ -298,6 +304,22 @@ pub(in super::super) fn describe_review_postprocess_graph(
                 hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
+            ReviewPostprocessStage::BlastRadius => DagNodeContract {
+                name: spec.id.name().to_string(),
+                description:
+                    "Annotate findings with cross-file blast-radius summaries from reverse dependency counts."
+                        .to_string(),
+                kind: DagNodeKind::Transformation,
+                dependencies: spec
+                    .dependencies
+                    .into_iter()
+                    .map(|dependency| dependency.name().to_string())
+                    .collect(),
+                inputs: vec!["comments".to_string(), "symbol_index".to_string()],
+                outputs: vec!["comments".to_string()],
+                hints: stage_hints(spec.id),
+                enabled: spec.enabled,
+            },
             ReviewPostprocessStage::PrioritizeFindings => DagNodeContract {
                 name: spec.id.name().to_string(),
                 description:
@@ -405,8 +427,14 @@ fn build_postprocess_specs(
             enabled: true,
         },
         DagNodeSpec {
-            id: ReviewPostprocessStage::PrioritizeFindings,
+            id: ReviewPostprocessStage::BlastRadius,
             dependencies: vec![ReviewPostprocessStage::ConventionSuppression],
+            hints: stage_hints(ReviewPostprocessStage::BlastRadius),
+            enabled: true,
+        },
+        DagNodeSpec {
+            id: ReviewPostprocessStage::PrioritizeFindings,
+            dependencies: vec![ReviewPostprocessStage::BlastRadius],
             hints: stage_hints(ReviewPostprocessStage::PrioritizeFindings),
             enabled: true,
         },
@@ -436,6 +464,7 @@ async fn execute_stage(
         ReviewPostprocessStage::ConventionSuppression => {
             execute_convention_suppression_stage(context)
         }
+        ReviewPostprocessStage::BlastRadius => execute_blast_radius_stage(context),
         ReviewPostprocessStage::PrioritizeFindings => execute_prioritize_findings_stage(context),
         ReviewPostprocessStage::SaveConventionStore => execute_convention_store_save_stage(context),
     }
@@ -529,6 +558,13 @@ fn execute_convention_suppression_stage(
     Ok(())
 }
 
+fn execute_blast_radius_stage(context: &mut ReviewPostprocessDagContext<'_>) -> Result<()> {
+    let comments = std::mem::take(&mut context.comments);
+    context.comments =
+        apply_blast_radius_summaries(comments, context.session.symbol_index.as_ref());
+    Ok(())
+}
+
 fn execute_prioritize_findings_stage(context: &mut ReviewPostprocessDagContext<'_>) -> Result<()> {
     core::sort_comments_by_priority(&mut context.comments);
     Ok(())
@@ -563,6 +599,9 @@ mod tests {
                 .unwrap(),
             vec!["prioritize_findings"]
         );
+        assert!(descriptions
+            .iter()
+            .any(|description| description.name == "blast_radius"));
         assert!(descriptions
             .iter()
             .any(|description| description.name == "prioritize_findings"));

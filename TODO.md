@@ -65,7 +65,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 32. [x] Add caller/callee expansion APIs for multi-hop impact analysis from changed symbols.
 33. [ ] Add contract edges between interfaces, implementations, and API endpoints.
 34. [ ] Add "similar implementation" lookup so repeated patterns and divergences are explicit.
-35. [ ] Add cross-file blast-radius summaries to findings when a change affects many callers.
+35. [x] Add cross-file blast-radius summaries to findings when a change affects many callers.
 36. [ ] Add graph freshness/version metadata so reviews know whether they are using stale repository intelligence.
 37. [x] Add graph-backed ranking of related files before semantic RAG retrieval.
 38. [x] Add graph query traces to `dag_traces` or review artifacts for explainability and debugging.
