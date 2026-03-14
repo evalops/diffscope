@@ -72,10 +72,11 @@ Create labels once: `priority: high`, `priority: medium`, `priority: low`, `area
 
 ## Shipped (recent)
 
+- **v0.5.27 (2026-03-14):** Version bump; test coverage (parsing, guidance, triage, config); PRs #44, #45, #46.
 - **Natural language rules (#12):** `review_rules_prose: [ "Rule one", "Rule two" ]` in config; injected as "Custom rules (natural language)" bullets into review guidance. Tests: `test_config_deserialize_review_rules_prose_from_yaml`, `build_review_guidance_includes_prose_rules`.
 - **Triage skip deletion-only (#29):** `triage_skip_deletion_only: true` in config; when true, deletion-only diffs get `SkipDeletionOnly` and skip expensive review. Default false. Tests: `test_triage_deletion_only_with_skip_true_returns_skip_deletion_only`, config deserialize.
 - **Dynamic context (#25):** `find_enclosing_boundary_line` in `function_chunker.rs`; `context.rs` expands hunk start to enclosing function/class boundary; asymmetric context (5 before, 1 after).
-- **LLM parsing (#28):** Repair candidates in `repair_json_candidates`: diff-style line prefixes (`+`), single-quoted keys/values → double-quoted via `convert_single_quoted_json_to_double`; raw bracket span fallback when valid JSON not found. Tests: `parse_json_with_diff_prefix_artifact`, `parse_json_with_single_quotes`.
+- **LLM parsing (#28):** Repair candidates in `repair_json_candidates`: diff-style line prefixes (`+`), single-quoted keys/values → double-quoted, tab→space; raw bracket span fallback when valid JSON not found. Tests: `parse_json_with_diff_prefix_artifact`, `parse_json_with_single_quotes`, `parse_json_with_tabs`.
 - **Secrets (#20):** Built-in secret scanner in `plugins/builtin/secret_scanner.rs`.
 - **Verification (#23):** Verification pass and config (verification.*) in pipeline.
 

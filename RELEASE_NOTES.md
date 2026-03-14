@@ -1,3 +1,21 @@
+# Release Notes - v0.5.27
+
+📅 **Release Date**: 2026-03-14
+
+## Summary
+
+- **Natural language review rules (#12):** `review_rules_prose` in config; prose rules section in review guidance.
+- **Optional skip deletion-only (#29):** `triage_skip_deletion_only`; `TriageOptions` + `SkipDeletionOnly`; pipeline uses in `prepare_diff_analysis`.
+- **LLM parsing (#28):** Single-quoted JSON repair, raw bracket span fallback, escaped apostrophe in values; diff-prefix strip.
+- **Dynamic context (#25):** Documented as shipped — `find_enclosing_boundary_line` in context.
+- **Test coverage:** Parsing (single-quote object/findings, escaped apostrophe), guidance (empty/single/special-char prose), triage/config defaults and reason strings.
+
+## Full Changelog
+
+[v0.5.26...v0.5.27](https://github.com/evalops/diffscope/compare/v0.5.26...v0.5.27)
+
+---
+
 # Release Notes - v0.5.0
 
 📅 **Release Date**: 2025-06-06
@@ -68,3 +86,4 @@ cp .diffscope.yml.example .diffscope.yml
 ## 📝 Full Changelog
 
 For detailed changes, see the [full changelog](https://github.com/evalops/diffscope/compare/v0.4.4...v0.5.0).
+
