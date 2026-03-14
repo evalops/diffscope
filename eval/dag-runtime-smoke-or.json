@@ -1,0 +1,2198 @@
+{
+  "generated_at": "2026-03-14T07:48:10.967081+00:00",
+  "base_label": null,
+  "repeat": 1,
+  "models": [
+    "anthropic/claude-opus-4.5",
+    "anthropic/claude-sonnet-4.5"
+  ],
+  "by_model": [
+    {
+      "model": "anthropic/claude-opus-4.5",
+      "provider": "openrouter",
+      "runs": 1,
+      "passing_runs": 1,
+      "average_micro_f1": 1.0,
+      "average_weighted_score": 1.0
+    },
+    {
+      "model": "anthropic/claude-sonnet-4.5",
+      "provider": "openrouter",
+      "runs": 1,
+      "passing_runs": 0,
+      "average_micro_f1": 0.8000001,
+      "average_weighted_score": 0.8888889
+    }
+  ],
+  "runs": [
+    {
+      "run": {
+        "started_at": "2026-03-14T07:46:52.286245+00:00",
+        "fixtures_root": "eval/fixtures",
+        "fixtures_discovered": 21,
+        "fixtures_selected": 4,
+        "label": "eval [anthropic/claude-opus-4.5]",
+        "model": "anthropic/claude-opus-4.5",
+        "adapter": "openrouter",
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "filters": {
+          "suite_filters": [],
+          "category_filters": [],
+          "language_filters": [],
+          "fixture_name_filters": [],
+          "max_fixtures": 4
+        },
+        "verification_fail_open": true,
+        "verification_judges": [
+          "anthropic/claude-sonnet-4.5",
+          "anthropic/claude-opus-4.5"
+        ],
+        "verification_consensus_mode": "any",
+        "trend_file": ".diffscope.eval-trend.json",
+        "artifact_dir": "eval/artifacts/dag-runtime-smoke-or/anthropic-claude-opus-4-5/repeat-01",
+        "reproduction_validation": true
+      },
+      "fixtures_total": 4,
+      "fixtures_passed": 4,
+      "fixtures_failed": 0,
+      "rule_metrics": [],
+      "rule_summary": null,
+      "benchmark_summary": {
+        "fixture_count": 4,
+        "total_tp": 5,
+        "total_fp": 0,
+        "total_fn": 0,
+        "total_tn": 4,
+        "micro_precision": 1.0,
+        "micro_recall": 1.0,
+        "micro_f1": 1.0,
+        "macro_precision": 1.0,
+        "macro_recall": 1.0,
+        "macro_f1": 1.0,
+        "weighted_score": 1.0
+      },
+      "suite_results": [
+        {
+          "suite": "review-depth-async",
+          "fixture_count": 3,
+          "aggregate": {
+            "fixture_count": 3,
+            "total_tp": 4,
+            "total_fp": 0,
+            "total_fn": 0,
+            "total_tn": 3,
+            "micro_precision": 1.0,
+            "micro_recall": 1.0,
+            "micro_f1": 1.0,
+            "macro_precision": 1.0,
+            "macro_recall": 1.0,
+            "macro_f1": 1.0,
+            "weighted_score": 1.0
+          },
+          "thresholds_enforced": true,
+          "threshold_pass": true,
+          "threshold_failures": []
+        },
+        {
+          "suite": "review-depth-authz",
+          "fixture_count": 1,
+          "aggregate": {
+            "fixture_count": 1,
+            "total_tp": 1,
+            "total_fp": 0,
+            "total_fn": 0,
+            "total_tn": 1,
+            "micro_precision": 1.0,
+            "micro_recall": 1.0,
+            "micro_f1": 1.0,
+            "macro_precision": 1.0,
+            "macro_recall": 1.0,
+            "macro_f1": 1.0,
+            "weighted_score": 1.0
+          },
+          "thresholds_enforced": true,
+          "threshold_pass": true,
+          "threshold_failures": []
+        }
+      ],
+      "benchmark_by_category": {
+        "security": {
+          "fixture_count": 2,
+          "total_tp": 2,
+          "total_fp": 0,
+          "total_fn": 0,
+          "total_tn": 2,
+          "micro_precision": 1.0,
+          "micro_recall": 1.0,
+          "micro_f1": 1.0,
+          "macro_precision": 1.0,
+          "macro_recall": 1.0,
+          "macro_f1": 1.0,
+          "weighted_score": 1.0
+        },
+        "bug": {
+          "fixture_count": 2,
+          "total_tp": 3,
+          "total_fp": 0,
+          "total_fn": 0,
+          "total_tn": 2,
+          "micro_precision": 1.0,
+          "micro_recall": 1.0,
+          "micro_f1": 1.0,
+          "macro_precision": 1.0,
+          "macro_recall": 1.0,
+          "macro_f1": 1.0,
+          "weighted_score": 1.0
+        }
+      },
+      "benchmark_by_language": {
+        "python": {
+          "fixture_count": 1,
+          "total_tp": 1,
+          "total_fp": 0,
+          "total_fn": 0,
+          "total_tn": 1,
+          "micro_precision": 1.0,
+          "micro_recall": 1.0,
+          "micro_f1": 1.0,
+          "macro_precision": 1.0,
+          "macro_recall": 1.0,
+          "macro_f1": 1.0,
+          "weighted_score": 1.0
+        },
+        "rust": {
+          "fixture_count": 1,
+          "total_tp": 2,
+          "total_fp": 0,
+          "total_fn": 0,
+          "total_tn": 1,
+          "micro_precision": 1.0,
+          "micro_recall": 1.0,
+          "micro_f1": 1.0,
+          "macro_precision": 1.0,
+          "macro_recall": 1.0,
+          "macro_f1": 1.0,
+          "weighted_score": 1.0
+        },
+        "typescript": {
+          "fixture_count": 2,
+          "total_tp": 2,
+          "total_fp": 0,
+          "total_fn": 0,
+          "total_tn": 2,
+          "micro_precision": 1.0,
+          "micro_recall": 1.0,
+          "micro_f1": 1.0,
+          "macro_precision": 1.0,
+          "macro_recall": 1.0,
+          "macro_f1": 1.0,
+          "weighted_score": 1.0
+        }
+      },
+      "benchmark_by_difficulty": {
+        "hard": {
+          "fixture_count": 3,
+          "total_tp": 4,
+          "total_fp": 0,
+          "total_fn": 0,
+          "total_tn": 3,
+          "micro_precision": 1.0,
+          "micro_recall": 1.0,
+          "micro_f1": 1.0,
+          "macro_precision": 1.0,
+          "macro_recall": 1.0,
+          "macro_f1": 1.0,
+          "weighted_score": 1.0
+        },
+        "expert": {
+          "fixture_count": 1,
+          "total_tp": 1,
+          "total_fp": 0,
+          "total_fn": 0,
+          "total_tn": 1,
+          "micro_precision": 1.0,
+          "micro_recall": 1.0,
+          "micro_f1": 1.0,
+          "macro_precision": 1.0,
+          "macro_recall": 1.0,
+          "macro_f1": 1.0,
+          "weighted_score": 1.0
+        }
+      },
+      "suite_comparisons": [],
+      "category_comparisons": [],
+      "language_comparisons": [],
+      "warnings": [],
+      "threshold_failures": [],
+      "results": [
+        {
+          "fixture": "review-depth-async/rust-fire-and-forget-sync-task",
+          "suite": "review-depth-async",
+          "passed": true,
+          "total_comments": 2,
+          "required_matches": 2,
+          "required_total": 2,
+          "benchmark_metrics": {
+            "fixture_name": "review-depth-async/rust-fire-and-forget-sync-task",
+            "true_positives": 2,
+            "false_positives": 0,
+            "false_negatives": 0,
+            "true_negatives": 1,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "passed": true,
+            "details": []
+          },
+          "suite_thresholds": {
+            "min_precision": 0.45,
+            "min_recall": 0.35,
+            "min_f1": 0.4,
+            "max_false_positive_rate": 0.45,
+            "min_weighted_score": 0.45
+          },
+          "difficulty": "Hard",
+          "metadata": {
+            "category": "bug",
+            "language": "rust",
+            "source": "deep-review-suite",
+            "description": "Async work should not be detached if the caller relies on success or error propagation."
+          },
+          "rule_metrics": [],
+          "rule_summary": null,
+          "warnings": [],
+          "verification_report": {
+            "consensus_mode": "any",
+            "required_votes": 1,
+            "judge_count": 2,
+            "judges": [
+              {
+                "model": "anthropic/claude-sonnet-4.5",
+                "total_comments": 2,
+                "passed_comments": 2,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              },
+              {
+                "model": "anthropic/claude-opus-4.5",
+                "total_comments": 2,
+                "passed_comments": 2,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              }
+            ]
+          },
+          "reproduction_summary": {
+            "confirmed": 2,
+            "rejected": 0,
+            "inconclusive": 0,
+            "checks": [
+              {
+                "comment_id": "cmt_61cfe3a00b0f2928",
+                "model": "anthropic/claude-4.5-sonnet-20250929",
+                "reproduced": true,
+                "confidence": 0.95,
+                "reason": "The diff clearly shows a behavioral change from awaited execution (sync_user(user_id).await?) to fire-and-forget (tokio::spawn without capturing JoinHandle). The function now returns Ok(()) immediately without waiting for sync_user to complete, breaking the original contract where callers could rely on completion. The spawned task's result is discarded, preventing error detection or completion tracking.",
+                "agent_activity": {
+                  "total_iterations": 1,
+                  "tool_calls": [
+                    {
+                      "iteration": 0,
+                      "tool_name": "read_file",
+                      "duration_ms": 0
+                    }
+                  ]
+                }
+              },
+              {
+                "comment_id": "cmt_5f0c9838825473a6",
+                "model": "anthropic/claude-4.5-sonnet-20250929",
+                "reproduced": true,
+                "confidence": 0.95,
+                "reason": "The diff shows refresh_user changed from awaiting sync_user (which propagated errors via ?) to spawning a fire-and-forget task with .unwrap(). The spawned task panics on error without propagation, while the function immediately returns Ok(()), making failures invisible to the caller.",
+                "agent_activity": {
+                  "total_iterations": 1,
+                  "tool_calls": [
+                    {
+                      "iteration": 0,
+                      "tool_name": "read_file",
+                      "duration_ms": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "failures": [],
+          "dag_traces": [
+            {
+              "graph_name": "review_pipeline",
+              "records": [
+                {
+                  "name": "initialize_services",
+                  "enabled": true,
+                  "duration_ms": 8
+                },
+                {
+                  "name": "build_session",
+                  "enabled": true,
+                  "duration_ms": 1528
+                },
+                {
+                  "name": "prepare_jobs",
+                  "enabled": true,
+                  "duration_ms": 2699
+                },
+                {
+                  "name": "execute_jobs",
+                  "enabled": true,
+                  "duration_ms": 8133
+                },
+                {
+                  "name": "postprocess",
+                  "enabled": true,
+                  "duration_ms": 8804
+                }
+              ]
+            },
+            {
+              "graph_name": "review_postprocess",
+              "records": [
+                {
+                  "name": "specialized_dedup",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "plugin_postprocessors",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "verification",
+                  "enabled": true,
+                  "duration_ms": 8804
+                },
+                {
+                  "name": "semantic_feedback",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "feedback_calibration",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "review_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "enhanced_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "convention_suppression",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "prioritize_findings",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "save_convention_store",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            },
+            {
+              "graph_name": "eval_fixture_execution",
+              "records": [
+                {
+                  "name": "review",
+                  "enabled": true,
+                  "duration_ms": 21189
+                },
+                {
+                  "name": "expectation_matching",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "reproduction_validation",
+                  "enabled": true,
+                  "duration_ms": 6202
+                },
+                {
+                  "name": "comment_count_validation",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "benchmark_metrics",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "artifact_capture",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": "review-depth-async/typescript-async-foreach-not-awaited",
+          "suite": "review-depth-async",
+          "passed": true,
+          "total_comments": 1,
+          "required_matches": 1,
+          "required_total": 1,
+          "benchmark_metrics": {
+            "fixture_name": "review-depth-async/typescript-async-foreach-not-awaited",
+            "true_positives": 1,
+            "false_positives": 0,
+            "false_negatives": 0,
+            "true_negatives": 1,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "passed": true,
+            "details": []
+          },
+          "suite_thresholds": {
+            "min_precision": 0.45,
+            "min_recall": 0.35,
+            "min_f1": 0.4,
+            "max_false_positive_rate": 0.45,
+            "min_weighted_score": 0.45
+          },
+          "difficulty": "Hard",
+          "metadata": {
+            "category": "bug",
+            "language": "typescript",
+            "source": "deep-review-suite",
+            "description": "Notification fan-out should keep awaiting all spawned async work."
+          },
+          "rule_metrics": [],
+          "rule_summary": null,
+          "warnings": [],
+          "verification_report": {
+            "consensus_mode": "any",
+            "required_votes": 1,
+            "judge_count": 2,
+            "judges": [
+              {
+                "model": "anthropic/claude-sonnet-4.5",
+                "total_comments": 1,
+                "passed_comments": 1,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              },
+              {
+                "model": "anthropic/claude-opus-4.5",
+                "total_comments": 1,
+                "passed_comments": 1,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              }
+            ]
+          },
+          "reproduction_summary": {
+            "confirmed": 1,
+            "rejected": 0,
+            "inconclusive": 0,
+            "checks": [
+              {
+                "comment_id": "cmt_cb001a10fa0b7a61",
+                "model": "anthropic/claude-4.5-sonnet-20250929",
+                "reproduced": true,
+                "confidence": 0.98,
+                "reason": "The diff shows a change from `await Promise.all(users.map(...))` to `users.forEach(async ...)`. The forEach method does not await the async callbacks, so the function returns immediately at line 5 without waiting for sendNotification calls to complete. This is a well-known JavaScript async pattern bug where forEach ignores promise returns.",
+                "agent_activity": {
+                  "total_iterations": 1,
+                  "tool_calls": [
+                    {
+                      "iteration": 0,
+                      "tool_name": "read_file",
+                      "duration_ms": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "failures": [],
+          "dag_traces": [
+            {
+              "graph_name": "review_pipeline",
+              "records": [
+                {
+                  "name": "initialize_services",
+                  "enabled": true,
+                  "duration_ms": 9
+                },
+                {
+                  "name": "build_session",
+                  "enabled": true,
+                  "duration_ms": 3994
+                },
+                {
+                  "name": "prepare_jobs",
+                  "enabled": true,
+                  "duration_ms": 4537
+                },
+                {
+                  "name": "execute_jobs",
+                  "enabled": true,
+                  "duration_ms": 4589
+                },
+                {
+                  "name": "postprocess",
+                  "enabled": true,
+                  "duration_ms": 6576
+                }
+              ]
+            },
+            {
+              "graph_name": "review_postprocess",
+              "records": [
+                {
+                  "name": "specialized_dedup",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "plugin_postprocessors",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "verification",
+                  "enabled": true,
+                  "duration_ms": 6575
+                },
+                {
+                  "name": "semantic_feedback",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "feedback_calibration",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "review_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "enhanced_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "convention_suppression",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "prioritize_findings",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "save_convention_store",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            },
+            {
+              "graph_name": "eval_fixture_execution",
+              "records": [
+                {
+                  "name": "review",
+                  "enabled": true,
+                  "duration_ms": 19721
+                },
+                {
+                  "name": "expectation_matching",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "reproduction_validation",
+                  "enabled": true,
+                  "duration_ms": 3369
+                },
+                {
+                  "name": "comment_count_validation",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "benchmark_metrics",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "artifact_capture",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": "review-depth-async/typescript-missing-await-permission-check",
+          "suite": "review-depth-async",
+          "passed": true,
+          "total_comments": 1,
+          "required_matches": 1,
+          "required_total": 1,
+          "benchmark_metrics": {
+            "fixture_name": "review-depth-async/typescript-missing-await-permission-check",
+            "true_positives": 1,
+            "false_positives": 0,
+            "false_negatives": 0,
+            "true_negatives": 1,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "passed": true,
+            "details": []
+          },
+          "suite_thresholds": {
+            "min_precision": 0.45,
+            "min_recall": 0.35,
+            "min_f1": 0.4,
+            "max_false_positive_rate": 0.45,
+            "min_weighted_score": 0.45
+          },
+          "difficulty": "Expert",
+          "metadata": {
+            "category": "security",
+            "language": "typescript",
+            "source": "deep-review-suite",
+            "description": "Awaiting async permission checks is required before destructive actions."
+          },
+          "rule_metrics": [],
+          "rule_summary": null,
+          "warnings": [],
+          "verification_report": {
+            "consensus_mode": "any",
+            "required_votes": 1,
+            "judge_count": 2,
+            "judges": [
+              {
+                "model": "anthropic/claude-sonnet-4.5",
+                "total_comments": 1,
+                "passed_comments": 1,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              },
+              {
+                "model": "anthropic/claude-opus-4.5",
+                "total_comments": 1,
+                "passed_comments": 1,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              }
+            ]
+          },
+          "reproduction_summary": {
+            "confirmed": 1,
+            "rejected": 0,
+            "inconclusive": 0,
+            "checks": [
+              {
+                "comment_id": "cmt_903bb5eb44295f37",
+                "model": "anthropic/claude-4.5-sonnet-20250929",
+                "reproduced": true,
+                "confidence": 0.95,
+                "reason": "The diff shows 'await' was removed from line 2. The current code assigns a Promise to 'allowed' instead of awaiting the result. Since Promises are truthy objects, the condition 'if (!allowed)' will never be true, bypassing the permission check entirely. This is a critical authorization vulnerability.",
+                "agent_activity": {
+                  "total_iterations": 1,
+                  "tool_calls": [
+                    {
+                      "iteration": 0,
+                      "tool_name": "read_file",
+                      "duration_ms": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "failures": [],
+          "dag_traces": [
+            {
+              "graph_name": "review_pipeline",
+              "records": [
+                {
+                  "name": "initialize_services",
+                  "enabled": true,
+                  "duration_ms": 6
+                },
+                {
+                  "name": "build_session",
+                  "enabled": true,
+                  "duration_ms": 1470
+                },
+                {
+                  "name": "prepare_jobs",
+                  "enabled": true,
+                  "duration_ms": 1960
+                },
+                {
+                  "name": "execute_jobs",
+                  "enabled": true,
+                  "duration_ms": 4172
+                },
+                {
+                  "name": "postprocess",
+                  "enabled": true,
+                  "duration_ms": 5899
+                }
+              ]
+            },
+            {
+              "graph_name": "review_postprocess",
+              "records": [
+                {
+                  "name": "specialized_dedup",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "plugin_postprocessors",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "verification",
+                  "enabled": true,
+                  "duration_ms": 5898
+                },
+                {
+                  "name": "semantic_feedback",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "feedback_calibration",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "review_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "enhanced_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "convention_suppression",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "prioritize_findings",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "save_convention_store",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            },
+            {
+              "graph_name": "eval_fixture_execution",
+              "records": [
+                {
+                  "name": "review",
+                  "enabled": true,
+                  "duration_ms": 13522
+                },
+                {
+                  "name": "expectation_matching",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "reproduction_validation",
+                  "enabled": true,
+                  "duration_ms": 2925
+                },
+                {
+                  "name": "comment_count_validation",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "benchmark_metrics",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "artifact_capture",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": "review-depth-authz/python-admin-delete-without-role-check",
+          "suite": "review-depth-authz",
+          "passed": true,
+          "total_comments": 1,
+          "required_matches": 1,
+          "required_total": 1,
+          "benchmark_metrics": {
+            "fixture_name": "review-depth-authz/python-admin-delete-without-role-check",
+            "true_positives": 1,
+            "false_positives": 0,
+            "false_negatives": 0,
+            "true_negatives": 1,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "passed": true,
+            "details": []
+          },
+          "suite_thresholds": {
+            "min_precision": 0.45,
+            "min_recall": 0.35,
+            "min_f1": 0.4,
+            "max_false_positive_rate": 0.45,
+            "min_weighted_score": 0.45
+          },
+          "difficulty": "Hard",
+          "metadata": {
+            "category": "security",
+            "language": "python",
+            "source": "deep-review-suite",
+            "description": "Privilege-gated destructive operations must keep their role checks."
+          },
+          "rule_metrics": [],
+          "rule_summary": null,
+          "warnings": [],
+          "verification_report": {
+            "consensus_mode": "any",
+            "required_votes": 1,
+            "judge_count": 2,
+            "judges": [
+              {
+                "model": "anthropic/claude-sonnet-4.5",
+                "total_comments": 1,
+                "passed_comments": 1,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              },
+              {
+                "model": "anthropic/claude-opus-4.5",
+                "total_comments": 1,
+                "passed_comments": 1,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              }
+            ]
+          },
+          "reproduction_summary": {
+            "confirmed": 1,
+            "rejected": 0,
+            "inconclusive": 0,
+            "checks": [
+              {
+                "comment_id": "cmt_a4e267d5292603bc",
+                "model": "anthropic/claude-4.5-sonnet-20250929",
+                "reproduced": true,
+                "confidence": 0.98,
+                "reason": "Line 2 shows `if request.args.get('as_admin') == '1' or request.user.is_admin:` which allows bypassing the admin check by passing a user-controlled query parameter. Any user can set ?as_admin=1 to pass the authorization check and execute store.delete_user() on line 6, enabling privilege escalation.",
+                "agent_activity": {
+                  "total_iterations": 1,
+                  "tool_calls": [
+                    {
+                      "iteration": 0,
+                      "tool_name": "read_file",
+                      "duration_ms": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "failures": [],
+          "dag_traces": [
+            {
+              "graph_name": "review_pipeline",
+              "records": [
+                {
+                  "name": "initialize_services",
+                  "enabled": true,
+                  "duration_ms": 7
+                },
+                {
+                  "name": "build_session",
+                  "enabled": true,
+                  "duration_ms": 1475
+                },
+                {
+                  "name": "prepare_jobs",
+                  "enabled": true,
+                  "duration_ms": 2036
+                },
+                {
+                  "name": "execute_jobs",
+                  "enabled": true,
+                  "duration_ms": 4629
+                },
+                {
+                  "name": "postprocess",
+                  "enabled": true,
+                  "duration_ms": 7102
+                }
+              ]
+            },
+            {
+              "graph_name": "review_postprocess",
+              "records": [
+                {
+                  "name": "specialized_dedup",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "plugin_postprocessors",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "verification",
+                  "enabled": true,
+                  "duration_ms": 7101
+                },
+                {
+                  "name": "semantic_feedback",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "feedback_calibration",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "review_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "enhanced_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "convention_suppression",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "prioritize_findings",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "save_convention_store",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            },
+            {
+              "graph_name": "eval_fixture_execution",
+              "records": [
+                {
+                  "name": "review",
+                  "enabled": true,
+                  "duration_ms": 15272
+                },
+                {
+                  "name": "expectation_matching",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "reproduction_validation",
+                  "enabled": true,
+                  "duration_ms": 3023
+                },
+                {
+                  "name": "comment_count_validation",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "benchmark_metrics",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "artifact_capture",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run": {
+        "started_at": "2026-03-14T07:48:10.963233+00:00",
+        "fixtures_root": "eval/fixtures",
+        "fixtures_discovered": 21,
+        "fixtures_selected": 4,
+        "label": "eval [anthropic/claude-sonnet-4.5]",
+        "model": "anthropic/claude-sonnet-4.5",
+        "adapter": "openrouter",
+        "provider": "openrouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "filters": {
+          "suite_filters": [],
+          "category_filters": [],
+          "language_filters": [],
+          "fixture_name_filters": [],
+          "max_fixtures": 4
+        },
+        "verification_fail_open": true,
+        "verification_judges": [
+          "anthropic/claude-sonnet-4.5",
+          "anthropic/claude-opus-4.5"
+        ],
+        "verification_consensus_mode": "any",
+        "trend_file": ".diffscope.eval-trend.json",
+        "artifact_dir": "eval/artifacts/dag-runtime-smoke-or/anthropic-claude-sonnet-4-5/repeat-01",
+        "reproduction_validation": true
+      },
+      "fixtures_total": 4,
+      "fixtures_passed": 3,
+      "fixtures_failed": 1,
+      "rule_metrics": [
+        {
+          "rule_id": "async.foreach-no-await",
+          "expected": 0,
+          "predicted": 1,
+          "true_positives": 0,
+          "false_positives": 1,
+          "false_negatives": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        },
+        {
+          "rule_id": "sec.authz.bypass",
+          "expected": 0,
+          "predicted": 1,
+          "true_positives": 0,
+          "false_positives": 1,
+          "false_negatives": 0,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0
+        }
+      ],
+      "rule_summary": {
+        "micro_precision": 0.0,
+        "micro_recall": 0.0,
+        "micro_f1": 0.0,
+        "macro_precision": 0.0,
+        "macro_recall": 0.0,
+        "macro_f1": 0.0
+      },
+      "benchmark_summary": {
+        "fixture_count": 4,
+        "total_tp": 4,
+        "total_fp": 1,
+        "total_fn": 1,
+        "total_tn": 4,
+        "micro_precision": 0.8,
+        "micro_recall": 0.8,
+        "micro_f1": 0.8000001,
+        "macro_precision": 0.875,
+        "macro_recall": 0.875,
+        "macro_f1": 0.875,
+        "weighted_score": 0.8888889
+      },
+      "suite_results": [
+        {
+          "suite": "review-depth-async",
+          "fixture_count": 3,
+          "aggregate": {
+            "fixture_count": 3,
+            "total_tp": 3,
+            "total_fp": 1,
+            "total_fn": 1,
+            "total_tn": 3,
+            "micro_precision": 0.75,
+            "micro_recall": 0.75,
+            "micro_f1": 0.75,
+            "macro_precision": 0.8333333,
+            "macro_recall": 0.8333333,
+            "macro_f1": 0.8333333,
+            "weighted_score": 0.85714287
+          },
+          "thresholds_enforced": true,
+          "threshold_pass": true,
+          "threshold_failures": []
+        },
+        {
+          "suite": "review-depth-authz",
+          "fixture_count": 1,
+          "aggregate": {
+            "fixture_count": 1,
+            "total_tp": 1,
+            "total_fp": 0,
+            "total_fn": 0,
+            "total_tn": 1,
+            "micro_precision": 1.0,
+            "micro_recall": 1.0,
+            "micro_f1": 1.0,
+            "macro_precision": 1.0,
+            "macro_recall": 1.0,
+            "macro_f1": 1.0,
+            "weighted_score": 1.0
+          },
+          "thresholds_enforced": true,
+          "threshold_pass": true,
+          "threshold_failures": []
+        }
+      ],
+      "benchmark_by_category": {
+        "security": {
+          "fixture_count": 2,
+          "total_tp": 2,
+          "total_fp": 0,
+          "total_fn": 0,
+          "total_tn": 2,
+          "micro_precision": 1.0,
+          "micro_recall": 1.0,
+          "micro_f1": 1.0,
+          "macro_precision": 1.0,
+          "macro_recall": 1.0,
+          "macro_f1": 1.0,
+          "weighted_score": 1.0
+        },
+        "bug": {
+          "fixture_count": 2,
+          "total_tp": 2,
+          "total_fp": 1,
+          "total_fn": 1,
+          "total_tn": 2,
+          "micro_precision": 0.6666667,
+          "micro_recall": 0.6666667,
+          "micro_f1": 0.6666667,
+          "macro_precision": 0.75,
+          "macro_recall": 0.75,
+          "macro_f1": 0.75,
+          "weighted_score": 0.75
+        }
+      },
+      "benchmark_by_language": {
+        "typescript": {
+          "fixture_count": 2,
+          "total_tp": 2,
+          "total_fp": 0,
+          "total_fn": 0,
+          "total_tn": 2,
+          "micro_precision": 1.0,
+          "micro_recall": 1.0,
+          "micro_f1": 1.0,
+          "macro_precision": 1.0,
+          "macro_recall": 1.0,
+          "macro_f1": 1.0,
+          "weighted_score": 1.0
+        },
+        "rust": {
+          "fixture_count": 1,
+          "total_tp": 1,
+          "total_fp": 1,
+          "total_fn": 1,
+          "total_tn": 1,
+          "micro_precision": 0.5,
+          "micro_recall": 0.5,
+          "micro_f1": 0.5,
+          "macro_precision": 0.5,
+          "macro_recall": 0.5,
+          "macro_f1": 0.5,
+          "weighted_score": 0.5
+        },
+        "python": {
+          "fixture_count": 1,
+          "total_tp": 1,
+          "total_fp": 0,
+          "total_fn": 0,
+          "total_tn": 1,
+          "micro_precision": 1.0,
+          "micro_recall": 1.0,
+          "micro_f1": 1.0,
+          "macro_precision": 1.0,
+          "macro_recall": 1.0,
+          "macro_f1": 1.0,
+          "weighted_score": 1.0
+        }
+      },
+      "benchmark_by_difficulty": {
+        "expert": {
+          "fixture_count": 1,
+          "total_tp": 1,
+          "total_fp": 0,
+          "total_fn": 0,
+          "total_tn": 1,
+          "micro_precision": 1.0,
+          "micro_recall": 1.0,
+          "micro_f1": 1.0,
+          "macro_precision": 1.0,
+          "macro_recall": 1.0,
+          "macro_f1": 1.0,
+          "weighted_score": 1.0
+        },
+        "hard": {
+          "fixture_count": 3,
+          "total_tp": 3,
+          "total_fp": 1,
+          "total_fn": 1,
+          "total_tn": 3,
+          "micro_precision": 0.75,
+          "micro_recall": 0.75,
+          "micro_f1": 0.75,
+          "macro_precision": 0.8333333,
+          "macro_recall": 0.8333333,
+          "macro_f1": 0.8333333,
+          "weighted_score": 0.8333333
+        }
+      },
+      "suite_comparisons": [],
+      "category_comparisons": [],
+      "language_comparisons": [],
+      "warnings": [],
+      "threshold_failures": [],
+      "results": [
+        {
+          "fixture": "review-depth-async/rust-fire-and-forget-sync-task",
+          "suite": "review-depth-async",
+          "passed": false,
+          "total_comments": 2,
+          "required_matches": 1,
+          "required_total": 2,
+          "benchmark_metrics": {
+            "fixture_name": "review-depth-async/rust-fire-and-forget-sync-task",
+            "true_positives": 1,
+            "false_positives": 1,
+            "false_negatives": 1,
+            "true_negatives": 1,
+            "precision": 0.5,
+            "recall": 0.5,
+            "f1": 0.5,
+            "passed": false,
+            "details": [
+              "Missing expected finding: file=src/sync.rs, line=3, contains_any=fire and forget|spawned task is not awaited|detached task error|background task may fail silently|no join handle|cannot await completion|errors are never returned to the caller|errors can never be returned to the caller|caller always receives ok|function contract is broken|contract violation|return type is misleading, severity=Warning, category=Bug"
+            ]
+          },
+          "suite_thresholds": {
+            "min_precision": 0.45,
+            "min_recall": 0.35,
+            "min_f1": 0.4,
+            "max_false_positive_rate": 0.45,
+            "min_weighted_score": 0.45
+          },
+          "difficulty": "Hard",
+          "metadata": {
+            "category": "bug",
+            "language": "rust",
+            "source": "deep-review-suite",
+            "description": "Async work should not be detached if the caller relies on success or error propagation."
+          },
+          "rule_metrics": [],
+          "rule_summary": null,
+          "warnings": [],
+          "verification_report": {
+            "consensus_mode": "any",
+            "required_votes": 1,
+            "judge_count": 2,
+            "judges": [
+              {
+                "model": "anthropic/claude-sonnet-4.5",
+                "total_comments": 2,
+                "passed_comments": 2,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              },
+              {
+                "model": "anthropic/claude-opus-4.5",
+                "total_comments": 2,
+                "passed_comments": 2,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              }
+            ]
+          },
+          "reproduction_summary": {
+            "confirmed": 2,
+            "rejected": 0,
+            "inconclusive": 0,
+            "checks": [
+              {
+                "comment_id": "cmt_d7a3b96d96994719",
+                "model": "anthropic/claude-4.5-sonnet-20250929",
+                "reproduced": true,
+                "confidence": 0.95,
+                "reason": "The diff shows refresh_user changed from awaiting sync_user (line -2) to spawning it in a background task without awaiting (lines +2-4). The function now returns Ok(()) immediately at line 5 without waiting for the spawned task to complete, breaking the synchronous contract where callers would expect the operation to finish before returning.",
+                "agent_activity": {
+                  "total_iterations": 1,
+                  "tool_calls": [
+                    {
+                      "iteration": 0,
+                      "tool_name": "read_file",
+                      "duration_ms": 0
+                    }
+                  ]
+                }
+              },
+              {
+                "comment_id": "cmt_7eed824bb50e1197",
+                "model": "anthropic/claude-4.5-sonnet-20250929",
+                "reproduced": true,
+                "confidence": 0.95,
+                "reason": "The diff shows `sync_user(user_id).await.unwrap()` inside `tokio::spawn`, which will panic on error in a detached task. The function returns `Ok(())` immediately without waiting for the spawned task, making errors invisible to the caller. This matches the finding's description of silent error discarding and potential background panics.",
+                "agent_activity": {
+                  "total_iterations": 1,
+                  "tool_calls": [
+                    {
+                      "iteration": 0,
+                      "tool_name": "read_file",
+                      "duration_ms": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "artifact_path": "eval/artifacts/dag-runtime-smoke-or/anthropic-claude-sonnet-4-5/repeat-01/fixtures/review-depth-async-rust-fire-and-forget-sync-task.json",
+          "failures": [
+            "Missing expected finding: file=src/sync.rs, line=3, contains_any=fire and forget|spawned task is not awaited|detached task error|background task may fail silently|no join handle|cannot await completion|errors are never returned to the caller|errors can never be returned to the caller|caller always receives ok|function contract is broken|contract violation|return type is misleading, severity=Warning, category=Bug"
+          ],
+          "dag_traces": [
+            {
+              "graph_name": "review_pipeline",
+              "records": [
+                {
+                  "name": "initialize_services",
+                  "enabled": true,
+                  "duration_ms": 7
+                },
+                {
+                  "name": "build_session",
+                  "enabled": true,
+                  "duration_ms": 1665
+                },
+                {
+                  "name": "prepare_jobs",
+                  "enabled": true,
+                  "duration_ms": 2060
+                },
+                {
+                  "name": "execute_jobs",
+                  "enabled": true,
+                  "duration_ms": 7913
+                },
+                {
+                  "name": "postprocess",
+                  "enabled": true,
+                  "duration_ms": 10174
+                }
+              ]
+            },
+            {
+              "graph_name": "review_postprocess",
+              "records": [
+                {
+                  "name": "specialized_dedup",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "plugin_postprocessors",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "verification",
+                  "enabled": true,
+                  "duration_ms": 10173
+                },
+                {
+                  "name": "semantic_feedback",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "feedback_calibration",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "review_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "enhanced_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "convention_suppression",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "prioritize_findings",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "save_convention_store",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            },
+            {
+              "graph_name": "eval_fixture_execution",
+              "records": [
+                {
+                  "name": "review",
+                  "enabled": true,
+                  "duration_ms": 21835
+                },
+                {
+                  "name": "expectation_matching",
+                  "enabled": true,
+                  "duration_ms": 2
+                },
+                {
+                  "name": "reproduction_validation",
+                  "enabled": true,
+                  "duration_ms": 7289
+                },
+                {
+                  "name": "comment_count_validation",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "benchmark_metrics",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "artifact_capture",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": "review-depth-async/typescript-async-foreach-not-awaited",
+          "suite": "review-depth-async",
+          "passed": true,
+          "total_comments": 1,
+          "required_matches": 1,
+          "required_total": 1,
+          "benchmark_metrics": {
+            "fixture_name": "review-depth-async/typescript-async-foreach-not-awaited",
+            "true_positives": 1,
+            "false_positives": 0,
+            "false_negatives": 0,
+            "true_negatives": 1,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "passed": true,
+            "details": []
+          },
+          "suite_thresholds": {
+            "min_precision": 0.45,
+            "min_recall": 0.35,
+            "min_f1": 0.4,
+            "max_false_positive_rate": 0.45,
+            "min_weighted_score": 0.45
+          },
+          "difficulty": "Hard",
+          "metadata": {
+            "category": "bug",
+            "language": "typescript",
+            "source": "deep-review-suite",
+            "description": "Notification fan-out should keep awaiting all spawned async work."
+          },
+          "rule_metrics": [
+            {
+              "rule_id": "async.foreach-no-await",
+              "expected": 0,
+              "predicted": 1,
+              "true_positives": 0,
+              "false_positives": 1,
+              "false_negatives": 0,
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0
+            }
+          ],
+          "rule_summary": {
+            "micro_precision": 0.0,
+            "micro_recall": 0.0,
+            "micro_f1": 0.0,
+            "macro_precision": 0.0,
+            "macro_recall": 0.0,
+            "macro_f1": 0.0
+          },
+          "warnings": [],
+          "verification_report": {
+            "consensus_mode": "any",
+            "required_votes": 1,
+            "judge_count": 2,
+            "judges": [
+              {
+                "model": "anthropic/claude-sonnet-4.5",
+                "total_comments": 1,
+                "passed_comments": 1,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              },
+              {
+                "model": "anthropic/claude-opus-4.5",
+                "total_comments": 1,
+                "passed_comments": 1,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              }
+            ]
+          },
+          "reproduction_summary": {
+            "confirmed": 1,
+            "rejected": 0,
+            "inconclusive": 0,
+            "checks": [
+              {
+                "comment_id": "cmt_8b6d1f6d5183b041",
+                "model": "anthropic/claude-4.5-sonnet-20250929",
+                "reproduced": true,
+                "confidence": 0.98,
+                "reason": "The diff shows a change from `await Promise.all(users.map(...))` to `users.forEach(async (user) => {...})`. The forEach method does not await the async callbacks, so the function returns immediately at line 5 without waiting for sendNotification calls to complete. This is a well-known async/await antipattern where forEach ignores promise returns.",
+                "agent_activity": {
+                  "total_iterations": 1,
+                  "tool_calls": [
+                    {
+                      "iteration": 0,
+                      "tool_name": "read_file",
+                      "duration_ms": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "failures": [],
+          "dag_traces": [
+            {
+              "graph_name": "review_pipeline",
+              "records": [
+                {
+                  "name": "initialize_services",
+                  "enabled": true,
+                  "duration_ms": 6
+                },
+                {
+                  "name": "build_session",
+                  "enabled": true,
+                  "duration_ms": 1461
+                },
+                {
+                  "name": "prepare_jobs",
+                  "enabled": true,
+                  "duration_ms": 2265
+                },
+                {
+                  "name": "execute_jobs",
+                  "enabled": true,
+                  "duration_ms": 4262
+                },
+                {
+                  "name": "postprocess",
+                  "enabled": true,
+                  "duration_ms": 5868
+                }
+              ]
+            },
+            {
+              "graph_name": "review_postprocess",
+              "records": [
+                {
+                  "name": "specialized_dedup",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "plugin_postprocessors",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "verification",
+                  "enabled": true,
+                  "duration_ms": 5868
+                },
+                {
+                  "name": "semantic_feedback",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "feedback_calibration",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "review_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "enhanced_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "convention_suppression",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "prioritize_findings",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "save_convention_store",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            },
+            {
+              "graph_name": "eval_fixture_execution",
+              "records": [
+                {
+                  "name": "review",
+                  "enabled": true,
+                  "duration_ms": 13878
+                },
+                {
+                  "name": "expectation_matching",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "reproduction_validation",
+                  "enabled": true,
+                  "duration_ms": 3418
+                },
+                {
+                  "name": "comment_count_validation",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "benchmark_metrics",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "artifact_capture",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": "review-depth-async/typescript-missing-await-permission-check",
+          "suite": "review-depth-async",
+          "passed": true,
+          "total_comments": 1,
+          "required_matches": 1,
+          "required_total": 1,
+          "benchmark_metrics": {
+            "fixture_name": "review-depth-async/typescript-missing-await-permission-check",
+            "true_positives": 1,
+            "false_positives": 0,
+            "false_negatives": 0,
+            "true_negatives": 1,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "passed": true,
+            "details": []
+          },
+          "suite_thresholds": {
+            "min_precision": 0.45,
+            "min_recall": 0.35,
+            "min_f1": 0.4,
+            "max_false_positive_rate": 0.45,
+            "min_weighted_score": 0.45
+          },
+          "difficulty": "Expert",
+          "metadata": {
+            "category": "security",
+            "language": "typescript",
+            "source": "deep-review-suite",
+            "description": "Awaiting async permission checks is required before destructive actions."
+          },
+          "rule_metrics": [],
+          "rule_summary": null,
+          "warnings": [],
+          "verification_report": {
+            "consensus_mode": "any",
+            "required_votes": 1,
+            "judge_count": 2,
+            "judges": [
+              {
+                "model": "anthropic/claude-sonnet-4.5",
+                "total_comments": 1,
+                "passed_comments": 1,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              },
+              {
+                "model": "anthropic/claude-opus-4.5",
+                "total_comments": 1,
+                "passed_comments": 1,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              }
+            ]
+          },
+          "reproduction_summary": {
+            "confirmed": 1,
+            "rejected": 0,
+            "inconclusive": 0,
+            "checks": [
+              {
+                "comment_id": "cmt_f620a1f7999be976",
+                "model": "anthropic/claude-4.5-sonnet-20250929",
+                "reproduced": true,
+                "confidence": 0.95,
+                "reason": "The diff shows 'await' was removed from line 2. Without await, checkPermission returns a Promise object which is always truthy, bypassing the permission check and allowing unauthorized access to deleteProject.",
+                "agent_activity": {
+                  "total_iterations": 1,
+                  "tool_calls": [
+                    {
+                      "iteration": 0,
+                      "tool_name": "read_file",
+                      "duration_ms": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "failures": [],
+          "dag_traces": [
+            {
+              "graph_name": "review_pipeline",
+              "records": [
+                {
+                  "name": "initialize_services",
+                  "enabled": true,
+                  "duration_ms": 6
+                },
+                {
+                  "name": "build_session",
+                  "enabled": true,
+                  "duration_ms": 1488
+                },
+                {
+                  "name": "prepare_jobs",
+                  "enabled": true,
+                  "duration_ms": 1863
+                },
+                {
+                  "name": "execute_jobs",
+                  "enabled": true,
+                  "duration_ms": 3527
+                },
+                {
+                  "name": "postprocess",
+                  "enabled": true,
+                  "duration_ms": 5351
+                }
+              ]
+            },
+            {
+              "graph_name": "review_postprocess",
+              "records": [
+                {
+                  "name": "specialized_dedup",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "plugin_postprocessors",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "verification",
+                  "enabled": true,
+                  "duration_ms": 5351
+                },
+                {
+                  "name": "semantic_feedback",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "feedback_calibration",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "review_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "enhanced_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "convention_suppression",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "prioritize_findings",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "save_convention_store",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            },
+            {
+              "graph_name": "eval_fixture_execution",
+              "records": [
+                {
+                  "name": "review",
+                  "enabled": true,
+                  "duration_ms": 12250
+                },
+                {
+                  "name": "expectation_matching",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "reproduction_validation",
+                  "enabled": true,
+                  "duration_ms": 2666
+                },
+                {
+                  "name": "comment_count_validation",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "benchmark_metrics",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "artifact_capture",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fixture": "review-depth-authz/python-admin-delete-without-role-check",
+          "suite": "review-depth-authz",
+          "passed": true,
+          "total_comments": 1,
+          "required_matches": 1,
+          "required_total": 1,
+          "benchmark_metrics": {
+            "fixture_name": "review-depth-authz/python-admin-delete-without-role-check",
+            "true_positives": 1,
+            "false_positives": 0,
+            "false_negatives": 0,
+            "true_negatives": 1,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "passed": true,
+            "details": []
+          },
+          "suite_thresholds": {
+            "min_precision": 0.45,
+            "min_recall": 0.35,
+            "min_f1": 0.4,
+            "max_false_positive_rate": 0.45,
+            "min_weighted_score": 0.45
+          },
+          "difficulty": "Hard",
+          "metadata": {
+            "category": "security",
+            "language": "python",
+            "source": "deep-review-suite",
+            "description": "Privilege-gated destructive operations must keep their role checks."
+          },
+          "rule_metrics": [
+            {
+              "rule_id": "sec.authz.bypass",
+              "expected": 0,
+              "predicted": 1,
+              "true_positives": 0,
+              "false_positives": 1,
+              "false_negatives": 0,
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0
+            }
+          ],
+          "rule_summary": {
+            "micro_precision": 0.0,
+            "micro_recall": 0.0,
+            "micro_f1": 0.0,
+            "macro_precision": 0.0,
+            "macro_recall": 0.0,
+            "macro_f1": 0.0
+          },
+          "warnings": [],
+          "verification_report": {
+            "consensus_mode": "any",
+            "required_votes": 1,
+            "judge_count": 2,
+            "judges": [
+              {
+                "model": "anthropic/claude-sonnet-4.5",
+                "total_comments": 1,
+                "passed_comments": 1,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              },
+              {
+                "model": "anthropic/claude-opus-4.5",
+                "total_comments": 1,
+                "passed_comments": 1,
+                "filtered_comments": 0,
+                "abstained_comments": 0,
+                "warnings": []
+              }
+            ]
+          },
+          "reproduction_summary": {
+            "confirmed": 1,
+            "rejected": 0,
+            "inconclusive": 0,
+            "checks": [
+              {
+                "comment_id": "cmt_7de4f31cd1ce3992",
+                "model": "anthropic/claude-4.5-sonnet-20250929",
+                "reproduced": true,
+                "confidence": 0.98,
+                "reason": "The diff clearly shows a new condition `request.args.get('as_admin') == '1'` was added with OR logic, allowing any user to bypass the admin check by passing ?as_admin=1 in the URL. This grants unauthorized access to delete_user() without requiring request.user.is_admin to be true.",
+                "agent_activity": {
+                  "total_iterations": 1,
+                  "tool_calls": [
+                    {
+                      "iteration": 0,
+                      "tool_name": "read_file",
+                      "duration_ms": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "failures": [],
+          "dag_traces": [
+            {
+              "graph_name": "review_pipeline",
+              "records": [
+                {
+                  "name": "initialize_services",
+                  "enabled": true,
+                  "duration_ms": 6
+                },
+                {
+                  "name": "build_session",
+                  "enabled": true,
+                  "duration_ms": 1477
+                },
+                {
+                  "name": "prepare_jobs",
+                  "enabled": true,
+                  "duration_ms": 1958
+                },
+                {
+                  "name": "execute_jobs",
+                  "enabled": true,
+                  "duration_ms": 4769
+                },
+                {
+                  "name": "postprocess",
+                  "enabled": true,
+                  "duration_ms": 6311
+                }
+              ]
+            },
+            {
+              "graph_name": "review_postprocess",
+              "records": [
+                {
+                  "name": "specialized_dedup",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "plugin_postprocessors",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "verification",
+                  "enabled": true,
+                  "duration_ms": 6310
+                },
+                {
+                  "name": "semantic_feedback",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "feedback_calibration",
+                  "enabled": false,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "review_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "enhanced_filters",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "convention_suppression",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "prioritize_findings",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "save_convention_store",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            },
+            {
+              "graph_name": "eval_fixture_execution",
+              "records": [
+                {
+                  "name": "review",
+                  "enabled": true,
+                  "duration_ms": 14537
+                },
+                {
+                  "name": "expectation_matching",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "reproduction_validation",
+                  "enabled": true,
+                  "duration_ms": 2794
+                },
+                {
+                  "name": "comment_count_validation",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "benchmark_metrics",
+                  "enabled": true,
+                  "duration_ms": 0
+                },
+                {
+                  "name": "artifact_capture",
+                  "enabled": true,
+                  "duration_ms": 0
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
