@@ -244,6 +244,72 @@ mod tests {
     }
 
     #[test]
+    fn test_eval_pattern_matches_bug_category_from_async_foreach_signals() {
+        let comment = core::Comment {
+            id: "comment-3f".to_string(),
+            file_path: PathBuf::from("src/notify.ts"),
+            line_number: 2,
+            content: "forEach with async callback does not await promises, so the function returns before all notifications complete and breaks the async contract."
+                .to_string(),
+            rule_id: Some("async.foreach-no-await".to_string()),
+            severity: Severity::Error,
+            category: Category::BestPractice,
+            suggestion: None,
+            confidence: 0.9,
+            code_suggestion: None,
+            tags: vec!["async-await".to_string(), "promise".to_string()],
+            fix_effort: FixEffort::Low,
+            feedback: None,
+        };
+
+        let pattern = EvalPattern {
+            category: Some("bug".to_string()),
+            contains_any: vec![
+                "does not await promises".to_string(),
+                "returns before all notifications complete".to_string(),
+            ],
+            severity: Some("warning".to_string()),
+            tags_any: vec!["async".to_string()],
+            ..Default::default()
+        };
+
+        assert!(pattern.matches(&comment));
+    }
+
+    #[test]
+    fn test_eval_pattern_matches_security_category_from_tenant_isolation_signals() {
+        let comment = core::Comment {
+            id: "comment-3g".to_string(),
+            file_path: PathBuf::from("billing.py"),
+            line_number: 2,
+            content: "Removed tenant_id check from invoice query, allowing users to access invoices from other tenants."
+                .to_string(),
+            rule_id: Some("sec.authz.missing-tenant-check".to_string()),
+            severity: Severity::Error,
+            category: Category::Bug,
+            suggestion: None,
+            confidence: 0.95,
+            code_suggestion: None,
+            tags: vec!["multi-tenancy".to_string(), "authorization".to_string()],
+            fix_effort: FixEffort::Low,
+            feedback: None,
+        };
+
+        let pattern = EvalPattern {
+            category: Some("security".to_string()),
+            contains_any: vec![
+                "other tenants".to_string(),
+                "removed tenant_id check".to_string(),
+            ],
+            severity: Some("error".to_string()),
+            tags_any: vec!["authorization".to_string()],
+            ..Default::default()
+        };
+
+        assert!(pattern.matches(&comment));
+    }
+
+    #[test]
     fn test_eval_pattern_matches_adjacent_line_hint() {
         let comment = core::Comment {
             id: "comment-4".to_string(),

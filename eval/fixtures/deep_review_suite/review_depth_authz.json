@@ -93,6 +93,46 @@
       "max_total": 8,
       "description": "Privilege-gated destructive operations must keep their role checks.",
       "source": "deep-review-suite"
+    },
+    {
+      "name": "python-tenant-scope-removed-from-invoice-lookup",
+      "category": "security",
+      "language": "python",
+      "difficulty": "Hard",
+      "diff_content": "diff --git a/billing.py b/billing.py\nindex 1111111..2222222 100644\n--- a/billing.py\n+++ b/billing.py\n@@ -1,5 +1,5 @@\n def mark_invoice_paid(request, db):\n-    invoice = db.invoices.find_one({\"id\": request.args[\"invoice_id\"], \"tenant_id\": request.user.tenant_id})\n+    invoice = db.invoices.find_one({\"id\": request.args[\"invoice_id\"]})\n     invoice[\"status\"] = \"paid\"\n     db.invoices.save(invoice)\n     return {\"ok\": True}\n",
+      "expected_findings": [
+        {
+          "description": "Invoice lookup is no longer constrained to the caller's tenant.",
+          "severity": "Error",
+          "category": "Security",
+          "file_pattern": "billing.py",
+          "line_hint": 2,
+          "contains_any": [
+            "tenant isolation",
+            "cross-tenant access",
+            "missing tenant filter",
+            "authorization bypass",
+            "idor",
+            "invoice lookup is not scoped",
+            "removed tenant_id check",
+            "other tenants",
+            "broken authorization"
+          ],
+          "tags_any": [
+            "authorization"
+          ]
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Multi-tenant invoice access must stay scoped to the caller's tenant.",
+      "source": "deep-review-suite"
     }
   ]
 }
