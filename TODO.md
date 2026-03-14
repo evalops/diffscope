@@ -76,8 +76,8 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 
 41. [x] Surface pattern repository sources in the Settings UI with validation and defaults.
 42. [x] Surface review rule file sources in the Settings UI instead of requiring config edits by hand.
-43. [ ] Add structured UI editing for custom context notes, files, and scopes.
-44. [ ] Add per-path scoped review instructions in the Settings UI for common repo areas.
+43. [x] Add structured UI editing for custom context notes, files, and scopes.
+44. [x] Add per-path scoped review instructions in the Settings UI for common repo areas.
 45. [ ] Support Jira/Linear issue context ingestion for PR-linked reviews.
 46. [ ] Support document-backed context ingestion for design docs, RFCs, and runbooks.
 47. [ ] Add explicit "intent mismatch" review checks comparing PR changes to ticket acceptance criteria.
@@ -166,4 +166,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Add file-level readiness summaries to the review diff sidebar.
 - [x] Add visible feedback badges on comments so accepted and rejected states are not icon-only.
 - [x] Add a train-the-reviewer callout on review detail when thumbs coverage is low.
+- [x] Add structured custom context and per-path instruction editors to the Settings review context workflow.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.

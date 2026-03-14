@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Save, RefreshCw, Check, ChevronDown, ChevronRight, Eye, EyeOff, GitPullRequestDraft } from 'lucide-react'
+import { Save, RefreshCw, Check, ChevronDown, ChevronRight, Eye, EyeOff, GitPullRequestDraft, Plus, Trash2 } from 'lucide-react'
 import { useConfig, useUpdateConfig, useAgentTools } from '../api/hooks'
 import { api } from '../api/client'
 import { MODEL_PRESETS } from '../lib/models'
@@ -100,6 +100,99 @@ interface PatternRepositoryFormState {
   max_rules?: number
 }
 
+interface PathInstructionFormState {
+  path: string
+  review_instructions: string
+  preserved: Record<string, unknown>
+}
+
+interface CustomContextFormState {
+  scope: string
+  notesText: string
+  filesText: string
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function splitLines(value: string): string[] {
+  return value
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+}
+
+function parsePathInstructionEntries(form: Record<string, unknown>): PathInstructionFormState[] {
+  const paths = asRecord(form.paths)
+
+  return Object.entries(paths).flatMap(([path, candidate]): PathInstructionFormState[] => {
+    const preserved = asRecord(candidate)
+    return [{
+      path,
+      review_instructions: typeof preserved.review_instructions === 'string' ? preserved.review_instructions : '',
+      preserved,
+    }]
+  })
+}
+
+function buildPathsValue(entries: PathInstructionFormState[]): Record<string, unknown> {
+  const next: Record<string, unknown> = {}
+
+  for (const entry of entries) {
+    const path = entry.path.trim()
+    if (!path) continue
+
+    const value = { ...entry.preserved }
+    const reviewInstructions = entry.review_instructions.trim()
+    if (reviewInstructions) value.review_instructions = reviewInstructions
+    else delete value.review_instructions
+
+    if (Object.keys(value).length > 0) {
+      next[path] = value
+    }
+  }
+
+  return next
+}
+
+function parseCustomContextEntries(form: Record<string, unknown>): CustomContextFormState[] {
+  const value = Array.isArray(form.custom_context) ? form.custom_context : []
+
+  return value.flatMap((entry): CustomContextFormState[] => {
+    const candidate = asRecord(entry)
+    return [{
+      scope: typeof candidate.scope === 'string' ? candidate.scope : '',
+      notesText: Array.isArray(candidate.notes)
+        ? candidate.notes.filter((item): item is string => typeof item === 'string').join('\n')
+        : '',
+      filesText: Array.isArray(candidate.files)
+        ? candidate.files.filter((item): item is string => typeof item === 'string').join('\n')
+        : '',
+    }]
+  })
+}
+
+function buildCustomContextValue(entries: CustomContextFormState[]): Record<string, unknown>[] {
+  return entries.flatMap((entry): Record<string, unknown>[] => {
+    const scope = entry.scope.trim()
+    const notes = splitLines(entry.notesText)
+    const files = splitLines(entry.filesText)
+
+    if (!scope && notes.length === 0 && files.length === 0) {
+      return []
+    }
+
+    return [{
+      scope: scope || undefined,
+      notes,
+      files,
+    }]
+  })
+}
+
 type ProvidersMap = Record<string, ProviderFormState>
 
 function getProviders(form: Record<string, unknown>): ProvidersMap {
@@ -153,6 +246,8 @@ export function Settings() {
   const updateConfig = useUpdateConfig()
   const { data: agentTools } = useAgentTools()
   const [form, setForm] = useState<Record<string, unknown>>({})
+  const [pathInstructionEntries, setPathInstructionEntries] = useState<PathInstructionFormState[]>([])
+  const [customContextEntries, setCustomContextEntries] = useState<CustomContextFormState[]>([])
   const [saved, setSaved] = useState(false)
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     const hash = window.location.hash.replace('#', '') as TabId
@@ -170,7 +265,11 @@ export function Settings() {
   const [ghLoading, setGhLoading] = useState(false)
 
   useEffect(() => {
-    if (config) setForm(config)
+    if (config) {
+      setForm(config)
+      setPathInstructionEntries(parsePathInstructionEntries(config))
+      setCustomContextEntries(parseCustomContextEntries(config))
+    }
   }, [config])
 
   useEffect(() => {
@@ -178,7 +277,14 @@ export function Settings() {
   }, [activeTab])
 
   const handleSave = () => {
-    updateConfig.mutate(form, {
+    const nextForm = {
+      ...form,
+      paths: buildPathsValue(pathInstructionEntries),
+      custom_context: buildCustomContextValue(customContextEntries),
+    }
+
+    setForm(nextForm)
+    updateConfig.mutate(nextForm, {
       onSuccess: () => {
         setSaved(true)
         setTimeout(() => setSaved(false), 2000)
@@ -318,6 +424,42 @@ export function Settings() {
 
     const nextRepositories = nextSources.map(source => existingBySource.get(source) ?? { source })
     setForm({ ...form, pattern_repositories: nextRepositories })
+  }
+
+  const updatePathInstructionEntry = (index: number, patch: Partial<PathInstructionFormState>) => {
+    setPathInstructionEntries(entries => entries.map((entry, entryIndex) => (
+      entryIndex === index ? { ...entry, ...patch } : entry
+    )))
+  }
+
+  const addPathInstructionEntry = () => {
+    setPathInstructionEntries(entries => [...entries, {
+      path: '',
+      review_instructions: '',
+      preserved: {},
+    }])
+  }
+
+  const removePathInstructionEntry = (index: number) => {
+    setPathInstructionEntries(entries => entries.filter((_, entryIndex) => entryIndex !== index))
+  }
+
+  const updateCustomContextEntry = (index: number, patch: Partial<CustomContextFormState>) => {
+    setCustomContextEntries(entries => entries.map((entry, entryIndex) => (
+      entryIndex === index ? { ...entry, ...patch } : entry
+    )))
+  }
+
+  const addCustomContextEntry = () => {
+    setCustomContextEntries(entries => [...entries, {
+      scope: '',
+      notesText: '',
+      filesText: '',
+    }])
+  }
+
+  const removeCustomContextEntry = (index: number) => {
+    setCustomContextEntries(entries => entries.filter((_, entryIndex) => entryIndex !== index))
   }
 
   const toggleStringArrayField = (key: string, value: string) => {
@@ -583,6 +725,150 @@ export function Settings() {
               One source per line. Existing scope and rule-pattern settings are preserved for matching sources; newly added sources use default limits until advanced editing is surfaced.
             </p>
           </div>
+          <div className="rounded-lg border border-border-subtle bg-surface p-3">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <div className="text-[12px] font-medium text-text-secondary">Per-path Review Instructions</div>
+                <p className="text-[10px] text-text-muted mt-1">
+                  Override reviewer guidance for common repo areas like `tests/**`, `scripts/**`, or `src/auth/**`.
+                </p>
+              </div>
+              <button
+                onClick={addPathInstructionEntry}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium bg-accent/10 text-accent border border-accent/20 hover:bg-accent/15 transition-colors"
+              >
+                <Plus size={12} />
+                Add path
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {pathInstructionEntries.length === 0 ? (
+                <div className="text-[11px] text-text-muted border border-dashed border-border rounded px-3 py-3">
+                  No path-specific instructions yet.
+                </div>
+              ) : pathInstructionEntries.map((entry, index) => {
+                const preservesExtraFields = Object.keys(entry.preserved).some(key => key !== 'review_instructions')
+
+                return (
+                  <div key={`path-instruction-${index}`} className="rounded border border-border bg-surface-1 p-3 space-y-3">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1 space-y-1.5">
+                        <label className="block text-[11px] font-medium text-text-secondary">Path Pattern</label>
+                        <input
+                          type="text"
+                          value={entry.path}
+                          onChange={(e) => updatePathInstructionEntry(index, { path: e.target.value })}
+                          placeholder="tests/**"
+                          className="w-full bg-surface border border-border rounded px-3 py-1.5 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code"
+                        />
+                      </div>
+                      <button
+                        onClick={() => removePathInstructionEntry(index)}
+                        className="mt-6 p-1.5 rounded text-text-muted hover:text-sev-error hover:bg-sev-error/10 transition-colors"
+                        title="Remove path instruction"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-medium text-text-secondary mb-1">Review Instructions</label>
+                      <textarea
+                        value={entry.review_instructions}
+                        onChange={(e) => updatePathInstructionEntry(index, { review_instructions: e.target.value })}
+                        placeholder="Focus on flaky tests, auth boundaries, and tenant isolation."
+                        rows={3}
+                        className="w-full bg-surface border border-border rounded px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code resize-y"
+                      />
+                      <p className="text-[10px] text-text-muted mt-1">
+                        Applied only when changed files match this path expression.
+                      </p>
+                    </div>
+
+                    {preservesExtraFields && (
+                      <div className="text-[10px] text-text-muted font-code">
+                        Existing focus/context overrides for this path will be preserved.
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border-subtle bg-surface p-3">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <div className="text-[12px] font-medium text-text-secondary">Custom Context</div>
+                <p className="text-[10px] text-text-muted mt-1">
+                  Attach scoped notes and reference files so repeat guidance can be reused without editing raw config.
+                </p>
+              </div>
+              <button
+                onClick={addCustomContextEntry}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-medium bg-accent/10 text-accent border border-accent/20 hover:bg-accent/15 transition-colors"
+              >
+                <Plus size={12} />
+                Add context
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {customContextEntries.length === 0 ? (
+                <div className="text-[11px] text-text-muted border border-dashed border-border rounded px-3 py-3">
+                  No scoped context notes configured yet.
+                </div>
+              ) : customContextEntries.map((entry, index) => (
+                <div key={`custom-context-${index}`} className="rounded border border-border bg-surface-1 p-3 space-y-3">
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 space-y-1.5">
+                      <label className="block text-[11px] font-medium text-text-secondary">Scope</label>
+                      <input
+                        type="text"
+                        value={entry.scope}
+                        onChange={(e) => updateCustomContextEntry(index, { scope: e.target.value })}
+                        placeholder="auth|payments|docs/**"
+                        className="w-full bg-surface border border-border rounded px-3 py-1.5 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code"
+                      />
+                    </div>
+                    <button
+                      onClick={() => removeCustomContextEntry(index)}
+                      className="mt-6 p-1.5 rounded text-text-muted hover:text-sev-error hover:bg-sev-error/10 transition-colors"
+                      title="Remove custom context"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-text-secondary mb-1">Notes</label>
+                    <textarea
+                      value={entry.notesText}
+                      onChange={(e) => updateCustomContextEntry(index, { notesText: e.target.value })}
+                      placeholder={'Prefer tenant-safe queries\nKeep auth audit logs intact'}
+                      rows={3}
+                      className="w-full bg-surface border border-border rounded px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code resize-y"
+                    />
+                    <p className="text-[10px] text-text-muted mt-1">One reusable note per line.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-medium text-text-secondary mb-1">Files</label>
+                    <textarea
+                      value={entry.filesText}
+                      onChange={(e) => updateCustomContextEntry(index, { filesText: e.target.value })}
+                      placeholder={'docs/auth.md\nrfc/tenant-isolation.md'}
+                      rows={3}
+                      className="w-full bg-surface border border-border rounded px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code resize-y"
+                    />
+                    <p className="text-[10px] text-text-muted mt-1">Reference files or globs to pull into the scoped context.</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {field('Max Active Rules', 'max_active_rules', 'number', '32', 'Upper bound for active rule loading across repository-local and shared rule sources')}
         </div>
       </Section>
