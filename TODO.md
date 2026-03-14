@@ -142,7 +142,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 91. [ ] Add eval fixtures for external-context alignment, not just diff-local correctness.
 92. [ ] Add eval fixtures for merge-readiness judgments and unresolved-blocker classification.
 93. [ ] Add eval fixtures for addressed-vs-stale finding lifecycle inference.
-94. [ ] Add eval fixtures for multi-hop graph reasoning across call chains and contract edges.
+94. [x] Add eval fixtures for multi-hop graph reasoning across call chains and contract edges.
 95. [ ] Add eval runs that compare single-pass review against agentic loop review.
 96. [ ] Add production replay evals using anonymized accepted/rejected review outcomes.
 97. [ ] Add leaderboard reporting for reviewer usefulness metrics, not just precision/recall.

@@ -147,6 +147,32 @@ expect:
     }
 
     #[test]
+    fn test_checked_in_repo_regression_contract_edge_fixture_loads_expected_repo_path() {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/repo_regressions/trait_impl_sql_runner.yml");
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("repo regression - trait impl sql runner usage")
+        );
+        assert_eq!(
+            fixtures[0].fixture.repo_path,
+            Some(std::path::PathBuf::from("graph_contract_edge_repo"))
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].file.as_deref(),
+            Some("routes.rs")
+        );
+        assert!(fixtures[0].fixture.expect.must_find[0]
+            .contains_any
+            .iter()
+            .any(|phrase| phrase.contains("trait implementation")));
+    }
+
+    #[test]
     fn test_collect_eval_fixtures_expands_pack_entries_in_sorted_order() {
         let dir = tempdir().unwrap();
         let standard_path = dir.path().join("b-standard.yml");

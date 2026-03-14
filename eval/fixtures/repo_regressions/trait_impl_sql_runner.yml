@@ -1,0 +1,28 @@
+name: repo regression - trait impl sql runner usage
+repo_path: graph_contract_edge_repo
+diff: |
+  diff --git a/routes.rs b/routes.rs
+  index 1111111..2222222 100644
+  --- a/routes.rs
+  +++ b/routes.rs
+  @@ -2,4 +2,5 @@ use crate::request::Request;
+   use crate::search::QueryRunner;
+   
+   pub fn get_profile(runner: &dyn QueryRunner, request: &Request) -> String {
+  -    "ok".to_string()
+  +    let user = runner.find_user(request.name());
+  +    user
+   }
+expect:
+  must_find:
+    - file: routes.rs
+      contains_any:
+        - sql injection
+        - unsafe sql
+        - trait implementation builds sql with user input
+        - user-controlled input reaches the query runner implementation
+        - interpolates user-controlled
+  must_not_find:
+    - contains: style
+  min_total: 1
+  max_total: 12
