@@ -63,4 +63,27 @@ mod tests {
         let cost = estimate_cost_usd("unknown-model-xyz", 1_000_000);
         assert_eq!(cost, FALLBACK_PRICE_PER_M);
     }
+
+    #[test]
+    fn test_estimate_gpt4o_exact() {
+        // 1M tokens × $2.5/M = $2.5
+        assert_eq!(estimate_cost_usd("gpt-4o", 1_000_000), 2.5);
+    }
+
+    #[test]
+    fn test_estimate_case_insensitive() {
+        assert_eq!(estimate_cost_usd("GPT-4O", 1_000_000), 2.5);
+        assert_eq!(estimate_cost_usd("Claude-Opus-4", 2_000_000), 10.0);
+    }
+
+    #[test]
+    fn test_estimate_free_model() {
+        assert_eq!(estimate_cost_usd("nemotron-3-nano", 1_000_000), 0.0);
+    }
+
+    #[test]
+    fn test_estimate_fallback_exact() {
+        let cost = estimate_cost_usd("custom-xyz", 500_000);
+        assert_eq!(cost, 0.5);
+    }
 }

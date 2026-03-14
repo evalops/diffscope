@@ -1219,6 +1219,90 @@ mod tests {
         assert_eq!(stats.by_repo[0].avg_score, Some(9.0_f64));
     }
 
+    #[tokio::test]
+    async fn test_get_event_stats_daily_counts_and_total_cost() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+
+        let day1 = chrono::NaiveDate::from_ymd_opt(2025, 3, 1)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap()
+            .and_utc();
+        let day2 = chrono::NaiveDate::from_ymd_opt(2025, 3, 2)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap()
+            .and_utc();
+
+        let mut s1 = make_session_with_event(
+            "r1",
+            0,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "head",
+            100,
+        );
+        if let Some(ref mut e) = s1.event {
+            e.created_at = Some(day1);
+            e.cost_estimate_usd = Some(1.5);
+        }
+        let mut s2 = make_session_with_event(
+            "r2",
+            1,
+            ReviewStatus::Failed,
+            "review.failed",
+            "gpt-4o",
+            "head",
+            200,
+        );
+        if let Some(ref mut e) = s2.event {
+            e.created_at = Some(day1);
+            e.cost_estimate_usd = Some(0.5);
+        }
+        let mut s3 = make_session_with_event(
+            "r3",
+            2,
+            ReviewStatus::Complete,
+            "review.completed",
+            "gpt-4o",
+            "staged",
+            300,
+        );
+        if let Some(ref mut e) = s3.event {
+            e.created_at = Some(day2);
+            e.cost_estimate_usd = Some(2.0);
+        }
+
+        backend.save_review(&s1).await.unwrap();
+        backend.save_review(&s2).await.unwrap();
+        backend.save_review(&s3).await.unwrap();
+
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+
+        assert_eq!(stats.daily_counts.len(), 2, "expected two distinct days");
+        let day1_entry = stats
+            .daily_counts
+            .iter()
+            .find(|d| d.date == "2025-03-01")
+            .unwrap();
+        assert_eq!(day1_entry.completed, 1);
+        assert_eq!(day1_entry.failed, 1);
+        let day2_entry = stats
+            .daily_counts
+            .iter()
+            .find(|d| d.date == "2025-03-02")
+            .unwrap();
+        assert_eq!(day2_entry.completed, 1);
+        assert_eq!(day2_entry.failed, 0);
+
+        assert_eq!(stats.total_cost_estimate, 4.0, "1.5 + 0.5 + 2.0");
+    }
+
     // ---------------------------------------------------------------
     // 7. is_empty (via internal state check)
     // ---------------------------------------------------------------

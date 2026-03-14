@@ -833,6 +833,36 @@ mod tests {
     }
 
     #[test]
+    fn test_emit_wide_event_payload_has_otel_shape() {
+        let event = ReviewEventBuilder::new("r-otel", "review.completed", "head", "gpt-4o")
+            .duration_ms(100)
+            .build();
+        let timestamp = event
+            .created_at
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        let payload = serde_json::json!({
+            "@timestamp": timestamp,
+            "event": { "name": "review.event", "kind": "event" },
+            "review": event
+        });
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(
+            json.contains("@timestamp"),
+            "OTEL payload must include @timestamp"
+        );
+        assert!(
+            json.contains("\"name\":\"review.event\""),
+            "OTEL payload must include event.name for filtering"
+        );
+        assert!(
+            json.contains("\"review\""),
+            "OTEL payload must include review object"
+        );
+        assert!(json.contains("r-otel"), "payload must contain review_id");
+    }
+
+    #[test]
     fn test_review_event_builder_minimal() {
         let event = ReviewEventBuilder::new("r1", "review.completed", "head", "gpt-4o").build();
         assert_eq!(event.review_id, "r1");
