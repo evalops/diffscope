@@ -21,6 +21,10 @@ pub enum ContextProvenance {
     },
     RelatedTestFile,
     ReverseDependencySummary,
+    SimilarImplementation {
+        similarity: f32,
+        symbol_name: String,
+    },
     SemanticRetrieval {
         similarity: f32,
         symbol_name: String,
@@ -56,6 +60,13 @@ impl ContextProvenance {
         }
     }
 
+    pub fn similar_implementation(similarity: f32, symbol_name: impl Into<String>) -> Self {
+        Self::SimilarImplementation {
+            similarity,
+            symbol_name: symbol_name.into(),
+        }
+    }
+
     pub fn symbol_graph_path(relation_path: Vec<String>, hops: usize, relevance: f32) -> Self {
         Self::SymbolGraphPath {
             relation_path,
@@ -69,6 +80,7 @@ impl ContextProvenance {
             Self::ActiveReviewRules => 120,
             Self::PatternRepositorySource { .. } => 40,
             Self::PatternRepositoryContext { .. } => 35,
+            Self::SimilarImplementation { .. } => 30,
             Self::SemanticRetrieval { .. } => 25,
             Self::SymbolGraphPath {
                 relation_path,
@@ -99,6 +111,7 @@ impl ContextProvenance {
     pub fn verification_bonus(&self) -> i32 {
         match self {
             Self::SymbolGraphPath { .. } => 80,
+            Self::SimilarImplementation { .. } => 35,
             Self::SemanticRetrieval { .. } => 30,
             _ => 0,
         }
@@ -120,6 +133,12 @@ impl ContextProvenance {
             }
             Self::RelatedTestFile => "related test file".to_string(),
             Self::ReverseDependencySummary => "reverse dependency summary".to_string(),
+            Self::SimilarImplementation {
+                similarity,
+                symbol_name,
+            } => {
+                format!("similar implementation (similarity={similarity:.2}, symbol={symbol_name})")
+            }
             Self::SemanticRetrieval {
                 similarity,
                 symbol_name,
@@ -166,6 +185,14 @@ mod tests {
         );
         assert_eq!(provenance.ranking_bonus(), 75);
         assert_eq!(provenance.verification_bonus(), 80);
+
+        let similar = ContextProvenance::similar_implementation(0.91, "validate_user");
+        assert_eq!(
+            similar.to_string(),
+            "similar implementation (similarity=0.91, symbol=validate_user)"
+        );
+        assert_eq!(similar.ranking_bonus(), 30);
+        assert_eq!(similar.verification_bonus(), 35);
     }
 
     #[test]

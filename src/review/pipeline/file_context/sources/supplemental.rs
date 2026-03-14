@@ -46,6 +46,7 @@ pub(in super::super) async fn add_semantic_context(
         &preferred_files,
     )
     .await;
+    append_similar_implementation_trace_records(graph_query_records, &semantic_chunks);
     context_chunks.extend(semantic_chunks);
 }
 
@@ -117,6 +118,40 @@ fn append_semantic_preference_trace_records(
     }
 }
 
+fn append_similar_implementation_trace_records(
+    graph_query_records: &mut Vec<core::dag::DagExecutionRecord>,
+    semantic_chunks: &[core::LLMContextChunk],
+) {
+    let similar_implementation_files = semantic_chunks
+        .iter()
+        .filter(|chunk| {
+            matches!(
+                chunk.provenance.as_ref(),
+                Some(core::ContextProvenance::SimilarImplementation { .. })
+            )
+        })
+        .map(|chunk| chunk.file_path.display().to_string())
+        .collect::<Vec<_>>();
+
+    graph_query_records.push(trace_record(
+        format!(
+            "similar_implementation_matches={}",
+            similar_implementation_files.len()
+        ),
+        0,
+    ));
+    for (index, file_path) in similar_implementation_files
+        .iter()
+        .take(MAX_GRAPH_TRACE_DETAILS)
+        .enumerate()
+    {
+        graph_query_records.push(trace_record(
+            format!("similar_implementation_file[{index}]={file_path}"),
+            0,
+        ));
+    }
+}
+
 pub(in super::super) async fn add_path_context(
     services: &PipelineServices,
     diff: &core::UnifiedDiff,
@@ -153,7 +188,10 @@ pub(in super::super) async fn add_path_context(
 
 #[cfg(test)]
 mod tests {
-    use super::append_semantic_preference_trace_records;
+    use super::{
+        append_semantic_preference_trace_records, append_similar_implementation_trace_records,
+    };
+    use crate::core;
     use std::path::PathBuf;
 
     #[test]
@@ -167,5 +205,36 @@ mod tests {
         assert_eq!(records[0].duration_ms, 7);
         assert_eq!(records[1].name, "semantic_preferred_file[0]=src/auth.rs");
         assert_eq!(records[2].name, "semantic_preferred_file[1]=src/db.rs");
+    }
+
+    #[test]
+    fn similar_implementation_trace_records_capture_explicit_matches() {
+        let chunks = vec![
+            core::LLMContextChunk::reference(
+                PathBuf::from("src/auth_guard.rs"),
+                "Similar implementation".to_string(),
+            )
+            .with_provenance(core::ContextProvenance::similar_implementation(
+                0.92,
+                "validate_admin",
+            )),
+            core::LLMContextChunk::reference(
+                PathBuf::from("src/other.rs"),
+                "Semantic match".to_string(),
+            )
+            .with_provenance(core::ContextProvenance::semantic_retrieval(
+                0.81,
+                "sanitize_name",
+            )),
+        ];
+
+        let mut records = Vec::new();
+        append_similar_implementation_trace_records(&mut records, &chunks);
+
+        assert_eq!(records[0].name, "similar_implementation_matches=1");
+        assert_eq!(
+            records[1].name,
+            "similar_implementation_file[0]=src/auth_guard.rs"
+        );
     }
 }

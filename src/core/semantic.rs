@@ -265,38 +265,125 @@ pub async fn semantic_context_for_diff(
     );
     let preferred_file_ranks = build_preferred_file_ranks(preferred_files);
 
-    let mut seen = HashSet::new();
-    let mut chunks = Vec::new();
+    build_semantic_context_chunks(matches, limit, &preferred_file_ranks)
+}
+
+fn build_semantic_context_chunks(
+    matches: Vec<SemanticMatch>,
+    limit: usize,
+    preferred_file_ranks: &HashMap<PathBuf, usize>,
+) -> Vec<LLMContextChunk> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let similar_implementations = select_similar_implementation_matches(&matches, limit.min(2));
+    let mut seen = similar_implementations
+        .iter()
+        .map(|semantic_match| semantic_match.chunk.key.clone())
+        .collect::<HashSet<_>>();
+    let mut chunks = similar_implementations
+        .into_iter()
+        .map(|semantic_match| {
+            build_similar_implementation_chunk(semantic_match, preferred_file_ranks)
+        })
+        .collect::<Vec<_>>();
+
     for semantic_match in matches {
         if !seen.insert(semantic_match.chunk.key.clone()) {
             continue;
         }
-        let ranking_note = preferred_file_ranks
-            .get(&semantic_match.chunk.file_path)
-            .map(|rank| format!(", graph-ranked file #{}", rank + 1))
-            .unwrap_or_default();
-        let content = format!(
-            "Semantic match (similarity {:.2}{})\nSymbol: {}\nSummary: {}\nCode:\n{}",
-            semantic_match.similarity,
-            ranking_note,
-            semantic_match.chunk.symbol_name,
-            semantic_match.chunk.summary,
-            semantic_match.chunk.code_excerpt,
-        );
-        chunks.push(
-            LLMContextChunk::reference(semantic_match.chunk.file_path.clone(), content)
-                .with_line_range(semantic_match.chunk.line_range)
-                .with_provenance(ContextProvenance::semantic_retrieval(
-                    semantic_match.similarity,
-                    semantic_match.chunk.symbol_name.clone(),
-                )),
-        );
+        chunks.push(build_semantic_match_chunk(
+            &semantic_match,
+            preferred_file_ranks,
+        ));
         if chunks.len() >= limit {
             break;
         }
     }
 
     chunks
+}
+
+fn select_similar_implementation_matches(
+    matches: &[SemanticMatch],
+    limit: usize,
+) -> Vec<&SemanticMatch> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let mut seen_files = HashSet::new();
+    let mut selected = Vec::new();
+
+    for semantic_match in matches {
+        if !seen_files.insert(semantic_match.chunk.file_path.clone()) {
+            continue;
+        }
+
+        selected.push(semantic_match);
+        if selected.len() >= limit {
+            break;
+        }
+    }
+
+    selected
+}
+
+fn build_semantic_match_chunk(
+    semantic_match: &SemanticMatch,
+    preferred_file_ranks: &HashMap<PathBuf, usize>,
+) -> LLMContextChunk {
+    let ranking_note =
+        graph_ranked_file_note(preferred_file_ranks, &semantic_match.chunk.file_path);
+    let content = format!(
+        "Semantic match (similarity {:.2}{})\nSymbol: {}\nSummary: {}\nCode:\n{}",
+        semantic_match.similarity,
+        ranking_note,
+        semantic_match.chunk.symbol_name,
+        semantic_match.chunk.summary,
+        semantic_match.chunk.code_excerpt,
+    );
+
+    LLMContextChunk::reference(semantic_match.chunk.file_path.clone(), content)
+        .with_line_range(semantic_match.chunk.line_range)
+        .with_provenance(ContextProvenance::semantic_retrieval(
+            semantic_match.similarity,
+            semantic_match.chunk.symbol_name.clone(),
+        ))
+}
+
+fn build_similar_implementation_chunk(
+    semantic_match: &SemanticMatch,
+    preferred_file_ranks: &HashMap<PathBuf, usize>,
+) -> LLMContextChunk {
+    let ranking_note =
+        graph_ranked_file_note(preferred_file_ranks, &semantic_match.chunk.file_path);
+    let content = format!(
+        "Similar implementation (similarity {:.2}{})\nCompare this implementation for repeated patterns or divergences.\nSymbol: {}\nSummary: {}\nCode:\n{}",
+        semantic_match.similarity,
+        ranking_note,
+        semantic_match.chunk.symbol_name,
+        semantic_match.chunk.summary,
+        semantic_match.chunk.code_excerpt,
+    );
+
+    LLMContextChunk::reference(semantic_match.chunk.file_path.clone(), content)
+        .with_line_range(semantic_match.chunk.line_range)
+        .with_provenance(ContextProvenance::similar_implementation(
+            semantic_match.similarity,
+            semantic_match.chunk.symbol_name.clone(),
+        ))
+}
+
+fn graph_ranked_file_note(
+    preferred_file_ranks: &HashMap<PathBuf, usize>,
+    file_path: &Path,
+) -> String {
+    preferred_file_ranks
+        .get(file_path)
+        .map(|rank| format!(", graph-ranked file #{}", rank + 1))
+        .unwrap_or_default()
 }
 
 #[allow(dead_code)]
@@ -662,7 +749,11 @@ mod tests {
 
         let chunks = semantic_context_for_diff(&index, &diff, None, None, 3, 0.1, &[]).await;
         assert_eq!(chunks.len(), 1);
-        assert!(chunks[0].content.contains("Semantic match"));
+        assert!(chunks[0].content.contains("Similar implementation"));
+        assert!(matches!(
+            chunks[0].provenance,
+            Some(ContextProvenance::SimilarImplementation { .. })
+        ));
     }
 
     #[test]
@@ -731,5 +822,73 @@ mod tests {
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].chunk.file_path, PathBuf::from("src/graph.rs"));
         assert_eq!(matches[1].chunk.file_path, PathBuf::from("src/other.rs"));
+    }
+
+    #[test]
+    fn build_semantic_context_chunks_highlights_similar_implementations_first() {
+        let matches = vec![
+            SemanticMatch {
+                chunk: SemanticChunk {
+                    key: "src/auth_guard.rs:validate:1:5".to_string(),
+                    file_path: PathBuf::from("src/auth_guard.rs"),
+                    symbol_name: "validate_admin".to_string(),
+                    line_range: (1, 5),
+                    summary: "Auth guard before a query".to_string(),
+                    embedding_text: "auth guard before a query".to_string(),
+                    code_excerpt: "fn validate_admin() {}".to_string(),
+                    embedding: local_hash_embedding("auth guard before a query"),
+                    content_hash: "guard".to_string(),
+                },
+                similarity: 0.93,
+            },
+            SemanticMatch {
+                chunk: SemanticChunk {
+                    key: "src/member_guard.rs:validate:1:5".to_string(),
+                    file_path: PathBuf::from("src/member_guard.rs"),
+                    symbol_name: "validate_member".to_string(),
+                    line_range: (1, 5),
+                    summary: "Member auth guard before a query".to_string(),
+                    embedding_text: "member auth guard before a query".to_string(),
+                    code_excerpt: "fn validate_member() {}".to_string(),
+                    embedding: local_hash_embedding("member auth guard before a query"),
+                    content_hash: "member".to_string(),
+                },
+                similarity: 0.89,
+            },
+            SemanticMatch {
+                chunk: SemanticChunk {
+                    key: "src/sanitize.rs:sanitize:1:5".to_string(),
+                    file_path: PathBuf::from("src/sanitize.rs"),
+                    symbol_name: "sanitize_name".to_string(),
+                    line_range: (1, 5),
+                    summary: "Sanitize a username before building a query".to_string(),
+                    embedding_text: "sanitize a username before building a query".to_string(),
+                    code_excerpt: "fn sanitize_name() {}".to_string(),
+                    embedding: local_hash_embedding("sanitize a username before building a query"),
+                    content_hash: "sanitize".to_string(),
+                },
+                similarity: 0.82,
+            },
+        ];
+
+        let chunks = build_semantic_context_chunks(
+            matches,
+            3,
+            &build_preferred_file_ranks(&[PathBuf::from("src/auth_guard.rs")]),
+        );
+
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks[0].content.contains("Similar implementation"));
+        assert!(chunks[1].content.contains("Similar implementation"));
+        assert!(chunks[2].content.contains("Semantic match"));
+        assert!(matches!(
+            chunks[0].provenance,
+            Some(ContextProvenance::SimilarImplementation { .. })
+        ));
+        assert!(matches!(
+            chunks[2].provenance,
+            Some(ContextProvenance::SemanticRetrieval { .. })
+        ));
+        assert!(chunks[0].content.contains("graph-ranked file #1"));
     }
 }
