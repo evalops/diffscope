@@ -24,6 +24,11 @@ const READINESS_LABELS: Record<MergeReadiness, string> = {
 export function PrReadinessSummary({ readiness, isLoading = false, error, onOpenReview }: Props) {
   const latestReview = readiness?.latest_review
   const summary = latestReview?.summary
+  const isIncrementalReview = Boolean(
+    readiness?.current_head_sha
+    && latestReview?.reviewed_head_sha
+    && readiness.current_head_sha !== latestReview.reviewed_head_sha,
+  )
 
   return (
     <div className="mb-4 rounded-lg border border-border-subtle bg-surface p-3">
@@ -64,6 +69,17 @@ export function PrReadinessSummary({ readiness, isLoading = false, error, onOpen
         </div>
       ) : (
         <>
+          {isIncrementalReview && readiness?.current_head_sha && latestReview?.reviewed_head_sha && (
+            <div className="mb-3 rounded border border-accent/20 bg-accent/5 p-3">
+              <div className="text-[11px] font-medium text-accent mb-1">Incremental review coverage</div>
+              <div className="text-[11px] text-text-secondary">
+                DiffScope last reviewed PR head <span className="font-code text-text-primary">{shortSha(latestReview.reviewed_head_sha)}</span>,
+                but GitHub is now at <span className="font-code text-text-primary">{shortSha(readiness.current_head_sha)}</span>.
+                This readiness summary does not include the newer delta yet.
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <span className={`text-[10px] px-2 py-0.5 rounded font-code ${READINESS_STYLES[summary.merge_readiness]}`}>
               {READINESS_LABELS[summary.merge_readiness]}

@@ -67,11 +67,19 @@ describe('PrReadinessSummary', () => {
     render(<PrReadinessSummary readiness={makeSnapshot()} />)
 
     expect(screen.getByText('Needs Attention')).toBeInTheDocument()
+    expect(screen.getByText('Incremental review coverage')).toBeInTheDocument()
+    expect(screen.getByText(/does not include the newer delta yet/i)).toBeInTheDocument()
     expect(screen.getByText('Open blockers')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
     expect(screen.getByText('2 blocking findings remain open.')).toBeInTheDocument()
-    expect(screen.getByText('0123456789ab')).toBeInTheDocument()
-    expect(screen.getByText('fedcba987654')).toBeInTheDocument()
+    expect(screen.getAllByText('0123456789ab')).toHaveLength(2)
+    expect(screen.getAllByText('fedcba987654')).toHaveLength(2)
+  })
+
+  it('does not show the incremental callout when the latest review matches the current head', () => {
+    render(<PrReadinessSummary readiness={makeSnapshot({ current_head_sha: 'fedcba9876543210' })} />)
+
+    expect(screen.queryByText('Incremental review coverage')).not.toBeInTheDocument()
   })
 
   it('opens the latest review when requested', async () => {
