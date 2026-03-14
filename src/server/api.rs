@@ -153,6 +153,94 @@ pub struct AnalyticsTrendsResponse {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LearnedRuleResponse {
+    #[serde(default)]
+    pub pattern_text: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub accepted_count: usize,
+    #[serde(default)]
+    pub rejected_count: usize,
+    #[serde(default)]
+    pub total_observations: usize,
+    #[serde(default)]
+    pub acceptance_rate: f32,
+    #[serde(default)]
+    pub confidence: f32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_patterns: Vec<String>,
+    #[serde(default)]
+    pub first_seen: String,
+    #[serde(default)]
+    pub last_seen: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LearnedRulesResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub convention_store_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boost: Vec<LearnedRuleResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suppress: Vec<LearnedRuleResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AttentionGapSnapshotResponse {
+    #[serde(default)]
+    pub timestamp: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_category: Vec<FeedbackEvalTrendGapResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_rule: Vec<FeedbackEvalTrendGapResponse>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AttentionGapsResponse {
+    pub feedback_eval_trend_path: String,
+    #[serde(default)]
+    pub latest: AttentionGapSnapshotResponse,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RejectedPatternResponse {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub accepted: usize,
+    #[serde(default)]
+    pub rejected: usize,
+    #[serde(default)]
+    pub total: usize,
+    #[serde(default)]
+    pub acceptance_rate: f32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RejectedPatternsResponse {
+    pub feedback_path: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_category: Vec<RejectedPatternResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_rule: Vec<RejectedPatternResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub by_file_pattern: Vec<RejectedPatternResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
 #[derive(Deserialize)]
 pub struct ListReviewsParams {
     pub page: Option<usize>,
@@ -253,6 +341,74 @@ pub async fn get_analytics_trends(
     })
 }
 
+pub async fn get_analytics_learned_rules(
+    State(state): State<Arc<AppState>>,
+) -> Json<LearnedRulesResponse> {
+    let config = state.config.read().await.clone();
+    let mut warnings = Vec::new();
+    let Some(convention_store_path) = resolve_convention_store_path(&config) else {
+        warnings.push("Failed to resolve convention store path".to_string());
+        return Json(LearnedRulesResponse {
+            convention_store_path: None,
+            boost: Vec::new(),
+            suppress: Vec::new(),
+            warnings,
+        });
+    };
+
+    let convention_store = load_optional_json_artifact::<ConventionStore>(
+        &convention_store_path,
+        "convention store",
+        &mut warnings,
+    );
+
+    Json(LearnedRulesResponse {
+        convention_store_path: Some(convention_store_path.display().to_string()),
+        boost: summarize_learned_rule_patterns(convention_store.boost_patterns()),
+        suppress: summarize_learned_rule_patterns(convention_store.suppression_patterns()),
+        warnings,
+    })
+}
+
+pub async fn get_analytics_attention_gaps(
+    State(state): State<Arc<AppState>>,
+) -> Json<AttentionGapsResponse> {
+    let config = state.config.read().await.clone();
+    let mut warnings = Vec::new();
+    let feedback_eval_trend = load_optional_json_artifact::<FeedbackEvalTrendResponse>(
+        &config.feedback_eval_trend_path,
+        "feedback-eval trend",
+        &mut warnings,
+    );
+
+    Json(AttentionGapsResponse {
+        feedback_eval_trend_path: config.feedback_eval_trend_path.display().to_string(),
+        latest: latest_attention_gap_snapshot(&feedback_eval_trend),
+        warnings,
+    })
+}
+
+pub async fn get_analytics_rejected_patterns(
+    State(state): State<Arc<AppState>>,
+) -> Json<RejectedPatternsResponse> {
+    let config = state.config.read().await.clone();
+    let mut warnings = Vec::new();
+    let feedback_store = load_optional_json_artifact::<crate::review::FeedbackStore>(
+        &config.feedback_path,
+        "feedback store",
+        &mut warnings,
+    );
+    let (by_category, by_rule, by_file_pattern) = summarize_rejected_patterns(&feedback_store);
+
+    Json(RejectedPatternsResponse {
+        feedback_path: config.feedback_path.display().to_string(),
+        by_category,
+        by_rule,
+        by_file_pattern,
+        warnings,
+    })
+}
+
 fn load_optional_json_artifact<T>(
     path: &std::path::Path,
     label: &str,
@@ -285,6 +441,131 @@ where
             T::default()
         }
     }
+}
+
+fn resolve_convention_store_path(config: &crate::config::Config) -> Option<std::path::PathBuf> {
+    config
+        .convention_store_path
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            dirs::data_local_dir().map(|dir| dir.join("diffscope").join("conventions.json"))
+        })
+}
+
+fn summarize_learned_rule_patterns(
+    patterns: Vec<&crate::core::convention_learner::ConventionPattern>,
+) -> Vec<LearnedRuleResponse> {
+    let mut summaries = patterns
+        .into_iter()
+        .map(|pattern| LearnedRuleResponse {
+            pattern_text: pattern.pattern_text.clone(),
+            category: pattern.category.clone(),
+            accepted_count: pattern.accepted_count,
+            rejected_count: pattern.rejected_count,
+            total_observations: pattern.total_observations(),
+            acceptance_rate: pattern.acceptance_rate(),
+            confidence: pattern.confidence(),
+            file_patterns: pattern.file_patterns.clone(),
+            first_seen: pattern.first_seen.clone(),
+            last_seen: pattern.last_seen.clone(),
+        })
+        .collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .total_observations
+            .cmp(&left.total_observations)
+            .then_with(|| right.confidence.total_cmp(&left.confidence))
+            .then_with(|| left.pattern_text.cmp(&right.pattern_text))
+    });
+    summaries
+}
+
+fn latest_attention_gap_snapshot(
+    trend: &FeedbackEvalTrendResponse,
+) -> AttentionGapSnapshotResponse {
+    trend
+        .entries
+        .iter()
+        .rev()
+        .find(|entry| {
+            !entry.attention_by_category.is_empty() || !entry.attention_by_rule.is_empty()
+        })
+        .map(|entry| AttentionGapSnapshotResponse {
+            timestamp: entry.timestamp.clone(),
+            eval_label: entry.eval_label.clone(),
+            eval_model: entry.eval_model.clone(),
+            eval_provider: entry.eval_provider.clone(),
+            by_category: entry.attention_by_category.clone(),
+            by_rule: entry.attention_by_rule.clone(),
+        })
+        .unwrap_or_default()
+}
+
+fn summarize_rejected_patterns(
+    store: &crate::review::FeedbackStore,
+) -> (
+    Vec<RejectedPatternResponse>,
+    Vec<RejectedPatternResponse>,
+    Vec<RejectedPatternResponse>,
+) {
+    let by_category = sort_rejected_pattern_summaries(
+        store
+            .by_category
+            .iter()
+            .filter(|(_, stats)| stats.rejected > 0)
+            .map(|(name, stats)| RejectedPatternResponse {
+                name: name.clone(),
+                accepted: stats.accepted,
+                rejected: stats.rejected,
+                total: stats.total(),
+                acceptance_rate: stats.acceptance_rate(),
+            })
+            .collect(),
+    );
+    let by_rule = sort_rejected_pattern_summaries(
+        store
+            .by_rule
+            .iter()
+            .filter(|(_, stats)| stats.rejected > 0)
+            .map(|(name, stats)| RejectedPatternResponse {
+                name: name.clone(),
+                accepted: stats.accepted,
+                rejected: stats.rejected,
+                total: stats.total(),
+                acceptance_rate: stats.acceptance_rate(),
+            })
+            .collect(),
+    );
+    let by_file_pattern = sort_rejected_pattern_summaries(
+        store
+            .by_file_pattern
+            .iter()
+            .filter(|(_, stats)| stats.rejected > 0)
+            .map(|(name, stats)| RejectedPatternResponse {
+                name: name.clone(),
+                accepted: stats.accepted,
+                rejected: stats.rejected,
+                total: stats.total(),
+                acceptance_rate: stats.acceptance_rate(),
+            })
+            .collect(),
+    );
+
+    (by_category, by_rule, by_file_pattern)
+}
+
+fn sort_rejected_pattern_summaries(
+    mut summaries: Vec<RejectedPatternResponse>,
+) -> Vec<RejectedPatternResponse> {
+    summaries.sort_by(|left, right| {
+        right
+            .rejected
+            .cmp(&left.rejected)
+            .then_with(|| right.total.cmp(&left.total))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    summaries
 }
 
 // === Handlers ===
@@ -3713,5 +3994,129 @@ mod tests {
             groups.iter().map(|group| group.count).collect::<Vec<_>>(),
             vec![1, 1, 1]
         );
+    }
+
+    #[test]
+    fn test_summarize_learned_rule_patterns_orders_by_total_observations() {
+        let mut store = ConventionStore::new();
+
+        for _ in 0..3 {
+            store.record_feedback(
+                "Prefer iterator adapters over manual loops",
+                "BestPractice",
+                true,
+                Some("*.rs"),
+                "2024-01-01T00:00:00Z",
+            );
+        }
+        for _ in 0..4 {
+            store.record_feedback(
+                "Use the builder pattern for complex config",
+                "BestPractice",
+                true,
+                Some("*.rs"),
+                "2024-01-02T00:00:00Z",
+            );
+        }
+
+        let summaries = summarize_learned_rule_patterns(store.boost_patterns());
+
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].total_observations, 4);
+        assert!(summaries[0].pattern_text.contains("builder pattern"));
+        assert_eq!(
+            summaries[1].pattern_text,
+            "prefer iterator adapters over manual loops"
+        );
+        assert!(summaries[0].confidence >= summaries[1].confidence);
+    }
+
+    #[test]
+    fn test_latest_attention_gap_snapshot_skips_newer_empty_entries() {
+        let trend = FeedbackEvalTrendResponse {
+            entries: vec![
+                FeedbackEvalTrendEntryResponse {
+                    timestamp: "2024-01-01T00:00:00Z".to_string(),
+                    eval_label: Some("weekly-batch".to_string()),
+                    eval_model: Some("frontier".to_string()),
+                    eval_provider: Some("anthropic".to_string()),
+                    attention_by_category: vec![FeedbackEvalTrendGapResponse {
+                        name: "Security".to_string(),
+                        feedback_total: 8,
+                        high_confidence_total: 3,
+                        high_confidence_acceptance_rate: 0.2,
+                        eval_score: Some(0.6),
+                        gap: Some(-0.4),
+                    }],
+                    attention_by_rule: vec![FeedbackEvalTrendGapResponse {
+                        name: "sec.sql.injection".to_string(),
+                        feedback_total: 5,
+                        high_confidence_total: 2,
+                        high_confidence_acceptance_rate: 0.1,
+                        eval_score: Some(0.5),
+                        gap: Some(-0.4),
+                    }],
+                    ..Default::default()
+                },
+                FeedbackEvalTrendEntryResponse {
+                    timestamp: "2024-01-02T00:00:00Z".to_string(),
+                    ..Default::default()
+                },
+            ],
+        };
+
+        let snapshot = latest_attention_gap_snapshot(&trend);
+
+        assert_eq!(snapshot.timestamp, "2024-01-01T00:00:00Z");
+        assert_eq!(snapshot.eval_label.as_deref(), Some("weekly-batch"));
+        assert_eq!(snapshot.by_category.len(), 1);
+        assert_eq!(snapshot.by_category[0].name, "Security");
+        assert_eq!(snapshot.by_rule.len(), 1);
+        assert_eq!(snapshot.by_rule[0].name, "sec.sql.injection");
+    }
+
+    #[test]
+    fn test_summarize_rejected_patterns_orders_by_rejected_count() {
+        let mut store = crate::review::FeedbackStore::default();
+
+        for _ in 0..2 {
+            store.record_feedback("Style", Some("*.rs"), false);
+        }
+        for _ in 0..4 {
+            store.record_feedback("Bug", Some("*.ts"), false);
+        }
+        for _ in 0..3 {
+            store.record_rule_feedback_patterns("style.rule", &["*.rs"], false);
+        }
+        for _ in 0..1 {
+            store.record_rule_feedback_patterns("bug.rule", &["*.ts"], false);
+        }
+
+        let (by_category, by_rule, by_file_pattern) = summarize_rejected_patterns(&store);
+
+        assert_eq!(
+            by_category
+                .iter()
+                .map(|summary| summary.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Bug", "Style"]
+        );
+        assert_eq!(by_category[0].rejected, 4);
+        assert_eq!(
+            by_rule
+                .iter()
+                .map(|summary| summary.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["style.rule", "bug.rule"]
+        );
+        assert_eq!(by_rule[0].rejected, 3);
+        assert_eq!(
+            by_file_pattern
+                .iter()
+                .map(|summary| summary.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["*.ts", "*.rs"]
+        );
+        assert_eq!(by_file_pattern[0].rejected, 4);
     }
 }

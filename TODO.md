@@ -115,7 +115,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 
 71. [x] Expose unresolved/resolved comment search through the HTTP API.
 72. [x] Expose PR readiness through the HTTP API for CI and agent integrations.
-73. [ ] Add API endpoints to fetch learned rules, attention gaps, and top rejected patterns.
+73. [x] Add API endpoints to fetch learned rules, attention gaps, and top rejected patterns.
 74. [x] Add machine-friendly APIs to fetch findings grouped by severity, file, and lifecycle state.
 75. [ ] Add a "trigger re-review" API that reuses existing PR metadata and loop policy.
 76. [x] Add APIs for comment resolution and lifecycle updates, not just thumbs.
@@ -171,4 +171,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Close TODO drift for existing comment lifecycle update APIs now that read and write surfaces are both shipped.
 - [x] Make PR readiness explicitly call out incremental review coverage when newer commits were not part of the latest pass.
 - [x] Add grouped PR findings API responses for severity, file, and lifecycle automation workflows.
+- [x] Add learned-rules, attention-gap, and rejected-pattern analytics API endpoints for automation consumers.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.
