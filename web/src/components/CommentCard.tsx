@@ -10,17 +10,25 @@ const severityBorder: Record<string, string> = {
   Suggestion: 'border-l-sev-suggestion',
 }
 
+const lifecycleBadge: Record<string, string> = {
+  Open: 'bg-accent/10 text-accent border border-accent/20',
+  Resolved: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
+  Dismissed: 'bg-text-muted/10 text-text-muted border border-border',
+}
+
 interface Props {
   comment: Comment
   variant?: 'card' | 'inline'
   onFeedback?: (action: 'accept' | 'reject') => void
+  onLifecycleChange?: (status: 'open' | 'resolved' | 'dismissed') => void
 }
 
-export function CommentCard({ comment, variant = 'card', onFeedback }: Props) {
+export function CommentCard({ comment, variant = 'card', onFeedback, onLifecycleChange }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const accepted = comment.feedback === 'accept'
   const rejected = comment.feedback === 'reject'
+  const lifecycle = comment.status ?? 'Open'
 
   const copyCode = () => {
     if (comment.code_suggestion?.suggested_code) {
@@ -43,6 +51,9 @@ export function CommentCard({ comment, variant = 'card', onFeedback }: Props) {
         <span className="text-[11px] text-text-muted">{comment.category}</span>
         <span className="text-[10px] text-text-muted/60">
           {Math.round(comment.confidence * 100)}%
+        </span>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${lifecycleBadge[lifecycle] ?? lifecycleBadge.Open}`}>
+          {lifecycle}
         </span>
 
         <div className="ml-auto flex items-center gap-1">
@@ -101,6 +112,38 @@ export function CommentCard({ comment, variant = 'card', onFeedback }: Props) {
                 {tag}
               </span>
             ))}
+          </div>
+        )}
+
+        {onLifecycleChange && (
+          <div className="mt-3 pt-2 border-t border-border-subtle flex items-center gap-2">
+            <span className="text-[10px] text-text-muted font-code">Workflow</span>
+            {lifecycle === 'Open' ? (
+              <>
+                <button
+                  onClick={() => onLifecycleChange('resolved')}
+                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20 hover:bg-sev-suggestion/15 transition-colors"
+                  title="Mark finding as resolved"
+                >
+                  Resolve
+                </button>
+                <button
+                  onClick={() => onLifecycleChange('dismissed')}
+                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-surface-3 text-text-muted border border-border hover:text-text-primary transition-colors"
+                  title="Dismiss finding from merge readiness"
+                >
+                  Dismiss
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => onLifecycleChange('open')}
+                className="px-2 py-0.5 rounded text-[10px] font-medium bg-accent/10 text-accent border border-accent/20 hover:bg-accent/15 transition-colors"
+                title="Reopen finding"
+              >
+                Reopen
+              </button>
+            )}
           </div>
         )}
       </div>

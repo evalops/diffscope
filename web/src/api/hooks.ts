@@ -52,6 +52,23 @@ export function useSubmitFeedback(reviewId: string) {
   })
 }
 
+export function useUpdateCommentLifecycle(reviewId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      commentId,
+      status,
+    }: {
+      commentId: string
+      status: import('./types').CommentLifecycleAction
+    }) => api.updateCommentLifecycle(reviewId, commentId, status),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['review', reviewId] })
+      queryClient.invalidateQueries({ queryKey: ['reviews'] })
+    },
+  })
+}
+
 export function useDoctor() {
   return useQuery({
     queryKey: ['doctor'],

@@ -32,7 +32,8 @@ use tags::extract_tags;
 
 pub use identity::compute_comment_id;
 pub use types::{
-    Category, CodeSuggestion, Comment, FixEffort, RawComment, ReviewSummary, Severity,
+    Category, CodeSuggestion, Comment, CommentStatus, FixEffort, MergeReadiness, RawComment,
+    ReviewSummary, Severity,
 };
 
 pub struct CommentSynthesizer;
@@ -95,6 +96,7 @@ impl CommentSynthesizer {
             tags,
             fix_effort,
             feedback: None,
+            status: CommentStatus::Open,
         })
     }
 }

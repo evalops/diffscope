@@ -17,6 +17,12 @@ pub fn build_pr_summary_comment_body(
         "- Overall score: {:.1}/10\n",
         summary.overall_score
     ));
+    body.push_str(&format!("- Merge readiness: {}\n", summary.merge_readiness));
+    body.push_str(&format!(
+        "- Lifecycle: {} open / {} resolved / {} dismissed\n",
+        summary.open_comments, summary.resolved_comments, summary.dismissed_comments
+    ));
+    body.push_str(&format!("- Open blockers: {}\n", summary.open_blockers));
 
     if summary.total_comments == 0 {
         body.push_str("\nNo issues detected in this PR by DiffScope.\n");

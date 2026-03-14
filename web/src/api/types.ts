@@ -3,6 +3,9 @@ export type Category = 'Bug' | 'Security' | 'Performance' | 'Style' | 'Documenta
 export type FixEffort = 'Low' | 'Medium' | 'High'
 export type ReviewStatus = 'Pending' | 'Running' | 'Complete' | 'Failed'
 export type FeedbackAction = 'accept' | 'reject'
+export type CommentLifecycleStatus = 'Open' | 'Resolved' | 'Dismissed'
+export type CommentLifecycleAction = 'open' | 'resolved' | 'dismissed'
+export type MergeReadiness = 'Ready' | 'NeedsAttention'
 
 export interface CodeSuggestion {
   original_code: string
@@ -25,6 +28,7 @@ export interface Comment {
   tags: string[]
   fix_effort: FixEffort
   feedback?: FeedbackAction
+  status?: CommentLifecycleStatus
 }
 
 export interface ReviewSummary {
@@ -35,6 +39,11 @@ export interface ReviewSummary {
   files_reviewed: number
   overall_score: number
   recommendations: string[]
+  open_comments: number
+  resolved_comments: number
+  dismissed_comments: number
+  open_blockers: number
+  merge_readiness: MergeReadiness
 }
 
 export interface FileMetricEvent {

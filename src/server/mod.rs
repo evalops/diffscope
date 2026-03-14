@@ -103,6 +103,10 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .route("/review/{id}", get(api::get_review))
         .route("/review/{id}", delete(api::delete_review))
         .route("/review/{id}/feedback", post(api::submit_feedback))
+        .route(
+            "/review/{id}/lifecycle",
+            post(api::update_comment_lifecycle),
+        )
         .route("/reviews/prune", post(api::prune_reviews))
         .route("/doctor", get(api::get_doctor))
         .route("/config", get(api::get_config))

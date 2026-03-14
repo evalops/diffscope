@@ -38,6 +38,7 @@ mod tests {
             tags: vec![],
             fix_effort: FixEffort::Low,
             feedback: feedback.map(str::to_string),
+            status: crate::core::comment::CommentStatus::Open,
         }
     }
 

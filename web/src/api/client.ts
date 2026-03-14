@@ -31,6 +31,16 @@ export const api = {
       body: JSON.stringify({ comment_id: commentId, action }),
     }),
 
+  updateCommentLifecycle: (
+    reviewId: string,
+    commentId: string,
+    status: import('./types').CommentLifecycleAction,
+  ) =>
+    request<{ ok: boolean }>(`/review/${reviewId}/lifecycle`, {
+      method: 'POST',
+      body: JSON.stringify({ comment_id: commentId, status }),
+    }),
+
   getDoctor: () => request<import('./types').DoctorResponse>('/doctor'),
 
   getAgentTools: () => request<import('./types').AgentToolInfo[]>('/agent/tools'),

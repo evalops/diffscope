@@ -35,7 +35,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 
 ## 2. Review Lifecycle and Merge Readiness
 
-11. [ ] Track unresolved vs resolved findings for PR reviews as a first-class lifecycle state.
+11. [x] Track unresolved vs resolved findings for PR reviews as a first-class lifecycle state.
 12. [ ] Add review completeness metrics: total findings, acknowledged findings, fixed findings, stale findings.
 13. [ ] Compute merge-readiness summaries for GitHub PR reviews using severity, unresolved count, and verification state.
 14. [ ] Add stale-review detection when new commits land after the latest completed review.
@@ -155,4 +155,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Rewrite this roadmap into the active backlog and keep it updated as slices ship.
 - [x] Productize the learning loop in Analytics with reaction coverage and acceptance trends.
 - [x] Surface repository rule sources and pattern repository sources in Settings.
+- [x] Ship first-pass finding lifecycle state and lightweight merge readiness through the backend, API, CLI summaries, and review UI.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.

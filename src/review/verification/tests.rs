@@ -61,6 +61,7 @@ fn make_comment(id: &str, content: &str, line: usize) -> Comment {
         tags: Vec::new(),
         fix_effort: FixEffort::Low,
         feedback: None,
+        status: crate::core::comment::CommentStatus::Open,
     }
 }
 

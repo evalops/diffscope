@@ -36,6 +36,7 @@ mod tests {
             tags: vec![],
             fix_effort: core::comment::FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let comments = vec![comment];

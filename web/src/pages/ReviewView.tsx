@@ -1,14 +1,14 @@
 import { useParams } from 'react-router-dom'
 import { useState, useMemo } from 'react'
 import { Loader2, AlertTriangle, MessageSquare, FileCode, ChevronDown, Activity, Clock, Cpu, GitBranch } from 'lucide-react'
-import { useReview, useSubmitFeedback } from '../api/hooks'
+import { useReview, useSubmitFeedback, useUpdateCommentLifecycle } from '../api/hooks'
 import { DiffViewer } from '../components/DiffViewer'
 import { FileSidebar } from '../components/FileSidebar'
 import { ScoreGauge } from '../components/ScoreGauge'
 import { SeverityBadge } from '../components/SeverityBadge'
 import { CommentCard } from '../components/CommentCard'
 import { parseDiff } from '../lib/parseDiff'
-import type { Severity, ReviewEvent } from '../api/types'
+import type { CommentLifecycleStatus, MergeReadiness, Severity, ReviewEvent } from '../api/types'
 
 type ViewMode = 'diff' | 'list'
 
@@ -16,10 +16,12 @@ export function ReviewView() {
   const { id } = useParams<{ id: string }>()
   const { data: review, isLoading } = useReview(id)
   const feedback = useSubmitFeedback(id || '')
+  const lifecycle = useUpdateCommentLifecycle(id || '')
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('diff')
   const [severityFilter, setSeverityFilter] = useState<Set<Severity>>(new Set(['Error', 'Warning', 'Info', 'Suggestion']))
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
+  const [lifecycleFilter, setLifecycleFilter] = useState<CommentLifecycleStatus | 'All'>('All')
   const [showEvent, setShowEvent] = useState(false)
   const diffContent = review?.diff_content
 
@@ -105,6 +107,7 @@ export function ReviewView() {
     if (!severityFilter.has(c.severity)) return false
     if (selectedFile && c.file_path.replace(/^\.\//, '') !== selectedFile) return false
     if (categoryFilter && c.category !== categoryFilter) return false
+    if (lifecycleFilter !== 'All' && (c.status ?? 'Open') !== lifecycleFilter) return false
     return true
   })
 
@@ -112,6 +115,10 @@ export function ReviewView() {
 
   const handleFeedback = (commentId: string, action: 'accept' | 'reject') => {
     feedback.mutate({ commentId, action })
+  }
+
+  const handleLifecycleChange = (commentId: string, status: 'open' | 'resolved' | 'dismissed') => {
+    lifecycle.mutate({ commentId, status })
   }
 
   // Group comments by file for list view (no useMemo — filteredComments changes every render)
@@ -125,6 +132,11 @@ export function ReviewView() {
   const visibleDiffFiles = selectedFile
     ? diffFiles.filter(f => f.path === selectedFile)
     : diffFiles
+
+  const readinessStyles: Record<MergeReadiness, string> = {
+    Ready: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
+    NeedsAttention: 'bg-sev-warning/10 text-sev-warning border border-sev-warning/20',
+  }
 
   return (
     <div className="flex h-full">
@@ -161,12 +173,30 @@ export function ReviewView() {
                   {review.summary.total_comments} findings
                 </span>
                 <span className="flex items-center gap-1">
+                  <span className="text-accent">{review.summary.open_comments}</span>
+                  open
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className={review.summary.open_blockers > 0 ? 'text-sev-warning' : 'text-sev-suggestion'}>
+                    {review.summary.open_blockers}
+                  </span>
+                  blocker{review.summary.open_blockers === 1 ? '' : 's'}
+                </span>
+                <span className="flex items-center gap-1">
                   <FileCode size={11} />
                   {review.summary.files_reviewed} files
                 </span>
                 <span className="font-code">{review.diff_source}</span>
                 <span className="font-code text-text-muted/50">{review.id.slice(0, 8)}</span>
               </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`text-[10px] px-2 py-0.5 rounded font-code ${readinessStyles[review.summary.merge_readiness]}`}>
+                {review.summary.merge_readiness === 'Ready' ? 'Merge Ready' : 'Needs Attention'}
+              </span>
+              <span className="text-[10px] text-text-muted font-code">
+                {review.summary.resolved_comments} resolved / {review.summary.dismissed_comments} dismissed
+              </span>
             </div>
             {review.event && (
               <button
@@ -241,6 +271,20 @@ export function ReviewView() {
             <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
           </div>
 
+          <div className="relative">
+            <select
+              value={lifecycleFilter}
+              onChange={e => setLifecycleFilter(e.target.value as CommentLifecycleStatus | 'All')}
+              className="text-[11px] bg-surface-2 border border-border rounded px-2 py-1 text-text-secondary appearance-none pr-6 cursor-pointer"
+            >
+              <option value="All">All statuses</option>
+              <option value="Open">Open</option>
+              <option value="Resolved">Resolved</option>
+              <option value="Dismissed">Dismissed</option>
+            </select>
+            <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+          </div>
+
           <span className="ml-auto text-[11px] text-text-muted">
             {filteredComments.length}/{review.comments.length}
           </span>
@@ -253,6 +297,7 @@ export function ReviewView() {
               files={visibleDiffFiles}
               comments={filteredComments}
               onFeedback={handleFeedback}
+              onLifecycleChange={handleLifecycleChange}
             />
           ) : (
             /* List view / fallback when no diff content */
@@ -271,6 +316,7 @@ export function ReviewView() {
                         <CommentCard
                           comment={comment}
                           onFeedback={action => handleFeedback(comment.id, action)}
+                          onLifecycleChange={status => handleLifecycleChange(comment.id, status)}
                         />
                       </div>
                     ))}

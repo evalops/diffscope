@@ -79,6 +79,18 @@ pub fn format_as_markdown(comments: &[core::Comment], rule_priority: &[String]) 
         "📁 **Files Reviewed:** {}\n\n",
         summary.files_reviewed
     ));
+    output.push_str(&format!(
+        "🚦 **Merge Readiness:** {}\n",
+        summary.merge_readiness
+    ));
+    output.push_str(&format!(
+        "📌 **Lifecycle:** {} open · {} resolved · {} dismissed\n\n",
+        summary.open_comments, summary.resolved_comments, summary.dismissed_comments
+    ));
+    output.push_str(&format!(
+        "⛔ **Open Blockers:** {}\n\n",
+        summary.open_blockers
+    ));
 
     // Severity breakdown
     output.push_str("### Issues by Severity\n\n");
@@ -262,6 +274,18 @@ pub fn format_smart_review_output(
     output.push_str(&format!(
         "📁 **Files Analyzed:** {}\n\n",
         summary.files_reviewed
+    ));
+    output.push_str(&format!(
+        "🚦 **Merge Readiness:** {}\n",
+        summary.merge_readiness
+    ));
+    output.push_str(&format!(
+        "📌 **Lifecycle:** {} open · {} resolved · {} dismissed\n\n",
+        summary.open_comments, summary.resolved_comments, summary.dismissed_comments
+    ));
+    output.push_str(&format!(
+        "⛔ **Open Blockers:** {}\n\n",
+        summary.open_blockers
     ));
 
     if let Some(pr_summary) = pr_summary {
@@ -600,6 +624,7 @@ mod tests {
             tags: Vec::new(),
             fix_effort: core::comment::FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         }
     }
 
@@ -833,6 +858,11 @@ mod tests {
             ]),
             by_category: std::collections::HashMap::from([("Bug".to_string(), 2)]),
             recommendations: vec!["Fix bugs".to_string()],
+            open_comments: 2,
+            resolved_comments: 0,
+            dismissed_comments: 0,
+            open_blockers: 2,
+            merge_readiness: crate::core::comment::MergeReadiness::NeedsAttention,
         };
         let comments = vec![
             build_test_comment(

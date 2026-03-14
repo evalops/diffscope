@@ -66,6 +66,7 @@ mod tests {
             tags: vec![],
             fix_effort: core::comment::FixEffort::Medium,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         }
     }
 

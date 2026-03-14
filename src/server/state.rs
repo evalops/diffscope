@@ -331,7 +331,15 @@ impl AppState {
         }
         match std::fs::read_to_string(path) {
             Ok(data) => match serde_json::from_str::<HashMap<String, ReviewSession>>(&data) {
-                Ok(loaded) => {
+                Ok(mut loaded) => {
+                    for session in loaded.values_mut() {
+                        if session.summary.is_some() || !session.comments.is_empty() {
+                            session.summary =
+                                Some(crate::core::CommentSynthesizer::generate_summary(
+                                    &session.comments,
+                                ));
+                        }
+                    }
                     info!("Loaded {} reviews from disk", loaded.len());
                     loaded
                 }
@@ -827,6 +835,7 @@ mod tests {
             tags: vec![],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         }];
         let summary = crate::core::CommentSynthesizer::generate_summary(&comments);
 
@@ -916,6 +925,7 @@ mod tests {
                 tags: vec![],
                 fix_effort: FixEffort::Low,
                 feedback: None,
+                status: crate::core::comment::CommentStatus::Open,
             },
             Comment {
                 id: "c2".to_string(),
@@ -931,6 +941,7 @@ mod tests {
                 tags: vec![],
                 fix_effort: FixEffort::Low,
                 feedback: None,
+                status: crate::core::comment::CommentStatus::Open,
             },
             Comment {
                 id: "c3".to_string(),
@@ -946,6 +957,7 @@ mod tests {
                 tags: vec![],
                 fix_effort: FixEffort::Medium,
                 feedback: None,
+                status: crate::core::comment::CommentStatus::Open,
             },
         ];
         assert_eq!(count_reviewed_files(&comments), 2);
@@ -1364,6 +1376,7 @@ mod tests {
             tags: vec![],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         }];
         let summary = crate::core::CommentSynthesizer::generate_summary(&comments);
 

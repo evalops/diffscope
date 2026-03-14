@@ -1,12 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
-use super::{Category, Comment, ReviewSummary, Severity};
+use super::{Category, Comment, CommentStatus, MergeReadiness, ReviewSummary, Severity};
 
 pub(super) fn generate_summary(comments: &[Comment]) -> ReviewSummary {
     let mut by_severity = HashMap::new();
     let mut by_category = HashMap::new();
     let mut files = HashSet::new();
     let mut critical_issues = 0;
+    let mut open_comments = 0;
+    let mut resolved_comments = 0;
+    let mut dismissed_comments = 0;
+    let mut open_blockers = 0;
 
     for comment in comments {
         let severity_str = comment.severity.to_string();
@@ -20,6 +24,17 @@ pub(super) fn generate_summary(comments: &[Comment]) -> ReviewSummary {
         if matches!(comment.severity, Severity::Error) {
             critical_issues += 1;
         }
+
+        match comment.status {
+            CommentStatus::Open => {
+                open_comments += 1;
+                if matches!(comment.severity, Severity::Error | Severity::Warning) {
+                    open_blockers += 1;
+                }
+            }
+            CommentStatus::Resolved => resolved_comments += 1,
+            CommentStatus::Dismissed => dismissed_comments += 1,
+        }
     }
 
     ReviewSummary {
@@ -30,6 +45,15 @@ pub(super) fn generate_summary(comments: &[Comment]) -> ReviewSummary {
         files_reviewed: files.len(),
         overall_score: calculate_overall_score(comments),
         recommendations: generate_recommendations(comments),
+        open_comments,
+        resolved_comments,
+        dismissed_comments,
+        open_blockers,
+        merge_readiness: if open_blockers == 0 {
+            MergeReadiness::Ready
+        } else {
+            MergeReadiness::NeedsAttention
+        },
     }
 }
 
@@ -59,6 +83,9 @@ fn generate_recommendations(comments: &[Comment]) -> Vec<String> {
     let mut style_count = 0;
 
     for comment in comments {
+        if comment.status != CommentStatus::Open {
+            continue;
+        }
         match comment.category {
             Category::Security => security_count += 1,
             Category::Performance => performance_count += 1,
@@ -84,4 +111,95 @@ fn generate_recommendations(comments: &[Comment]) -> Vec<String> {
     }
 
     recommendations
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::core::comment::{Category, FixEffort};
+
+    fn make_comment(
+        id: &str,
+        severity: Severity,
+        category: Category,
+        status: CommentStatus,
+    ) -> Comment {
+        Comment {
+            id: id.to_string(),
+            file_path: PathBuf::from("src/lib.rs"),
+            line_number: 10,
+            content: "test".to_string(),
+            rule_id: None,
+            severity,
+            category,
+            suggestion: None,
+            confidence: 0.9,
+            code_suggestion: None,
+            tags: Vec::new(),
+            fix_effort: FixEffort::Low,
+            feedback: None,
+            status,
+        }
+    }
+
+    #[test]
+    fn summary_tracks_lifecycle_and_merge_readiness() {
+        let comments = vec![
+            make_comment(
+                "open-error",
+                Severity::Error,
+                Category::Security,
+                CommentStatus::Open,
+            ),
+            make_comment(
+                "resolved-warning",
+                Severity::Warning,
+                Category::Bug,
+                CommentStatus::Resolved,
+            ),
+            make_comment(
+                "dismissed-info",
+                Severity::Info,
+                Category::Style,
+                CommentStatus::Dismissed,
+            ),
+        ];
+
+        let summary = generate_summary(&comments);
+        assert_eq!(summary.total_comments, 3);
+        assert_eq!(summary.open_comments, 1);
+        assert_eq!(summary.resolved_comments, 1);
+        assert_eq!(summary.dismissed_comments, 1);
+        assert_eq!(summary.open_blockers, 1);
+        assert_eq!(summary.merge_readiness, MergeReadiness::NeedsAttention);
+        assert_eq!(
+            summary.recommendations,
+            vec!["Address 1 security issue(s) immediately".to_string()]
+        );
+    }
+
+    #[test]
+    fn summary_is_ready_when_only_resolved_or_dismissed_comments_remain() {
+        let comments = vec![
+            make_comment(
+                "resolved-error",
+                Severity::Error,
+                Category::Security,
+                CommentStatus::Resolved,
+            ),
+            make_comment(
+                "dismissed-warning",
+                Severity::Warning,
+                Category::Bug,
+                CommentStatus::Dismissed,
+            ),
+        ];
+
+        let summary = generate_summary(&comments);
+        assert_eq!(summary.open_blockers, 0);
+        assert_eq!(summary.merge_readiness, MergeReadiness::Ready);
+        assert!(summary.recommendations.is_empty());
+    }
 }

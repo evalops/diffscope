@@ -83,6 +83,14 @@ impl JsonStorageBackend {
             let _ = tokio::fs::remove_file(&tmp_path).await;
         }
     }
+
+    fn refresh_summary(session: &mut ReviewSession) {
+        if session.summary.is_some() || !session.comments.is_empty() {
+            session.summary = Some(crate::core::CommentSynthesizer::generate_summary(
+                &session.comments,
+            ));
+        }
+    }
 }
 
 #[async_trait]
@@ -98,7 +106,10 @@ impl StorageBackend for JsonStorageBackend {
 
     async fn get_review(&self, id: &str) -> anyhow::Result<Option<ReviewSession>> {
         let reviews = self.reviews.read().await;
-        Ok(reviews.get(id).cloned())
+        Ok(reviews.get(id).cloned().map(|mut session| {
+            Self::refresh_summary(&mut session);
+            session
+        }))
     }
 
     async fn list_reviews(&self, limit: i64, offset: i64) -> anyhow::Result<Vec<ReviewSession>> {
@@ -107,7 +118,16 @@ impl StorageBackend for JsonStorageBackend {
         list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
         let offset = offset.max(0) as usize;
         let limit = limit.max(0) as usize;
-        Ok(list.into_iter().skip(offset).take(limit).cloned().collect())
+        Ok(list
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .cloned()
+            .map(|mut session| {
+                Self::refresh_summary(&mut session);
+                session
+            })
+            .collect())
     }
 
     async fn delete_review(&self, id: &str) -> anyhow::Result<()> {
@@ -450,6 +470,7 @@ mod tests {
             tags: vec![],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         }
     }
 
@@ -508,6 +529,11 @@ mod tests {
             files_reviewed: 2,
             overall_score: 8.0,
             recommendations: vec!["Fix bugs".to_string()],
+            open_comments: 2,
+            resolved_comments: 0,
+            dismissed_comments: 0,
+            open_blockers: 2,
+            merge_readiness: crate::core::comment::MergeReadiness::NeedsAttention,
         });
 
         backend.save_review(&session).await.unwrap();

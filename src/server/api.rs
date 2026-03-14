@@ -68,6 +68,17 @@ pub struct FeedbackResponse {
     pub ok: bool,
 }
 
+#[derive(Deserialize)]
+pub struct CommentLifecycleRequest {
+    pub comment_id: String,
+    pub status: String,
+}
+
+#[derive(Serialize)]
+pub struct CommentLifecycleResponse {
+    pub ok: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FeedbackEvalTrendGapResponse {
     #[serde(default)]
@@ -744,6 +755,41 @@ pub async fn list_reviews(
     Json(list)
 }
 
+async fn load_review_session_for_update(
+    state: &Arc<AppState>,
+    review_id: &str,
+) -> Result<ReviewSession, StatusCode> {
+    {
+        let reviews = state.reviews.read().await;
+        if let Some(session) = reviews.get(review_id) {
+            return Ok(session.clone());
+        }
+    }
+
+    match state.storage.get_review(review_id).await {
+        Ok(Some(session)) => Ok(session),
+        _ => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+async fn persist_updated_review_session(state: &Arc<AppState>, session: ReviewSession) {
+    let review_id = session.id.clone();
+    {
+        let mut reviews = state.reviews.write().await;
+        reviews.insert(review_id.clone(), session.clone());
+    }
+
+    AppState::save_reviews_async(state);
+
+    if let Err(err) = state.storage.save_review(&session).await {
+        warn!(
+            review_id = %review_id,
+            "Failed to persist updated review session: {}",
+            err
+        );
+    }
+}
+
 pub async fn delete_review(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -798,44 +844,65 @@ pub async fn submit_feedback(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let comment_id_for_storage = request.comment_id.clone();
+    let mut session = load_review_session_for_update(&state, &id).await?;
 
-    let mut reviews = state.reviews.write().await;
-    let session = reviews.get_mut(&id).ok_or(StatusCode::NOT_FOUND)?;
-
-    let comment = session
-        .comments
-        .iter_mut()
-        .find(|c| c.id == request.comment_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    // Capture comment data for convention store before mutating
-    let semantic_comment = comment.clone();
-    let comment_content = comment.content.clone();
-    let comment_category = comment.category.to_string();
-    let file_patterns = crate::review::derive_file_patterns(&comment.file_path);
-    let primary_file_pattern = file_patterns.first().map(String::as_str);
     let is_accepted = request.action == "accept";
-    let feedback_changed = comment.feedback.as_deref() != Some(request.action.as_str());
-    if feedback_changed {
-        comment.feedback = Some(request.action.clone());
-    }
-    drop(reviews);
+    let (
+        semantic_comment,
+        comment_content,
+        comment_category,
+        primary_file_pattern,
+        feedback_changed,
+    ) = {
+        let comment = session
+            .comments
+            .iter_mut()
+            .find(|c| c.id == request.comment_id)
+            .ok_or(StatusCode::NOT_FOUND)?;
+
+        // Capture comment data for convention store before mutating
+        let semantic_comment = comment.clone();
+        let comment_content = comment.content.clone();
+        let comment_category = comment.category.to_string();
+        let file_patterns = crate::review::derive_file_patterns(&comment.file_path);
+        let primary_file_pattern = file_patterns.first().cloned();
+        let feedback_changed = comment.feedback.as_deref() != Some(request.action.as_str());
+        if feedback_changed {
+            comment.feedback = Some(request.action.clone());
+        }
+
+        (
+            semantic_comment,
+            comment_content,
+            comment_category,
+            primary_file_pattern,
+            feedback_changed,
+        )
+    };
 
     if feedback_changed {
+        {
+            let mut reviews = state.reviews.write().await;
+            reviews.insert(id.clone(), session);
+        }
         AppState::save_reviews_async(&state);
-    }
 
-    if feedback_changed {
-        // Persist feedback to storage backend
-        let _ = state
+        if let Err(err) = state
             .storage
             .update_comment_feedback(
                 &id,
-                &comment_id_for_storage,
+                &request.comment_id,
                 if is_accepted { "accept" } else { "reject" },
             )
-            .await;
+            .await
+        {
+            warn!(
+                review_id = %id,
+                comment_id = %request.comment_id,
+                "Failed to persist comment feedback: {}",
+                err
+            );
+        }
     }
 
     // Record enhanced feedback pattern stats
@@ -877,7 +944,7 @@ pub async fn submit_feedback(
             &comment_content,
             &comment_category,
             is_accepted,
-            primary_file_pattern,
+            primary_file_pattern.as_deref(),
             &now,
         );
         if let Ok(out_json) = cstore.to_json() {
@@ -889,6 +956,39 @@ pub async fn submit_feedback(
     }
 
     Ok(Json(FeedbackResponse { ok: true }))
+}
+
+pub async fn update_comment_lifecycle(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(request): Json<CommentLifecycleRequest>,
+) -> Result<Json<CommentLifecycleResponse>, StatusCode> {
+    let next_status = crate::core::comment::CommentStatus::from_api_str(&request.status)
+        .ok_or(StatusCode::BAD_REQUEST)?;
+
+    let mut session = load_review_session_for_update(&state, &id).await?;
+
+    let status_changed = {
+        let comment = session
+            .comments
+            .iter_mut()
+            .find(|c| c.id == request.comment_id)
+            .ok_or(StatusCode::NOT_FOUND)?;
+
+        if comment.status == next_status {
+            false
+        } else {
+            comment.status = next_status;
+            true
+        }
+    };
+
+    if status_changed {
+        session.summary = Some(CommentSynthesizer::generate_summary(&session.comments));
+        persist_updated_review_session(&state, session).await;
+    }
+
+    Ok(Json(CommentLifecycleResponse { ok: true }))
 }
 
 pub async fn get_doctor(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {

@@ -52,6 +52,7 @@ mod tests {
             tags: vec!["reliability".to_string(), "panic".to_string()],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let pattern = EvalPattern {
@@ -83,6 +84,7 @@ mod tests {
             tags: vec!["path-traversal".to_string()],
             fix_effort: FixEffort::Medium,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let pattern = EvalPattern {
@@ -113,6 +115,7 @@ mod tests {
             tags: vec!["broken-access-control".to_string(), "cwe-284".to_string()],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let pattern = EvalPattern {
@@ -141,6 +144,7 @@ mod tests {
             tags: vec!["authorization-bypass".to_string(), "async-await".to_string()],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let pattern = EvalPattern {
@@ -173,6 +177,7 @@ mod tests {
             tags: vec!["silent-failure".to_string()],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let pattern = EvalPattern {
@@ -201,6 +206,7 @@ mod tests {
             tags: vec!["information-disclosure".to_string(), "cwe-209".to_string()],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let pattern = EvalPattern {
@@ -231,6 +237,7 @@ mod tests {
             tags: vec!["async".to_string(), "concurrency".to_string()],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let pattern = EvalPattern {
@@ -260,6 +267,7 @@ mod tests {
             tags: vec!["async-await".to_string(), "promise".to_string()],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let pattern = EvalPattern {
@@ -293,6 +301,7 @@ mod tests {
             tags: vec!["multi-tenancy".to_string(), "authorization".to_string()],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let pattern = EvalPattern {
@@ -325,6 +334,7 @@ mod tests {
             tags: vec!["supply-chain".to_string()],
             fix_effort: FixEffort::Medium,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let pattern = EvalPattern {
@@ -360,6 +370,7 @@ mod tests {
             tags: vec!["supply-chain".to_string()],
             fix_effort: FixEffort::Medium,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let pattern = EvalPattern {
@@ -396,6 +407,7 @@ mod tests {
             tags: vec!["supply-chain".to_string(), "code-execution".to_string()],
             fix_effort: FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         };
 
         let pattern = EvalPattern {

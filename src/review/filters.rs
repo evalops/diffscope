@@ -49,6 +49,7 @@ mod tests {
             tags: Vec::new(),
             fix_effort: core::comment::FixEffort::Low,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         }
     }
 

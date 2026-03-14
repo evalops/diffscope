@@ -53,6 +53,7 @@ mod tests {
             tags: vec![tag.to_string()],
             fix_effort: core::comment::FixEffort::Medium,
             feedback: None,
+            status: crate::core::comment::CommentStatus::Open,
         }
     }
 

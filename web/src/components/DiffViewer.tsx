@@ -10,6 +10,7 @@ interface Props {
   files: DiffFile[]
   comments: Comment[]
   onFeedback?: (commentId: string, action: 'accept' | 'reject') => void
+  onLifecycleChange?: (commentId: string, status: 'open' | 'resolved' | 'dismissed') => void
 }
 
 const statusIcon = {
@@ -26,7 +27,7 @@ const statusColor = {
   modified: 'text-text-secondary',
 }
 
-export function DiffViewer({ files, comments, onFeedback }: Props) {
+export function DiffViewer({ files, comments, onFeedback, onLifecycleChange }: Props) {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
 
   const commentsByFile = useMemo(() => {
@@ -106,6 +107,7 @@ export function DiffViewer({ files, comments, onFeedback }: Props) {
                     filePath={file.path}
                     commentsByLine={commentsByFile.get(file.path)}
                     onFeedback={onFeedback}
+                    onLifecycleChange={onLifecycleChange}
                   />
                 ))}
                 {file.hunks.length === 0 && (
@@ -122,11 +124,12 @@ export function DiffViewer({ files, comments, onFeedback }: Props) {
   )
 }
 
-export function HunkView({ hunk, filePath, commentsByLine, onFeedback }: {
+export function HunkView({ hunk, filePath, commentsByLine, onFeedback, onLifecycleChange }: {
   hunk: DiffHunk
   filePath: string
   commentsByLine?: Map<number, Comment[]>
   onFeedback?: (commentId: string, action: 'accept' | 'reject') => void
+  onLifecycleChange?: (commentId: string, status: 'open' | 'resolved' | 'dismissed') => void
 }) {
   return (
     <div>
@@ -149,6 +152,7 @@ export function HunkView({ hunk, filePath, commentsByLine, onFeedback }: {
                 comments={lineComments}
                 filePath={filePath}
                 onFeedback={onFeedback}
+                onLifecycleChange={onLifecycleChange}
               />
             )
           })}
@@ -158,11 +162,12 @@ export function HunkView({ hunk, filePath, commentsByLine, onFeedback }: {
   )
 }
 
-export function LineRow({ line, comments, filePath, onFeedback }: {
+export function LineRow({ line, comments, filePath, onFeedback, onLifecycleChange }: {
   line: DiffLine
   comments?: Comment[]
   filePath: string
   onFeedback?: (commentId: string, action: 'accept' | 'reject') => void
+  onLifecycleChange?: (commentId: string, status: 'open' | 'resolved' | 'dismissed') => void
 }) {
   const bgClass =
     line.type === 'add' ? 'bg-diff-add-bg' :
@@ -212,6 +217,7 @@ export function LineRow({ line, comments, filePath, onFeedback }: {
                 comment={c}
                 variant="inline"
                 onFeedback={onFeedback ? (action) => onFeedback(c.id, action) : undefined}
+                onLifecycleChange={onLifecycleChange ? (status) => onLifecycleChange(c.id, status) : undefined}
               />
             ))}
           </td>

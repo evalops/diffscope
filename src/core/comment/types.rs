@@ -20,6 +20,8 @@ pub struct Comment {
     pub fix_effort: FixEffort,
     #[serde(default)]
     pub feedback: Option<String>,
+    #[serde(default)]
+    pub status: CommentStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +41,61 @@ pub struct ReviewSummary {
     pub files_reviewed: usize,
     pub overall_score: f32,
     pub recommendations: Vec<String>,
+    #[serde(default)]
+    pub open_comments: usize,
+    #[serde(default)]
+    pub resolved_comments: usize,
+    #[serde(default)]
+    pub dismissed_comments: usize,
+    #[serde(default)]
+    pub open_blockers: usize,
+    #[serde(default)]
+    pub merge_readiness: MergeReadiness,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum CommentStatus {
+    #[default]
+    Open,
+    Resolved,
+    Dismissed,
+}
+
+impl std::fmt::Display for CommentStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommentStatus::Open => write!(f, "Open"),
+            CommentStatus::Resolved => write!(f, "Resolved"),
+            CommentStatus::Dismissed => write!(f, "Dismissed"),
+        }
+    }
+}
+
+impl CommentStatus {
+    pub fn from_api_str(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "open" => Some(Self::Open),
+            "resolved" => Some(Self::Resolved),
+            "dismissed" => Some(Self::Dismissed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum MergeReadiness {
+    Ready,
+    #[default]
+    NeedsAttention,
+}
+
+impl std::fmt::Display for MergeReadiness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MergeReadiness::Ready => write!(f, "Ready"),
+            MergeReadiness::NeedsAttention => write!(f, "Needs attention"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -125,6 +125,21 @@ describe('CommentCard', () => {
     expect(screen.queryByTitle('Dismiss finding')).not.toBeInTheDocument()
   })
 
+  it('renders lifecycle status and actions when lifecycle controls are provided', () => {
+    render(<CommentCard comment={makeComment({ status: 'Resolved' })} onLifecycleChange={() => {}} />)
+    expect(screen.getByText('Resolved')).toBeInTheDocument()
+    expect(screen.getByTitle('Reopen finding')).toBeInTheDocument()
+  })
+
+  it('calls onLifecycleChange when resolving an open finding', async () => {
+    const user = userEvent.setup()
+    const onLifecycleChange = vi.fn()
+    render(<CommentCard comment={makeComment({ status: 'Open' })} onLifecycleChange={onLifecycleChange} />)
+
+    await user.click(screen.getByTitle('Mark finding as resolved'))
+    expect(onLifecycleChange).toHaveBeenCalledWith('resolved')
+  })
+
   it('does not show suggestion text when not provided', () => {
     render(<CommentCard comment={makeComment({ suggestion: undefined })} />)
     expect(screen.queryByText('Remove the unused variable.')).not.toBeInTheDocument()

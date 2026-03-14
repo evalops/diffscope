@@ -8,7 +8,7 @@ use super::storage::{
     DailyCount, EventFilters, EventStats, ModelStats, RepoStats, SourceStats, StorageBackend,
 };
 use crate::core::comment::ReviewSummary;
-use crate::core::comment::{Category, CodeSuggestion, Comment, FixEffort, Severity};
+use crate::core::comment::{Category, CodeSuggestion, Comment, CommentStatus, FixEffort, Severity};
 
 /// PostgreSQL storage backend implementation.
 pub struct PgStorageBackend {
@@ -76,6 +76,14 @@ fn parse_fix_effort(s: &str) -> FixEffort {
     }
 }
 
+fn parse_comment_status(s: &str) -> CommentStatus {
+    match s {
+        "Resolved" => CommentStatus::Resolved,
+        "Dismissed" => CommentStatus::Dismissed,
+        _ => CommentStatus::Open,
+    }
+}
+
 #[async_trait]
 impl StorageBackend for PgStorageBackend {
     async fn save_review(&self, session: &ReviewSession) -> anyhow::Result<()> {
@@ -126,10 +134,11 @@ impl StorageBackend for PgStorageBackend {
 
                 sqlx::query(
                     r#"
-                    INSERT INTO comments (id, review_id, file_path, line_number, content, rule_id, severity, category, suggestion, confidence, code_suggestion, tags, fix_effort, feedback)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    INSERT INTO comments (id, review_id, file_path, line_number, content, rule_id, severity, category, suggestion, confidence, code_suggestion, tags, fix_effort, feedback, lifecycle_status)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                     ON CONFLICT (id) DO UPDATE SET
-                        feedback = EXCLUDED.feedback
+                        feedback = EXCLUDED.feedback,
+                        lifecycle_status = EXCLUDED.lifecycle_status
                     "#,
                 )
                 .bind(&c.id)
@@ -146,6 +155,7 @@ impl StorageBackend for PgStorageBackend {
                 .bind(&tags)
                 .bind(format!("{:?}", c.fix_effort))
                 .bind(&c.feedback)
+                .bind(c.status.to_string())
                 .execute(&self.pool)
                 .await?;
             }
@@ -169,7 +179,7 @@ impl StorageBackend for PgStorageBackend {
 
         let comments = self.load_comments(id).await?;
         let event = self.load_event(id).await?;
-        let summary: Option<ReviewSummary> = row.8.and_then(|v| serde_json::from_value(v).ok());
+        let summary = Some(crate::core::CommentSynthesizer::generate_summary(&comments));
 
         Ok(Some(ReviewSession {
             id: row.0,
@@ -578,10 +588,11 @@ impl PgStorageBackend {
                 Vec<String>,
                 String,
                 Option<String>,
+                String,
             ),
         >(
             "SELECT id, file_path, line_number, content, rule_id, severity, category, \
-             suggestion, confidence, code_suggestion, tags, fix_effort, feedback \
+             suggestion, confidence, code_suggestion, tags, fix_effort, feedback, lifecycle_status \
              FROM comments WHERE review_id = $1 ORDER BY created_at",
         )
         .bind(review_id)
@@ -607,6 +618,7 @@ impl PgStorageBackend {
                     tags: r.10,
                     fix_effort: parse_fix_effort(&r.11),
                     feedback: r.12,
+                    status: parse_comment_status(&r.13),
                 }
             })
             .collect())
