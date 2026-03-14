@@ -56,6 +56,41 @@ pub struct VerificationReport {
     pub judges: Vec<VerificationJudgeRun>,
 }
 
+pub(crate) fn summarize_review_verification(
+    report: Option<&VerificationReport>,
+    warnings: &[String],
+) -> crate::core::comment::ReviewVerificationSummary {
+    let warning_count = warnings.len();
+    match report {
+        Some(report) => crate::core::comment::ReviewVerificationSummary {
+            state: if warning_count > 0 {
+                crate::core::comment::ReviewVerificationState::Inconclusive
+            } else {
+                crate::core::comment::ReviewVerificationState::Verified
+            },
+            judge_count: report.judge_count,
+            required_votes: report.required_votes,
+            warning_count,
+            filtered_comments: report
+                .judges
+                .iter()
+                .map(|judge| judge.filtered_comments)
+                .sum(),
+            abstained_comments: report
+                .judges
+                .iter()
+                .map(|judge| judge.abstained_comments)
+                .sum(),
+        },
+        None if warning_count > 0 => crate::core::comment::ReviewVerificationSummary {
+            state: crate::core::comment::ReviewVerificationState::Inconclusive,
+            warning_count,
+            ..Default::default()
+        },
+        None => crate::core::comment::ReviewVerificationSummary::default(),
+    }
+}
+
 const VERIFICATION_BATCH_SIZE: usize = 6;
 
 #[derive(Debug, Clone)]

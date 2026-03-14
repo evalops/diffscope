@@ -15,9 +15,12 @@ import type {
 } from '../api/types'
 
 function computeAnalytics(reviews: ReviewSession[]) {
+  const reviewTimestamp = (value: ReviewSession['started_at']) =>
+    typeof value === 'number' ? value : Date.parse(value)
+
   const completed = reviews
     .filter(r => r.status === 'Complete' && r.summary)
-    .sort((a, b) => a.started_at.localeCompare(b.started_at))
+    .sort((a, b) => reviewTimestamp(a.started_at) - reviewTimestamp(b.started_at))
 
   // Score over time
   const scoreOverTime = completed.map((r, i) => ({

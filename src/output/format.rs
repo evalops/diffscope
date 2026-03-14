@@ -91,6 +91,26 @@ pub fn format_as_markdown(comments: &[core::Comment], rule_priority: &[String]) 
         "⛔ **Open Blockers:** {}\n\n",
         summary.open_blockers
     ));
+    output.push_str(&format!(
+        "🧪 **Verification:** {}",
+        summary.verification.state
+    ));
+    if summary.verification.judge_count > 0 {
+        output.push_str(&format!(
+            " (votes {}/{}, warnings {})",
+            summary.verification.required_votes,
+            summary.verification.judge_count,
+            summary.verification.warning_count
+        ));
+    }
+    output.push_str("\n\n");
+    if !summary.readiness_reasons.is_empty() {
+        output.push_str("### Review State\n\n");
+        for reason in &summary.readiness_reasons {
+            output.push_str(&format!("- {}\n", reason));
+        }
+        output.push('\n');
+    }
 
     // Severity breakdown
     output.push_str("### Issues by Severity\n\n");
@@ -287,6 +307,26 @@ pub fn format_smart_review_output(
         "⛔ **Open Blockers:** {}\n\n",
         summary.open_blockers
     ));
+    output.push_str(&format!(
+        "🧪 **Verification:** {}",
+        summary.verification.state
+    ));
+    if summary.verification.judge_count > 0 {
+        output.push_str(&format!(
+            " (votes {}/{}, warnings {})",
+            summary.verification.required_votes,
+            summary.verification.judge_count,
+            summary.verification.warning_count
+        ));
+    }
+    output.push_str("\n\n");
+    if !summary.readiness_reasons.is_empty() {
+        output.push_str("### 🔁 Review State\n\n");
+        for reason in &summary.readiness_reasons {
+            output.push_str(&format!("- {}\n", reason));
+        }
+        output.push('\n');
+    }
 
     if let Some(pr_summary) = pr_summary {
         output.push_str(&format_pr_summary_section(pr_summary));
@@ -863,6 +903,8 @@ mod tests {
             dismissed_comments: 0,
             open_blockers: 2,
             merge_readiness: crate::core::comment::MergeReadiness::NeedsAttention,
+            verification: crate::core::comment::ReviewVerificationSummary::default(),
+            readiness_reasons: Vec::new(),
         };
         let comments = vec![
             build_test_comment(

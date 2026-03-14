@@ -5,7 +5,8 @@ export type ReviewStatus = 'Pending' | 'Running' | 'Complete' | 'Failed'
 export type FeedbackAction = 'accept' | 'reject'
 export type CommentLifecycleStatus = 'Open' | 'Resolved' | 'Dismissed'
 export type CommentLifecycleAction = 'open' | 'resolved' | 'dismissed'
-export type MergeReadiness = 'Ready' | 'NeedsAttention'
+export type MergeReadiness = 'Ready' | 'NeedsAttention' | 'NeedsReReview'
+export type ReviewVerificationState = 'NotApplicable' | 'Verified' | 'Inconclusive'
 
 export interface CodeSuggestion {
   original_code: string
@@ -44,6 +45,15 @@ export interface ReviewSummary {
   dismissed_comments: number
   open_blockers: number
   merge_readiness: MergeReadiness
+  verification: {
+    state: ReviewVerificationState
+    judge_count: number
+    required_votes: number
+    warning_count: number
+    filtered_comments: number
+    abstained_comments: number
+  }
+  readiness_reasons: string[]
 }
 
 export interface FileMetricEvent {
@@ -156,8 +166,8 @@ export interface ReviewSession {
   id: string
   status: ReviewStatus
   diff_source: string
-  started_at: string
-  completed_at?: string
+  started_at: string | number
+  completed_at?: string | number
   comments: Comment[]
   summary?: ReviewSummary
   files_reviewed: number

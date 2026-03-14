@@ -33,6 +33,8 @@ pub use rule_helpers::{
     apply_rule_overrides, build_pr_summary_comment_body, inject_rule_context, load_review_rules,
     normalize_rule_id, summarize_rule_hits,
 };
+#[allow(unused_imports)]
+pub(crate) use verification::summarize_review_verification;
 
 // Used by sibling modules (commands, output) and their tests
 #[allow(unused_imports)]

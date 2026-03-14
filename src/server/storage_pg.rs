@@ -179,7 +179,12 @@ impl StorageBackend for PgStorageBackend {
 
         let comments = self.load_comments(id).await?;
         let event = self.load_event(id).await?;
-        let summary = Some(crate::core::CommentSynthesizer::generate_summary(&comments));
+        let previous_summary: Option<ReviewSummary> =
+            row.8.and_then(|v| serde_json::from_value(v).ok());
+        let summary = Some(crate::core::CommentSynthesizer::inherit_review_state(
+            crate::core::CommentSynthesizer::generate_summary(&comments),
+            previous_summary.as_ref(),
+        ));
 
         Ok(Some(ReviewSession {
             id: row.0,
@@ -212,14 +217,21 @@ impl StorageBackend for PgStorageBackend {
 
         let mut sessions = Vec::with_capacity(rows.len());
         for row in rows {
-            let summary: Option<ReviewSummary> = row.8.and_then(|v| serde_json::from_value(v).ok());
+            let review_id = row.0.clone();
+            let comments = self.load_comments(&review_id).await?;
+            let previous_summary: Option<ReviewSummary> =
+                row.8.and_then(|v| serde_json::from_value(v).ok());
+            let summary = Some(crate::core::CommentSynthesizer::inherit_review_state(
+                crate::core::CommentSynthesizer::generate_summary(&comments),
+                previous_summary.as_ref(),
+            ));
             sessions.push(ReviewSession {
-                id: row.0,
+                id: review_id,
                 status: parse_status(&row.1),
                 diff_source: row.2,
                 started_at: row.3.timestamp(),
                 completed_at: row.4.map(|t| t.timestamp()),
-                comments: Vec::new(), // Don't load comments for list
+                comments,
                 summary,
                 files_reviewed: row.5 as usize,
                 error: row.6,

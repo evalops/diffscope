@@ -136,6 +136,13 @@ export function ReviewView() {
   const readinessStyles: Record<MergeReadiness, string> = {
     Ready: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
     NeedsAttention: 'bg-sev-warning/10 text-sev-warning border border-sev-warning/20',
+    NeedsReReview: 'bg-accent/10 text-accent border border-accent/20',
+  }
+
+  const verificationStyles: Record<NonNullable<typeof review.summary>['verification']['state'], string> = {
+    NotApplicable: 'text-text-muted',
+    Verified: 'text-sev-suggestion',
+    Inconclusive: 'text-accent',
   }
 
   return (
@@ -192,7 +199,11 @@ export function ReviewView() {
             </div>
             <div className="flex items-center gap-2">
               <span className={`text-[10px] px-2 py-0.5 rounded font-code ${readinessStyles[review.summary.merge_readiness]}`}>
-                {review.summary.merge_readiness === 'Ready' ? 'Merge Ready' : 'Needs Attention'}
+                {review.summary.merge_readiness === 'Ready'
+                  ? 'Merge Ready'
+                  : review.summary.merge_readiness === 'NeedsAttention'
+                    ? 'Needs Attention'
+                    : 'Needs Re-review'}
               </span>
               <span className="text-[10px] text-text-muted font-code">
                 {review.summary.resolved_comments} resolved / {review.summary.dismissed_comments} dismissed
@@ -214,6 +225,29 @@ export function ReviewView() {
 
         {/* Wide event panel */}
         {showEvent && review.event && <EventPanel event={review.event} />}
+
+        {review.summary && (
+          <div className="px-3 py-2 border-b border-border bg-surface flex items-center gap-4 text-[11px]">
+            <span className={`font-code ${verificationStyles[review.summary.verification.state]}`}>
+              Verification: {review.summary.verification.state}
+            </span>
+            {review.summary.verification.judge_count > 0 && (
+              <span className="text-text-muted font-code">
+                judges {review.summary.verification.required_votes}/{review.summary.verification.judge_count}
+              </span>
+            )}
+            {review.summary.verification.warning_count > 0 && (
+              <span className="text-accent font-code">
+                {review.summary.verification.warning_count} warning{review.summary.verification.warning_count === 1 ? '' : 's'}
+              </span>
+            )}
+            {review.summary.readiness_reasons.length > 0 && (
+              <span className="text-text-muted truncate" title={review.summary.readiness_reasons.join(' | ')}>
+                {review.summary.readiness_reasons.join(' | ')}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Toolbar */}
         <div className="px-3 py-2 border-b border-border bg-surface flex items-center gap-2">

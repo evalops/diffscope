@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use super::{Category, Comment, CommentStatus, MergeReadiness, ReviewSummary, Severity};
+use super::{
+    Category, Comment, CommentStatus, MergeReadiness, ReviewSummary, ReviewVerificationState,
+    ReviewVerificationSummary, Severity,
+};
 
 pub(super) fn generate_summary(comments: &[Comment]) -> ReviewSummary {
     let mut by_severity = HashMap::new();
@@ -49,11 +52,58 @@ pub(super) fn generate_summary(comments: &[Comment]) -> ReviewSummary {
         resolved_comments,
         dismissed_comments,
         open_blockers,
-        merge_readiness: if open_blockers == 0 {
-            MergeReadiness::Ready
-        } else {
-            MergeReadiness::NeedsAttention
-        },
+        merge_readiness: default_merge_readiness(open_blockers),
+        verification: ReviewVerificationSummary::default(),
+        readiness_reasons: Vec::new(),
+    }
+}
+
+pub(super) fn inherit_review_state(
+    mut summary: ReviewSummary,
+    previous: Option<&ReviewSummary>,
+) -> ReviewSummary {
+    if let Some(previous) = previous {
+        summary.verification = previous.verification.clone();
+    }
+    apply_review_runtime_state(summary, false)
+}
+
+pub(super) fn apply_verification(
+    mut summary: ReviewSummary,
+    verification: ReviewVerificationSummary,
+) -> ReviewSummary {
+    summary.verification = verification;
+    apply_review_runtime_state(summary, false)
+}
+
+pub(super) fn apply_review_runtime_state(
+    mut summary: ReviewSummary,
+    stale_review: bool,
+) -> ReviewSummary {
+    let mut reasons = Vec::new();
+    if matches!(
+        summary.verification.state,
+        ReviewVerificationState::Inconclusive
+    ) {
+        reasons.push("verification was inconclusive or fail-open; rerun this review".to_string());
+    }
+    if stale_review {
+        reasons.push("a newer review exists for this pull request".to_string());
+    }
+    summary.readiness_reasons = reasons;
+    summary.merge_readiness = if !summary.readiness_reasons.is_empty() {
+        MergeReadiness::NeedsReReview
+    } else {
+        default_merge_readiness(summary.open_blockers)
+    };
+    summary
+}
+
+fn default_merge_readiness(open_blockers: usize) -> MergeReadiness {
+    if open_blockers == 0 {
+        MergeReadiness::Ready
+    } else {
+        MergeReadiness::NeedsAttention
     }
 }
 
@@ -201,5 +251,52 @@ mod tests {
         assert_eq!(summary.open_blockers, 0);
         assert_eq!(summary.merge_readiness, MergeReadiness::Ready);
         assert!(summary.recommendations.is_empty());
+    }
+
+    #[test]
+    fn summary_needs_rereview_when_verification_is_inconclusive() {
+        let comments = vec![make_comment(
+            "open-warning",
+            Severity::Warning,
+            Category::Bug,
+            CommentStatus::Open,
+        )];
+
+        let summary = apply_verification(
+            generate_summary(&comments),
+            ReviewVerificationSummary {
+                state: ReviewVerificationState::Inconclusive,
+                judge_count: 1,
+                required_votes: 1,
+                warning_count: 1,
+                filtered_comments: 0,
+                abstained_comments: 1,
+            },
+        );
+
+        assert_eq!(summary.merge_readiness, MergeReadiness::NeedsReReview);
+        assert_eq!(
+            summary.verification.state,
+            ReviewVerificationState::Inconclusive
+        );
+        assert_eq!(summary.readiness_reasons.len(), 1);
+    }
+
+    #[test]
+    fn stale_review_forces_needs_rereview_even_without_blockers() {
+        let comments = vec![make_comment(
+            "resolved-warning",
+            Severity::Warning,
+            Category::Bug,
+            CommentStatus::Resolved,
+        )];
+
+        let summary = apply_review_runtime_state(generate_summary(&comments), true);
+        assert_eq!(summary.open_blockers, 0);
+        assert_eq!(summary.merge_readiness, MergeReadiness::NeedsReReview);
+        assert_eq!(
+            summary.readiness_reasons,
+            vec!["a newer review exists for this pull request".to_string()]
+        );
     }
 }

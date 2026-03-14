@@ -559,7 +559,13 @@ async fn run_review_task(
     match result {
         Ok(Ok(review_result)) => {
             let comments = review_result.comments;
-            let summary = CommentSynthesizer::generate_summary(&comments);
+            let summary = CommentSynthesizer::apply_verification(
+                CommentSynthesizer::generate_summary(&comments),
+                crate::review::summarize_review_verification(
+                    review_result.verification_report.as_ref(),
+                    &review_result.warnings,
+                ),
+            );
             let files_reviewed = count_reviewed_files(&comments);
             let file_metric_events: Vec<FileMetricEvent> = review_result
                 .file_metrics
@@ -699,22 +705,82 @@ fn get_diff_from_git(
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+const REVIEW_STATE_SCAN_LIMIT: i64 = 1000;
+
+async fn load_review_inventory(state: &Arc<AppState>) -> Vec<ReviewSession> {
+    let mut sessions: Vec<ReviewSession> = {
+        let reviews = state.reviews.read().await;
+        reviews.values().cloned().collect()
+    };
+
+    if let Ok(stored) = state.storage.list_reviews(REVIEW_STATE_SCAN_LIMIT, 0).await {
+        let in_memory_ids: std::collections::HashSet<String> =
+            sessions.iter().map(|session| session.id.clone()).collect();
+        for session in stored {
+            if !in_memory_ids.contains(&session.id) {
+                sessions.push(session);
+            }
+        }
+    }
+
+    sessions
+}
+
+fn latest_review_started_by_source(
+    reviews: &[ReviewSession],
+) -> std::collections::HashMap<String, i64> {
+    let mut latest = std::collections::HashMap::new();
+    for review in reviews {
+        if !review.diff_source.starts_with("pr:") {
+            continue;
+        }
+        latest
+            .entry(review.diff_source.clone())
+            .and_modify(|current: &mut i64| *current = (*current).max(review.started_at))
+            .or_insert(review.started_at);
+    }
+    latest
+}
+
+fn apply_dynamic_review_state(
+    mut session: ReviewSession,
+    latest_by_source: &std::collections::HashMap<String, i64>,
+) -> ReviewSession {
+    let stale_review = session.diff_source.starts_with("pr:")
+        && latest_by_source
+            .get(&session.diff_source)
+            .copied()
+            .is_some_and(|latest| latest > session.started_at);
+
+    if let Some(summary) = session.summary.take() {
+        session.summary = Some(CommentSynthesizer::apply_runtime_review_state(
+            summary,
+            stale_review,
+        ));
+    }
+
+    session
+}
+
 pub async fn get_review(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ReviewSession>, StatusCode> {
-    // Check in-memory first (active reviews with progress tracking)
-    {
+    let session = if let Some(session) = {
         let reviews = state.reviews.read().await;
-        if let Some(session) = reviews.get(&id) {
-            return Ok(Json(session.clone()));
+        reviews.get(&id).cloned()
+    } {
+        session
+    } else {
+        match state.storage.get_review(&id).await {
+            Ok(Some(session)) => session,
+            _ => return Err(StatusCode::NOT_FOUND),
         }
-    }
-    // Fall back to storage backend (historical reviews in PostgreSQL)
-    match state.storage.get_review(&id).await {
-        Ok(Some(session)) => Ok(Json(session)),
-        _ => Err(StatusCode::NOT_FOUND),
-    }
+    };
+
+    let inventory = load_review_inventory(&state).await;
+    let latest_by_source = latest_review_started_by_source(&inventory);
+    Ok(Json(apply_dynamic_review_state(session, &latest_by_source)))
 }
 
 pub async fn list_reviews(
@@ -724,30 +790,21 @@ pub async fn list_reviews(
     let page = params.page.unwrap_or(1).clamp(1, 10_000);
     let per_page = params.per_page.unwrap_or(20).clamp(1, 100);
 
-    // Check in-memory first
-    let mut list: Vec<ReviewListItem> = {
-        let reviews = state.reviews.read().await;
-        reviews.values().map(ReviewListItem::from_session).collect()
-    };
-
-    // Fall back to storage backend for historical reviews not in memory
-    let limit = (page * per_page + per_page) as i64; // fetch enough to cover requested page
-    if let Ok(stored) = state.storage.list_reviews(limit, 0).await {
-        let in_memory_ids: std::collections::HashSet<String> =
-            list.iter().map(|r| r.id.clone()).collect();
-        for session in &stored {
-            if !in_memory_ids.contains(&session.id) {
-                list.push(ReviewListItem::from_session(session));
-            }
-        }
-    }
-
-    list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    let mut reviews = load_review_inventory(&state).await;
+    let latest_by_source = latest_review_started_by_source(&reviews);
+    reviews = reviews
+        .into_iter()
+        .map(|session| apply_dynamic_review_state(session, &latest_by_source))
+        .collect();
+    reviews.sort_by(|a, b| b.started_at.cmp(&a.started_at));
 
     let start = (page - 1).saturating_mul(per_page);
-    let list = if start < list.len() {
-        let end = list.len().min(start.saturating_add(per_page));
-        list[start..end].to_vec()
+    let list = if start < reviews.len() {
+        let end = reviews.len().min(start.saturating_add(per_page));
+        reviews[start..end]
+            .iter()
+            .map(ReviewListItem::from_session)
+            .collect()
     } else {
         Vec::new()
     };
@@ -984,7 +1041,11 @@ pub async fn update_comment_lifecycle(
     };
 
     if status_changed {
-        session.summary = Some(CommentSynthesizer::generate_summary(&session.comments));
+        let previous_summary = session.summary.clone();
+        session.summary = Some(CommentSynthesizer::inherit_review_state(
+            CommentSynthesizer::generate_summary(&session.comments),
+            previous_summary.as_ref(),
+        ));
         persist_updated_review_session(&state, session).await;
     }
 
@@ -2102,7 +2163,13 @@ async fn run_pr_review_task(
     match result {
         Ok(Ok(review_result)) => {
             let comments = review_result.comments;
-            let summary = CommentSynthesizer::generate_summary(&comments);
+            let summary = CommentSynthesizer::apply_verification(
+                CommentSynthesizer::generate_summary(&comments),
+                crate::review::summarize_review_verification(
+                    review_result.verification_report.as_ref(),
+                    &review_result.warnings,
+                ),
+            );
             let files_reviewed = count_reviewed_files(&comments);
 
             let mut github_posted = false;

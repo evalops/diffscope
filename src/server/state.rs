@@ -334,9 +334,13 @@ impl AppState {
                 Ok(mut loaded) => {
                     for session in loaded.values_mut() {
                         if session.summary.is_some() || !session.comments.is_empty() {
+                            let previous_summary = session.summary.clone();
                             session.summary =
-                                Some(crate::core::CommentSynthesizer::generate_summary(
-                                    &session.comments,
+                                Some(crate::core::CommentSynthesizer::inherit_review_state(
+                                    crate::core::CommentSynthesizer::generate_summary(
+                                        &session.comments,
+                                    ),
+                                    previous_summary.as_ref(),
                                 ));
                         }
                     }
@@ -460,6 +464,8 @@ pub struct ReviewListItem {
     pub diff_source: String,
     pub started_at: i64,
     pub completed_at: Option<i64>,
+    pub comments: Vec<Comment>,
+    pub summary: Option<ReviewSummary>,
     pub files_reviewed: usize,
     pub comment_count: usize,
     pub overall_score: Option<f32>,
@@ -475,6 +481,8 @@ impl ReviewListItem {
             diff_source: session.diff_source.clone(),
             started_at: session.started_at,
             completed_at: session.completed_at,
+            comments: session.comments.clone(),
+            summary: session.summary.clone(),
             files_reviewed: session.files_reviewed,
             comment_count: session.comments.len(),
             overall_score: session.summary.as_ref().map(|s| s.overall_score),

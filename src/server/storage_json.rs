@@ -86,8 +86,10 @@ impl JsonStorageBackend {
 
     fn refresh_summary(session: &mut ReviewSession) {
         if session.summary.is_some() || !session.comments.is_empty() {
-            session.summary = Some(crate::core::CommentSynthesizer::generate_summary(
-                &session.comments,
+            let previous_summary = session.summary.clone();
+            session.summary = Some(crate::core::CommentSynthesizer::inherit_review_state(
+                crate::core::CommentSynthesizer::generate_summary(&session.comments),
+                previous_summary.as_ref(),
             ));
         }
     }
@@ -534,6 +536,8 @@ mod tests {
             dismissed_comments: 0,
             open_blockers: 2,
             merge_readiness: crate::core::comment::MergeReadiness::NeedsAttention,
+            verification: crate::core::comment::ReviewVerificationSummary::default(),
+            readiness_reasons: Vec::new(),
         });
 
         backend.save_review(&session).await.unwrap();

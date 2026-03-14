@@ -51,6 +51,10 @@ pub struct ReviewSummary {
     pub open_blockers: usize,
     #[serde(default)]
     pub merge_readiness: MergeReadiness,
+    #[serde(default)]
+    pub verification: ReviewVerificationSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub readiness_reasons: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -85,8 +89,9 @@ impl CommentStatus {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum MergeReadiness {
     Ready,
-    #[default]
     NeedsAttention,
+    #[default]
+    NeedsReReview,
 }
 
 impl std::fmt::Display for MergeReadiness {
@@ -94,6 +99,41 @@ impl std::fmt::Display for MergeReadiness {
         match self {
             MergeReadiness::Ready => write!(f, "Ready"),
             MergeReadiness::NeedsAttention => write!(f, "Needs attention"),
+            MergeReadiness::NeedsReReview => write!(f, "Needs re-review"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ReviewVerificationSummary {
+    #[serde(default)]
+    pub state: ReviewVerificationState,
+    #[serde(default)]
+    pub judge_count: usize,
+    #[serde(default)]
+    pub required_votes: usize,
+    #[serde(default)]
+    pub warning_count: usize,
+    #[serde(default)]
+    pub filtered_comments: usize,
+    #[serde(default)]
+    pub abstained_comments: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum ReviewVerificationState {
+    #[default]
+    NotApplicable,
+    Verified,
+    Inconclusive,
+}
+
+impl std::fmt::Display for ReviewVerificationState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReviewVerificationState::NotApplicable => write!(f, "Not applicable"),
+            ReviewVerificationState::Verified => write!(f, "Verified"),
+            ReviewVerificationState::Inconclusive => write!(f, "Inconclusive"),
         }
     }
 }
