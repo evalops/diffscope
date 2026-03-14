@@ -88,7 +88,7 @@ pub(super) fn apply_review_runtime_state(
         reasons.push("verification was inconclusive or fail-open; rerun this review".to_string());
     }
     if stale_review {
-        reasons.push("a newer review exists for this pull request".to_string());
+        reasons.push("new commits landed after this review".to_string());
     }
     summary.readiness_reasons = reasons;
     summary.merge_readiness = if !summary.readiness_reasons.is_empty() {
@@ -296,7 +296,7 @@ mod tests {
         assert_eq!(summary.merge_readiness, MergeReadiness::NeedsReReview);
         assert_eq!(
             summary.readiness_reasons,
-            vec!["a newer review exists for this pull request".to_string()]
+            vec!["new commits landed after this review".to_string()]
         );
     }
 }

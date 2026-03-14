@@ -127,6 +127,8 @@ pub struct ReviewSession {
     pub id: String,
     pub status: ReviewStatus,
     pub diff_source: String,
+    #[serde(default)]
+    pub github_head_sha: Option<String>,
     pub started_at: i64,
     pub completed_at: Option<i64>,
     pub comments: Vec<Comment>,

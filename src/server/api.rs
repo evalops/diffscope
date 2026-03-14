@@ -380,6 +380,7 @@ pub async fn start_review(
         id: id.clone(),
         status: ReviewStatus::Pending,
         diff_source: display_source,
+        github_head_sha: None,
         started_at: current_timestamp(),
         completed_at: None,
         comments: Vec::new(),
@@ -726,31 +727,47 @@ async fn load_review_inventory(state: &Arc<AppState>) -> Vec<ReviewSession> {
     sessions
 }
 
-fn latest_review_started_by_source(
+#[derive(Debug, Clone)]
+struct LatestGitHubHead {
+    started_at: i64,
+    head_sha: String,
+}
+
+fn latest_review_head_by_source(
     reviews: &[ReviewSession],
-) -> std::collections::HashMap<String, i64> {
-    let mut latest = std::collections::HashMap::new();
+) -> std::collections::HashMap<String, LatestGitHubHead> {
+    let mut latest: std::collections::HashMap<String, LatestGitHubHead> =
+        std::collections::HashMap::new();
     for review in reviews {
+        let Some(head_sha) = review.github_head_sha.as_ref() else {
+            continue;
+        };
         if !review.diff_source.starts_with("pr:") {
             continue;
         }
-        latest
-            .entry(review.diff_source.clone())
-            .and_modify(|current: &mut i64| *current = (*current).max(review.started_at))
-            .or_insert(review.started_at);
+        let candidate = LatestGitHubHead {
+            started_at: review.started_at,
+            head_sha: head_sha.clone(),
+        };
+        match latest.get(&review.diff_source) {
+            Some(current) if current.started_at >= review.started_at => {}
+            _ => {
+                latest.insert(review.diff_source.clone(), candidate);
+            }
+        }
     }
     latest
 }
 
 fn apply_dynamic_review_state(
     mut session: ReviewSession,
-    latest_by_source: &std::collections::HashMap<String, i64>,
+    latest_by_source: &std::collections::HashMap<String, LatestGitHubHead>,
 ) -> ReviewSession {
-    let stale_review = session.diff_source.starts_with("pr:")
-        && latest_by_source
-            .get(&session.diff_source)
-            .copied()
-            .is_some_and(|latest| latest > session.started_at);
+    let stale_review = session
+        .github_head_sha
+        .as_ref()
+        .zip(latest_by_source.get(&session.diff_source))
+        .is_some_and(|(current_head, latest)| latest.head_sha != *current_head);
 
     if let Some(summary) = session.summary.take() {
         session.summary = Some(CommentSynthesizer::apply_runtime_review_state(
@@ -779,7 +796,7 @@ pub async fn get_review(
     };
 
     let inventory = load_review_inventory(&state).await;
-    let latest_by_source = latest_review_started_by_source(&inventory);
+    let latest_by_source = latest_review_head_by_source(&inventory);
     Ok(Json(apply_dynamic_review_state(session, &latest_by_source)))
 }
 
@@ -791,7 +808,7 @@ pub async fn list_reviews(
     let per_page = params.per_page.unwrap_or(20).clamp(1, 100);
 
     let mut reviews = load_review_inventory(&state).await;
-    let latest_by_source = latest_review_started_by_source(&reviews);
+    let latest_by_source = latest_review_head_by_source(&reviews);
     reviews = reviews
         .into_iter()
         .map(|session| apply_dynamic_review_state(session, &latest_by_source))
@@ -1499,6 +1516,31 @@ async fn github_api_get_diff(
     Ok(text)
 }
 
+async fn fetch_github_pr_head_sha(
+    client: &reqwest::Client,
+    token: &str,
+    repo: &str,
+    pr_number: u32,
+) -> Result<String, String> {
+    let pr_url = format!("https://api.github.com/repos/{}/pulls/{}", repo, pr_number);
+    let pr_resp = github_api_get(client, token, &pr_url).await?;
+    if !pr_resp.status().is_success() {
+        let status = pr_resp.status();
+        let body = pr_resp.text().await.unwrap_or_default();
+        return Err(format!("Failed to get PR info {}: {}", status, body));
+    }
+    let pr_data: serde_json::Value = pr_resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse PR response: {}", e))?;
+    pr_data
+        .get("head")
+        .and_then(|head| head.get("sha"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "No head SHA in PR response".to_string())
+}
+
 // === GitHub integration types and handlers ===
 
 #[derive(Serialize)]
@@ -2044,6 +2086,10 @@ pub async fn start_pr_review(
     let diff_content = github_api_get_diff(&state.http_client, &token, &diff_url)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    let head_sha =
+        fetch_github_pr_head_sha(&state.http_client, &token, &request.repo, request.pr_number)
+            .await
+            .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
     let id = Uuid::new_v4().to_string();
     let diff_source = format!("pr:{}#{}", request.repo, request.pr_number);
@@ -2052,6 +2098,7 @@ pub async fn start_pr_review(
         id: id.clone(),
         status: ReviewStatus::Pending,
         diff_source: diff_source.clone(),
+        github_head_sha: Some(head_sha.clone()),
         started_at: current_timestamp(),
         completed_at: None,
         comments: Vec::new(),
@@ -2070,6 +2117,7 @@ pub async fn start_pr_review(
     let review_id = id.clone();
     let repo = request.repo.clone();
     let pr_number = request.pr_number;
+    let pr_head_sha = head_sha.clone();
     let post_results = request.post_results;
 
     tokio::spawn(async move {
@@ -2079,6 +2127,7 @@ pub async fn start_pr_review(
             diff_content,
             repo,
             pr_number,
+            pr_head_sha,
             post_results,
         )
         .await;
@@ -2096,6 +2145,7 @@ async fn run_pr_review_task(
     diff_content: String,
     repo: String,
     pr_number: u32,
+    _head_sha: String,
     post_results: bool,
 ) {
     let _permit = match state.review_semaphore.clone().acquire_owned().await {
@@ -3093,5 +3143,59 @@ mod tests {
         assert_eq!(req.repo, "owner/repo");
         assert_eq!(req.pr_number, 42);
         assert!(req.post_results);
+    }
+
+    fn make_pr_review_session(
+        id: &str,
+        started_at: i64,
+        head_sha: &str,
+    ) -> crate::server::state::ReviewSession {
+        crate::server::state::ReviewSession {
+            id: id.to_string(),
+            status: crate::server::state::ReviewStatus::Complete,
+            diff_source: "pr:owner/repo#42".to_string(),
+            github_head_sha: Some(head_sha.to_string()),
+            started_at,
+            completed_at: Some(started_at + 1),
+            comments: Vec::new(),
+            summary: Some(crate::core::CommentSynthesizer::generate_summary(&[])),
+            files_reviewed: 0,
+            error: None,
+            pr_summary_text: None,
+            diff_content: None,
+            event: None,
+            progress: None,
+        }
+    }
+
+    #[test]
+    fn stale_detection_ignores_same_head_reruns() {
+        let older = make_pr_review_session("r1", 10, "sha-a");
+        let newer_same_head = make_pr_review_session("r2", 20, "sha-a");
+        let latest_by_source = latest_review_head_by_source(&[older.clone(), newer_same_head]);
+        let updated = apply_dynamic_review_state(older, &latest_by_source);
+        let summary = updated.summary.expect("summary");
+        assert_eq!(
+            summary.merge_readiness,
+            crate::core::comment::MergeReadiness::Ready
+        );
+        assert!(summary.readiness_reasons.is_empty());
+    }
+
+    #[test]
+    fn stale_detection_requires_newer_head_sha() {
+        let older = make_pr_review_session("r1", 10, "sha-a");
+        let newer_head = make_pr_review_session("r2", 20, "sha-b");
+        let latest_by_source = latest_review_head_by_source(&[older.clone(), newer_head]);
+        let updated = apply_dynamic_review_state(older, &latest_by_source);
+        let summary = updated.summary.expect("summary");
+        assert_eq!(
+            summary.merge_readiness,
+            crate::core::comment::MergeReadiness::NeedsReReview
+        );
+        assert_eq!(
+            summary.readiness_reasons,
+            vec!["new commits landed after this review".to_string()]
+        );
     }
 }

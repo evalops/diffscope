@@ -424,6 +424,7 @@ mod tests {
             id: id.to_string(),
             status,
             diff_source: "head".to_string(),
+            github_head_sha: None,
             started_at,
             completed_at: None,
             comments: vec![],

@@ -419,6 +419,7 @@ pub async fn handle_webhook(
                     id: review_id.clone(),
                     status: ReviewStatus::Pending,
                     diff_source: diff_source.clone(),
+                    github_head_sha: Some(head_sha.clone()),
                     started_at: current_timestamp(),
                     completed_at: None,
                     comments: Vec::new(),

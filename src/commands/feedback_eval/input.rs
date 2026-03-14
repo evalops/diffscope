@@ -47,6 +47,7 @@ mod tests {
             id: "review-1".to_string(),
             status: ReviewStatus::Complete,
             diff_source: "raw".to_string(),
+            github_head_sha: None,
             started_at: 1,
             completed_at: Some(2),
             comments,

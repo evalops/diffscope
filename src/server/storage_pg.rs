@@ -99,10 +99,11 @@ impl StorageBackend for PgStorageBackend {
 
         sqlx::query(
             r#"
-            INSERT INTO reviews (id, status, diff_source, started_at, completed_at, files_reviewed, error, pr_summary_text, summary_json)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO reviews (id, status, diff_source, github_head_sha, started_at, completed_at, files_reviewed, error, pr_summary_text, summary_json)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (id) DO UPDATE SET
                 status = EXCLUDED.status,
+                github_head_sha = EXCLUDED.github_head_sha,
                 completed_at = EXCLUDED.completed_at,
                 files_reviewed = EXCLUDED.files_reviewed,
                 error = EXCLUDED.error,
@@ -114,6 +115,7 @@ impl StorageBackend for PgStorageBackend {
         .bind(&session.id)
         .bind(&status_str)
         .bind(&session.diff_source)
+        .bind(&session.github_head_sha)
         .bind(started_at)
         .bind(completed_at)
         .bind(session.files_reviewed as i32)
@@ -166,10 +168,18 @@ impl StorageBackend for PgStorageBackend {
 
     async fn get_review(&self, id: &str) -> anyhow::Result<Option<ReviewSession>> {
         let row = sqlx::query_as::<_, (
-            String, String, String, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
-            i32, Option<String>, Option<String>, Option<serde_json::Value>,
+            String,
+            String,
+            String,
+            Option<String>,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            i32,
+            Option<String>,
+            Option<String>,
+            Option<serde_json::Value>,
         )>(
-            "SELECT id, status, diff_source, started_at, completed_at, files_reviewed, error, pr_summary_text, summary_json FROM reviews WHERE id = $1"
+            "SELECT id, status, diff_source, github_head_sha, started_at, completed_at, files_reviewed, error, pr_summary_text, summary_json FROM reviews WHERE id = $1"
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -180,7 +190,7 @@ impl StorageBackend for PgStorageBackend {
         let comments = self.load_comments(id).await?;
         let event = self.load_event(id).await?;
         let previous_summary: Option<ReviewSummary> =
-            row.8.and_then(|v| serde_json::from_value(v).ok());
+            row.9.and_then(|v| serde_json::from_value(v).ok());
         let summary = Some(crate::core::CommentSynthesizer::inherit_review_state(
             crate::core::CommentSynthesizer::generate_summary(&comments),
             previous_summary.as_ref(),
@@ -190,13 +200,14 @@ impl StorageBackend for PgStorageBackend {
             id: row.0,
             status: parse_status(&row.1),
             diff_source: row.2,
-            started_at: row.3.timestamp(),
-            completed_at: row.4.map(|t| t.timestamp()),
+            github_head_sha: row.3,
+            started_at: row.4.timestamp(),
+            completed_at: row.5.map(|t| t.timestamp()),
             comments,
             summary,
-            files_reviewed: row.5 as usize,
-            error: row.6,
-            pr_summary_text: row.7,
+            files_reviewed: row.6 as usize,
+            error: row.7,
+            pr_summary_text: row.8,
             diff_content: None,
             event,
             progress: None,
@@ -205,10 +216,18 @@ impl StorageBackend for PgStorageBackend {
 
     async fn list_reviews(&self, limit: i64, offset: i64) -> anyhow::Result<Vec<ReviewSession>> {
         let rows = sqlx::query_as::<_, (
-            String, String, String, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>,
-            i32, Option<String>, Option<String>, Option<serde_json::Value>,
+            String,
+            String,
+            String,
+            Option<String>,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            i32,
+            Option<String>,
+            Option<String>,
+            Option<serde_json::Value>,
         )>(
-            "SELECT id, status, diff_source, started_at, completed_at, files_reviewed, error, pr_summary_text, summary_json FROM reviews ORDER BY started_at DESC LIMIT $1 OFFSET $2"
+            "SELECT id, status, diff_source, github_head_sha, started_at, completed_at, files_reviewed, error, pr_summary_text, summary_json FROM reviews ORDER BY started_at DESC LIMIT $1 OFFSET $2"
         )
         .bind(limit)
         .bind(offset)
@@ -219,8 +238,9 @@ impl StorageBackend for PgStorageBackend {
         for row in rows {
             let review_id = row.0.clone();
             let comments = self.load_comments(&review_id).await?;
+            let event = self.load_event(&review_id).await?;
             let previous_summary: Option<ReviewSummary> =
-                row.8.and_then(|v| serde_json::from_value(v).ok());
+                row.9.and_then(|v| serde_json::from_value(v).ok());
             let summary = Some(crate::core::CommentSynthesizer::inherit_review_state(
                 crate::core::CommentSynthesizer::generate_summary(&comments),
                 previous_summary.as_ref(),
@@ -229,15 +249,16 @@ impl StorageBackend for PgStorageBackend {
                 id: review_id,
                 status: parse_status(&row.1),
                 diff_source: row.2,
-                started_at: row.3.timestamp(),
-                completed_at: row.4.map(|t| t.timestamp()),
+                github_head_sha: row.3,
+                started_at: row.4.timestamp(),
+                completed_at: row.5.map(|t| t.timestamp()),
                 comments,
                 summary,
-                files_reviewed: row.5 as usize,
-                error: row.6,
-                pr_summary_text: row.7,
+                files_reviewed: row.6 as usize,
+                error: row.7,
+                pr_summary_text: row.8,
                 diff_content: None,
-                event: None,
+                event,
                 progress: None,
             });
         }
