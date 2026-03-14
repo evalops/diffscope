@@ -50,6 +50,7 @@ function computeAnalytics(reviews: ReviewSession[]) {
     .map(([name, value]) => ({ name, value }))
 
   const feedbackTotalsByCategory: Record<string, { accepted: number; rejected: number }> = {}
+  const feedbackTotalsByRule: Record<string, { accepted: number; rejected: number }> = {}
   const feedbackCoverageSeries = completed.map((r, i) => {
     let accepted = 0
     let rejected = 0
@@ -70,6 +71,17 @@ function computeAnalytics(reviews: ReviewSession[]) {
         current.rejected += 1
       }
       feedbackTotalsByCategory[comment.category] = current
+
+      const ruleId = comment.rule_id?.trim()
+      if (ruleId) {
+        const currentRule = feedbackTotalsByRule[ruleId] ?? { accepted: 0, rejected: 0 }
+        if (comment.feedback === 'accept') {
+          currentRule.accepted += 1
+        } else {
+          currentRule.rejected += 1
+        }
+        feedbackTotalsByRule[ruleId] = currentRule
+      }
     }
 
     const totalComments = r.comments.length
@@ -100,12 +112,35 @@ function computeAnalytics(reviews: ReviewSession[]) {
     })
     .sort((left, right) => right.total - left.total || right.accepted - left.accepted)
 
+  const feedbackRuleData = Object.entries(feedbackTotalsByRule)
+    .map(([name, totals]) => {
+      const total = totals.accepted + totals.rejected
+      return {
+        name,
+        accepted: totals.accepted,
+        rejected: totals.rejected,
+        total,
+        acceptanceRate: total > 0 ? totals.accepted / total : 0,
+      }
+    })
+    .sort((left, right) => right.total - left.total || right.accepted - left.accepted)
+
   const topAcceptedCategories = feedbackCategoryData
     .filter(item => item.accepted > 0)
     .sort((left, right) => right.accepted - left.accepted || right.total - left.total)
     .slice(0, 5)
 
   const topRejectedCategories = feedbackCategoryData
+    .filter(item => item.rejected > 0)
+    .sort((left, right) => right.rejected - left.rejected || right.total - left.total)
+    .slice(0, 5)
+
+  const topAcceptedRules = feedbackRuleData
+    .filter(item => item.accepted > 0)
+    .sort((left, right) => right.accepted - left.accepted || right.total - left.total)
+    .slice(0, 5)
+
+  const topRejectedRules = feedbackRuleData
     .filter(item => item.rejected > 0)
     .sort((left, right) => right.rejected - left.rejected || right.total - left.total)
     .slice(0, 5)
@@ -140,6 +175,8 @@ function computeAnalytics(reviews: ReviewSession[]) {
     feedbackCoverageSeries,
     topAcceptedCategories,
     topRejectedCategories,
+    topAcceptedRules,
+    topRejectedRules,
     stats: {
       totalReviews: completed.length,
       avgScore,
@@ -241,7 +278,7 @@ function TrendList({ items, emptyLabel }: { items: FeedbackEvalTrendGap[]; empty
   )
 }
 
-function FeedbackCategoryList({
+function FeedbackBreakdownList({
   items,
   mode,
   emptyLabel,
@@ -300,6 +337,8 @@ export function Analytics() {
     feedbackCoverageSeries,
     topAcceptedCategories,
     topRejectedCategories,
+    topAcceptedRules,
+    topRejectedRules,
     stats,
   } = analytics
   const {
@@ -496,7 +535,7 @@ export function Analytics() {
             LEARNING LOOP
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
             <div className="bg-surface-1 border border-border rounded-lg p-4">
               <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
                 FEEDBACK COVERAGE
@@ -585,7 +624,7 @@ export function Analytics() {
                     <div className="text-[10px] font-semibold text-text-muted tracking-[0.05em] font-code mb-2">
                       MOST ACCEPTED
                     </div>
-                    <FeedbackCategoryList
+                    <FeedbackBreakdownList
                       items={topAcceptedCategories}
                       mode="accepted"
                       emptyLabel="No accepted categories yet"
@@ -595,7 +634,7 @@ export function Analytics() {
                     <div className="text-[10px] font-semibold text-text-muted tracking-[0.05em] font-code mb-2">
                       MOST REJECTED
                     </div>
-                    <FeedbackCategoryList
+                    <FeedbackBreakdownList
                       items={topRejectedCategories}
                       mode="rejected"
                       emptyLabel="No rejected categories yet"
@@ -605,6 +644,40 @@ export function Analytics() {
               ) : (
                 <div className="h-32 flex items-center justify-center text-center text-text-muted text-sm px-6">
                   No thumbs recorded yet. Label findings in review detail to train the reviewer.
+                </div>
+              )}
+            </div>
+
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                TOP LABELED RULES
+              </div>
+              {stats.labeledFeedbackTotal > 0 ? (
+                <div className="grid grid-cols-1 gap-4">
+                  <div>
+                    <div className="text-[10px] font-semibold text-text-muted tracking-[0.05em] font-code mb-2">
+                      MOST ACCEPTED
+                    </div>
+                    <FeedbackBreakdownList
+                      items={topAcceptedRules}
+                      mode="accepted"
+                      emptyLabel="No accepted rules yet"
+                    />
+                  </div>
+                  <div className="pt-3 border-t border-border-subtle">
+                    <div className="text-[10px] font-semibold text-text-muted tracking-[0.05em] font-code mb-2">
+                      MOST REJECTED
+                    </div>
+                    <FeedbackBreakdownList
+                      items={topRejectedRules}
+                      mode="rejected"
+                      emptyLabel="No rejected rules yet"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="h-32 flex items-center justify-center text-center text-text-muted text-sm px-6">
+                  Rule-level learning appears once findings with rule IDs receive thumbs.
                 </div>
               )}
             </div>
