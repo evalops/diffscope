@@ -1,0 +1,198 @@
+{
+  "name": "review-depth-performance",
+  "author": "diffscope",
+  "version": "1.0.0",
+  "description": "Performance, resource-management, and scalability benchmark pack for deeper live review runs.",
+  "languages": [
+    "python",
+    "go",
+    "rust",
+    "typescript"
+  ],
+  "categories": [
+    "performance"
+  ],
+  "thresholds": {
+    "min_precision": 0.45,
+    "min_recall": 0.35,
+    "min_f1": 0.4,
+    "max_false_positive_rate": 0.45,
+    "min_weighted_score": 0.45
+  },
+  "metadata": {
+    "purpose": "live-regression-eval",
+    "family": "review-depth"
+  },
+  "fixtures": [
+    {
+      "name": "python-n-plus-1-orm-query",
+      "category": "performance",
+      "language": "python",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/app/views/orders.py b/app/views/orders.py\nindex 1111111..2222222 100644\n--- a/app/views/orders.py\n+++ b/app/views/orders.py\n@@ -1,6 +1,6 @@\n def list_orders(request):\n-    orders = Order.objects.filter(status=\"open\").select_related(\"customer\")\n+    orders = Order.objects.filter(status=\"open\")\n     payload = []\n     for order in orders:\n         payload.append({\"id\": order.id, \"customer\": order.customer.name})\n     return JsonResponse({\"orders\": payload})\n",
+      "expected_findings": [
+        {
+          "description": "Removing select_related causes an N+1 query pattern when the loop dereferences order.customer for every row.",
+          "severity": "Warning",
+          "category": "Performance",
+          "file_pattern": "app/views/orders.py",
+          "line_hint": 2,
+          "contains_any": [
+            "n+1 query",
+            "select_related was removed",
+            "order.customer in the loop triggers extra queries",
+            "prefetch the relation",
+            "orm query per row"
+          ],
+          "rule_id": "perf.query.n-plus-one"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "ORM-backed endpoints should preserve eager loading when per-row relation access remains in the response loop.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "go-unbounded-goroutine-spawn",
+      "category": "performance",
+      "language": "go",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/internal/jobs/run.go b/internal/jobs/run.go\nindex 1111111..2222222 100644\n--- a/internal/jobs/run.go\n+++ b/internal/jobs/run.go\n@@ -1,5 +1,5 @@\n for _, item := range items {\n-    process(item)\n+    go process(item)\n }\n waitForCompletion()\n",
+      "expected_findings": [
+        {
+          "description": "Spawning one goroutine per item without a semaphore or worker pool creates unbounded concurrency and can exhaust memory or CPU under load.",
+          "severity": "Warning",
+          "category": "Performance",
+          "file_pattern": "internal/jobs/run.go",
+          "line_hint": 2,
+          "contains_any": [
+            "unbounded goroutine",
+            "one goroutine per item",
+            "missing semaphore or worker pool",
+            "can overwhelm the runtime",
+            "needs bounded concurrency"
+          ],
+          "rule_id": "perf.concurrency.unbounded-goroutines"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Batch processing loops should not create unbounded goroutine fan-out without backpressure.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "rust-clone-in-hot-loop",
+      "category": "performance",
+      "language": "rust",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/src/metrics.rs b/src/metrics.rs\nindex 1111111..2222222 100644\n--- a/src/metrics.rs\n+++ b/src/metrics.rs\n@@ -2,6 +2,7 @@ pub fn total_name_bytes(records: &[Record]) -> usize {\n     let mut total = 0;\n     for record in records {\n-        total += record.name.len();\n+        let name = record.name.clone();\n+        total += name.len();\n     }\n     total\n }\n",
+      "expected_findings": [
+        {
+          "description": "Cloning a String inside the loop adds an unnecessary allocation on every iteration of a hot path.",
+          "severity": "Warning",
+          "category": "Performance",
+          "file_pattern": "src/metrics.rs",
+          "line_hint": 4,
+          "contains_any": [
+            "unnecessary clone in hot loop",
+            "allocates every iteration",
+            "use a borrowed &str instead",
+            "clone inside the loop",
+            "avoid repeated String allocation"
+          ],
+          "rule_id": "perf.allocation.clone-hot-loop"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Hot loops should avoid repeated heap allocations when borrowing is sufficient.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "ts-memory-leak-event-listener",
+      "category": "performance",
+      "language": "typescript",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/src/components/Sidebar.tsx b/src/components/Sidebar.tsx\nindex 1111111..2222222 100644\n--- a/src/components/Sidebar.tsx\n+++ b/src/components/Sidebar.tsx\n@@ -3,7 +3,6 @@ export function Sidebar() {\n   useEffect(() => {\n     window.addEventListener(\"resize\", handleResize);\n-    return () => window.removeEventListener(\"resize\", handleResize);\n   }, []);\n   return <div />;\n }\n",
+      "expected_findings": [
+        {
+          "description": "The resize listener is registered without a cleanup function, so repeated mounts leak listeners and duplicate work.",
+          "severity": "Warning",
+          "category": "Performance",
+          "file_pattern": "src/components/Sidebar.tsx",
+          "line_hint": 4,
+          "contains_any": [
+            "memory leak",
+            "missing cleanup",
+            "event listener is never removed",
+            "useEffect should return a cleanup",
+            "duplicate listeners on remount"
+          ],
+          "rule_id": "perf.memory.event-listener-leak"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "UI effects that register process-wide listeners should clean them up to avoid leaks and duplicate handlers.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "python-file-handle-no-close",
+      "category": "performance",
+      "language": "python",
+      "difficulty": "Easy",
+      "diff_content": "diff --git a/app/templates.py b/app/templates.py\nindex 1111111..2222222 100644\n--- a/app/templates.py\n+++ b/app/templates.py\n@@ -1,4 +1,4 @@\n def load_template(path: str) -> str:\n-    with open(path) as handle:\n-        return handle.read()\n+    handle = open(path)\n+    return handle.read()\n",
+      "expected_findings": [
+        {
+          "description": "The file is opened without a context manager or explicit close, so repeated calls can leak file descriptors.",
+          "severity": "Warning",
+          "category": "Performance",
+          "file_pattern": "app/templates.py",
+          "line_hint": 2,
+          "contains_any": [
+            "file handle leak",
+            "missing close",
+            "use a with statement",
+            "descriptor leak",
+            "open(path) without cleanup"
+          ],
+          "rule_id": "perf.resource.file-handle-leak"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "File I/O helpers should use context managers or explicit close paths so descriptors are not leaked under repeated use.",
+      "source": "deep-review-suite"
+    }
+  ]
+}

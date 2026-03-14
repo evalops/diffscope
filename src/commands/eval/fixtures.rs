@@ -533,4 +533,75 @@ expect:
             Some("design.api.error-type-change")
         );
     }
+
+    #[test]
+    fn test_checked_in_performance_pack_loads_expected_fixtures() {
+        let pack_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/deep_review_suite/review_depth_performance.json");
+
+        let fixtures = load_eval_fixtures_from_path(&pack_path).unwrap();
+
+        assert_eq!(fixtures.len(), 5);
+        let n_plus_one = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-performance/python-n-plus-1-orm-query")
+            })
+            .unwrap();
+        assert_eq!(
+            n_plus_one.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("perf.query.n-plus-one")
+        );
+
+        let goroutines = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-performance/go-unbounded-goroutine-spawn")
+            })
+            .unwrap();
+        assert_eq!(
+            goroutines.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("perf.concurrency.unbounded-goroutines")
+        );
+
+        let clone_hot_loop = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-performance/rust-clone-in-hot-loop")
+            })
+            .unwrap();
+        assert_eq!(
+            clone_hot_loop.fixture.expect.must_find[0]
+                .rule_id
+                .as_deref(),
+            Some("perf.allocation.clone-hot-loop")
+        );
+
+        let listener_leak = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-performance/ts-memory-leak-event-listener")
+            })
+            .unwrap();
+        assert_eq!(
+            listener_leak.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("perf.memory.event-listener-leak")
+        );
+
+        let file_handle = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-performance/python-file-handle-no-close")
+            })
+            .unwrap();
+        assert_eq!(
+            file_handle.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("perf.resource.file-handle-leak")
+        );
+    }
 }
