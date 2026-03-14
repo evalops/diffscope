@@ -48,12 +48,12 @@ jobs:
 
       - name: Run DiffScope
         if: steps.check_key.outputs.skip != 'true' && steps.check_image.outputs.available == 'true'
-        uses: docker://ghcr.io/evalops/diffscope:latest
-        continue-on-error: true
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        with:
-          args: review --diff pr.diff --output-format json --output comments.json
+        run: |
+          docker run --rm \
+            -e OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
+            -v "$PWD":/workspace -w /workspace \
+            ghcr.io/evalops/diffscope:latest \
+            review --diff pr.diff --output-format json --output comments.json
 
       - name: Post comments
         if: steps.check_key.outputs.skip != 'true' && steps.check_image.outputs.available == 'true'
