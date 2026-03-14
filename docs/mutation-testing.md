@@ -15,7 +15,7 @@ cargo mutants -f '*storage_pg*'
 cargo mutants -f '*cost*'
 ```
 
-CI runs mutation on `*storage_json*` with a timeout; see [CI job](#ci) below.
+CI runs mutation on `*storage_json*` with a timeout; see [CI job](#ci) below. The `*state*` and `*storage_pg*` globs are not run in CI (too many mutants, longer runtime); run locally when auditing those areas.
 
 ## Known equivalent / accepted mutants
 
@@ -36,6 +36,17 @@ After adding targeted tests (refresh_summary, get_event_stats exact aggregates/s
 - **prune**: Boundary `now - started_at > max_age_secs` — test asserts review exactly at boundary is not pruned; max_count test asserts oldest removed.
 
 If new mutants appear in these regions, add assertions that would fail on the wrong operator/formula, or add them to this table with a one-line rationale.
+
+### state.rs and storage_pg.rs (local only)
+
+Mutation on `*state*` and `*storage_pg*` is not in CI. Summary from a local run (interrupted; full run is slow):
+
+| Glob          | Mutants | Notes |
+|---------------|---------|--------|
+| `*state*`     | ~90     | Many missed: arithmetic in cost/age, `load_reviews_from_disk`, `mark_running` / `complete_review` / `fail_review` / `prune_old_reviews` (no-op or wrong operator), `current_timestamp`, `ReviewEventBuilder`. Killing these would need more unit tests or integration tests that assert side effects. |
+| `*storage_pg*`| ~67     | Many missed: `migrate`, `is_empty`, `parse_comment_status`, `save_review` / `get_review` / `list_reviews` / `delete_review` / `save_event` / `list_events` (stubbed return or wrong operator). Would need PostgreSQL-backed tests or contract tests to kill. |
+
+To re-run: `cargo mutants -f '*state*'` and `cargo mutants -f '*storage_pg*'` (allow several minutes each).
 
 ## Pre-push vs CI
 

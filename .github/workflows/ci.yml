@@ -78,7 +78,8 @@ jobs:
       - name: Mutation test (storage_json)
         run: |
           timeout 900 cargo mutants -f '*storage_json*' 2>&1 | tee mutation.log || true
-          MISSED=$(grep -E '[0-9]+ missed' mutation.log | tail -1 | grep -oE '[0-9]+' | head -1 || echo "0")
+          # Extract the missed count (e.g. "14 mutants ... 2 missed, 9 caught" -> 2), not the total
+          MISSED=$(grep -E '[0-9]+ missed' mutation.log | tail -1 | sed -n 's/.* \([0-9][0-9]*\) missed.*/\1/p' | head -1 || echo "0")
           echo "missed=$MISSED" >> "$GITHUB_OUTPUT"
         id: mutation
       - name: Check mutation baseline

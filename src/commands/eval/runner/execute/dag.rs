@@ -188,6 +188,7 @@ fn stage_hints(stage: EvalFixtureStage) -> DagNodeExecutionHints {
             side_effects: false,
             subgraph: Some("review_pipeline".to_string()),
         },
+        // Linear chain (each depends on previous); parallelizable kept for consistency / future DAG shape.
         EvalFixtureStage::ExpectationMatching
         | EvalFixtureStage::CommentCountValidation
         | EvalFixtureStage::BenchmarkMetrics => DagNodeExecutionHints {
