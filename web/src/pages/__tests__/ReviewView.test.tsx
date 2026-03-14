@@ -175,4 +175,44 @@ describe('ReviewView blocker mode', () => {
 
     expect(screen.getByText('No open blockers remain in this review.')).toBeInTheDocument()
   })
+
+  it('shows a train-the-reviewer callout when thumbs coverage is low', () => {
+    useReviewMock.mockReturnValue({ data: makeReview(), isLoading: false })
+
+    render(<ReviewView />)
+
+    expect(screen.getByText('Train the reviewer')).toBeInTheDocument()
+    expect(screen.getByText('No thumbs recorded yet. Label findings below to train the reviewer.')).toBeInTheDocument()
+    expect(screen.getByText('0%')).toBeInTheDocument()
+  })
+
+  it('hides the train-the-reviewer callout when enough findings are labeled', () => {
+    useReviewMock.mockReturnValue({
+      data: makeReview({
+        comments: [
+          makeComment({ feedback: 'accept' }),
+          makeComment({
+            id: 'comment-2',
+            file_path: 'src/b.ts',
+            content: 'Informational note',
+            severity: 'Info',
+            category: 'Style',
+            feedback: 'reject',
+          }),
+          makeComment({
+            id: 'comment-3',
+            file_path: 'src/b.ts',
+            content: 'Resolved blocker',
+            severity: 'Warning',
+            status: 'Resolved',
+          }),
+        ],
+      }),
+      isLoading: false,
+    })
+
+    render(<ReviewView />)
+
+    expect(screen.queryByText('Train the reviewer')).not.toBeInTheDocument()
+  })
 })

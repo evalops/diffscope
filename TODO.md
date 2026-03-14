@@ -93,7 +93,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 54. [ ] Add keyboard actions for thumbs, resolve, and jump-to-next-finding workflows.
 55. [x] Add file-level readiness summaries in the diff sidebar.
 56. [x] Add lifecycle-aware PR summaries that explain what still blocks merge.
-57. [ ] Add a "train the reviewer" callout when thumbs coverage on a review is low.
+57. [x] Add a "train the reviewer" callout when thumbs coverage on a review is low.
 58. [ ] Add review-change comparisons so users can diff one review run against the next on the same PR.
 59. [ ] Add better surfacing for incremental PR reviews so users know when only the delta was reviewed.
 60. [ ] Add discussion workflows that can convert repeated human comments into candidate rules or context snippets.
@@ -165,4 +165,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Add a blocker-only review mode that narrows large reviews to open Error and Warning findings.
 - [x] Add file-level readiness summaries to the review diff sidebar.
 - [x] Add visible feedback badges on comments so accepted and rejected states are not icon-only.
+- [x] Add a train-the-reviewer callout on review detail when thumbs coverage is low.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.

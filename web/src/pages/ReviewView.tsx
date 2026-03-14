@@ -13,6 +13,8 @@ import type { Comment, CommentLifecycleStatus, MergeReadiness, Severity, ReviewE
 type ViewMode = 'diff' | 'list'
 
 const BLOCKING_SEVERITIES = new Set<Severity>(['Error', 'Warning'])
+const LOW_FEEDBACK_COVERAGE_THRESHOLD = 0.5
+const MIN_FEEDBACK_COVERAGE_FINDINGS = 3
 
 type ReviewCommentFilters = {
   severityFilter: Set<Severity>
@@ -212,6 +214,11 @@ export function ReviewView() {
 
   const openErrorCount = review.summary?.open_by_severity.Error ?? 0
   const openWarningCount = review.summary?.open_by_severity.Warning ?? 0
+  const labeledFeedbackCount = comments.filter((comment) => comment.feedback === 'accept' || comment.feedback === 'reject').length
+  const feedbackCoverage = comments.length > 0 ? labeledFeedbackCount / comments.length : 1
+  const feedbackCoveragePercent = Math.round(feedbackCoverage * 100)
+  const shouldShowFeedbackCallout = comments.length >= MIN_FEEDBACK_COVERAGE_FINDINGS
+    && feedbackCoverage < LOW_FEEDBACK_COVERAGE_THRESHOLD
 
   return (
     <div className="flex h-full">
@@ -349,6 +356,30 @@ export function ReviewView() {
               hint="Info + Suggestion"
               tone={review.summary.open_informational_comments > 0 ? 'accent' : 'muted'}
             />
+          </div>
+        )}
+
+        {shouldShowFeedbackCallout && (
+          <div className="px-3 py-3 border-b border-accent/20 bg-accent/5">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 w-7 h-7 rounded-full bg-accent/10 flex items-center justify-center shrink-0">
+                <MessageSquare size={14} className="text-accent" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-semibold text-accent tracking-[0.08em] font-code uppercase">
+                  Train the reviewer
+                </div>
+                <p className="mt-1 text-[12px] text-text-primary leading-relaxed">
+                  {labeledFeedbackCount === 0
+                    ? 'No thumbs recorded yet. Label findings below to train the reviewer.'
+                    : `You've labeled ${labeledFeedbackCount} of ${comments.length} findings. Add a few more thumbs so future reviews learn what to keep or suppress.`}
+                </p>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="text-[13px] font-semibold font-code text-accent">{feedbackCoveragePercent}%</div>
+                <div className="text-[10px] text-text-muted">coverage</div>
+              </div>
+            </div>
           </div>
         )}
 
