@@ -882,14 +882,25 @@ export function ReviewView() {
               ))}
 
               {filteredComments.length === 0 && (
-                <div className="text-center py-16 text-text-muted">
-                  {showOnlyBlockers
-                    ? blockerCount === 0
+                <div className="text-center py-16 px-4">
+                  <p className="text-text-primary font-medium">
+                    {showOnlyBlockers
+                      ? blockerCount === 0
+                        ? 'No open blockers'
+                        : 'No blockers match filters'
+                      : review.comments.length === 0
+                        ? 'No findings'
+                        : 'No findings match filters'}
+                  </p>
+                  <p className="text-sm text-text-muted mt-1">
+                    {showOnlyBlockers && blockerCount === 0
                       ? 'No open blockers remain in this review.'
-                      : 'No blockers match the current filters.'
-                    : review.comments.length === 0
-                      ? 'No findings. Code looks good!'
-                      : 'No findings match the current filters.'}
+                      : showOnlyBlockers && blockerCount > 0
+                        ? 'Try changing severity or lifecycle filters.'
+                        : review.comments.length === 0
+                          ? 'Code looks good!'
+                          : 'Adjust filters above to see more.'}
+                  </p>
                 </div>
               )}
             </div>

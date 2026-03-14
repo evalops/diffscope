@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  /* Greptile-inspired olive/forest dark palette */
+  /* Default: olive/forest dark palette */
   --color-surface: #141a12;
   --color-surface-1: #1a2117;
   --color-surface-2: #212a1e;
@@ -40,6 +40,58 @@
   --color-hl-type: #ffcb6b;
 }
 
+/* Light theme: warm forest on cream */
+@media (prefers-color-scheme: light) {
+  :root:not(.dark) {
+    --color-surface: #f5f6f2;
+    --color-surface-1: #eef0e8;
+    --color-surface-2: #e4e8dc;
+    --color-surface-3: #d8ddce;
+    --color-border: #c8cfbc;
+    --color-border-subtle: #b8c0ac;
+    --color-text-primary: #1a2117;
+    --color-text-secondary: #3d4a36;
+    --color-text-muted: #5e6b58;
+    --color-accent: #16a34a;
+    --color-accent-dim: #15803d;
+    --color-accent-bg: #16a34a18;
+    --color-sev-error: #dc2626;
+    --color-sev-warning: #ca8a04;
+    --color-sev-info: #2563eb;
+    --color-sev-suggestion: #16a34a;
+    --color-diff-add-bg: #dcfce7;
+    --color-diff-add-line: #bbf7d0;
+    --color-diff-del-bg: #fee2e2;
+    --color-diff-del-line: #fecaca;
+    --color-diff-hunk: #e4e8dc;
+    --color-toggle-on: #16a34a;
+    --color-toggle-off: #c8cfbc;
+    --color-chart: #16a34a;
+    --color-chart-area: #16a34a25;
+    --color-badge-completed: #16a34a;
+    --color-badge-skipped: #5e6b58;
+    --color-badge-failed: #dc2626;
+    --color-sidebar-active: #16a34a14;
+    --color-hl-keyword: #7c3aed;
+    --color-hl-string: #15803d;
+    --color-hl-comment: #6b7280;
+    --color-hl-number: #c2410c;
+    --color-hl-type: #b45309;
+  }
+}
+
+/* Light scheme for form controls and scrollbars when in light theme */
+@media (prefers-color-scheme: light) {
+  :root:not(.dark) {
+    color-scheme: light;
+  }
+}
+
+/* Optional: force dark when .dark on html (for future toggle) */
+html.dark {
+  color-scheme: dark;
+}
+
 html, body, #root {
   height: 100%;
   margin: 0;
@@ -54,3 +106,16 @@ html, body, #root {
 ::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
 
 .font-code { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', monospace; }
+
+/* Consistent focus for keyboard users */
+button:focus-visible,
+a:focus-visible,
+[tabindex="0"]:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+select:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 0;
+}

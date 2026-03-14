@@ -237,14 +237,14 @@ export function Analytics() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => exportAnalyticsCsv(exportReport)}
-              className="inline-flex items-center gap-1.5 bg-surface-1 border border-border rounded px-2.5 py-1.5 text-[12px] text-text-secondary hover:text-text-primary font-code transition-colors"
+              className="inline-flex items-center gap-1.5 bg-surface-1 border border-border rounded px-2.5 py-1.5 text-[12px] text-text-secondary hover:text-text-primary font-code transition-colors focus-visible:border-accent/50"
             >
               <Download size={13} />
               Export CSV
             </button>
             <button
               onClick={() => exportAnalyticsJson(exportReport)}
-              className="inline-flex items-center gap-1.5 bg-surface-1 border border-border rounded px-2.5 py-1.5 text-[12px] text-text-secondary hover:text-text-primary font-code transition-colors"
+              className="inline-flex items-center gap-1.5 bg-surface-1 border border-border rounded px-2.5 py-1.5 text-[12px] text-text-secondary hover:text-text-primary font-code transition-colors focus-visible:border-accent/50"
             >
               Export JSON
             </button>
@@ -274,7 +274,7 @@ export function Analytics() {
           </button>
           <button
             onClick={() => exportAnalyticsJson(exportReport)}
-            className="inline-flex items-center gap-1.5 bg-surface-1 border border-border rounded px-2.5 py-1.5 text-[12px] text-text-secondary hover:text-text-primary font-code transition-colors"
+            className="inline-flex items-center gap-1.5 bg-surface-1 border border-border rounded px-2.5 py-1.5 text-[12px] text-text-secondary hover:text-text-primary font-code transition-colors focus-visible:border-accent/50"
           >
             Export JSON
           </button>

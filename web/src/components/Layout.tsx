@@ -33,7 +33,13 @@ export function Layout() {
 
   return (
     <div className="flex h-screen bg-surface">
-      <aside className="w-52 bg-surface-1 border-r border-border flex flex-col">
+      <a
+        href="#main-content"
+        className="sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:px-3 focus:py-2 focus:bg-accent focus:text-surface focus:rounded focus:w-auto focus:h-auto focus:m-0 focus:overflow-visible focus:clip-auto focus:whitespace-normal font-medium focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-surface"
+      >
+        Skip to main content
+      </a>
+      <aside className="w-52 min-w-[11rem] bg-surface-1 border-r border-border flex flex-col shrink-0" aria-label="Primary navigation">
         {/* Logo / org */}
         <div className="px-4 py-3.5 border-b border-border">
           <div className="flex items-center gap-2">
@@ -86,7 +92,7 @@ export function Layout() {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto">
+      <main id="main-content" className="flex-1 overflow-auto min-w-0" role="main">
         <Outlet />
       </main>
     </div>

@@ -71,7 +71,7 @@ export function Dashboard() {
             key={source}
             onClick={() => handleReview(source)}
             disabled={startReview.isPending}
-            className="group flex items-center gap-3 p-3.5 bg-surface-1 border border-border rounded-lg hover:border-accent/30 hover:bg-surface-2 transition-all disabled:opacity-40 text-left"
+            className="group flex items-center gap-3 p-3.5 bg-surface-1 border border-border rounded-lg hover:border-accent/30 hover:bg-surface-2 transition-all disabled:opacity-40 text-left focus-visible:border-accent/50 focus-visible:ring-1 focus-visible:ring-accent/30"
           >
             <Icon className="text-accent" size={17} />
             <div className="flex-1">
@@ -180,8 +180,9 @@ export function Dashboard() {
         <span className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code">RECENT ACTIVITY</span>
       </div>
       {recentReviews.length === 0 ? (
-        <div className="bg-surface-1 border border-border rounded-lg p-10 text-center text-text-muted text-sm">
-          No reviews yet. Click a button above to start one.
+        <div className="bg-surface-1 border border-border rounded-lg p-10 text-center">
+          <p className="text-text-primary font-medium">No reviews yet</p>
+          <p className="text-sm text-text-muted mt-1">Start a review from HEAD, staged changes, or your branch above.</p>
         </div>
       ) : (
         <div className="bg-surface-1 border border-border rounded-lg overflow-hidden">
@@ -189,7 +190,7 @@ export function Dashboard() {
             <button
               key={review.id}
               onClick={() => navigate(`/review/${review.id}`)}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-surface-2 transition-colors text-left ${
+              className={`w-full flex items-center gap-3 px-4 py-2.5 hover:bg-surface-2 transition-colors text-left focus-visible:bg-surface-2 focus-visible:outline-none ${
                 i < recentReviews.length - 1 ? 'border-b border-border-subtle' : ''
               }`}
             >
