@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::time::Instant;
+use tokio::task::JoinSet;
 
 pub trait DagNode: Clone + Eq + Hash {
     fn name(&self) -> &'static str;
@@ -13,6 +14,7 @@ pub trait DagNode: Clone + Eq + Hash {
 pub struct DagNodeSpec<NodeId> {
     pub id: NodeId,
     pub dependencies: Vec<NodeId>,
+    pub hints: DagNodeExecutionHints,
     pub enabled: bool,
 }
 
@@ -163,6 +165,160 @@ where
     Ok(records)
 }
 
+pub async fn execute_dag_with_parallelism<NodeId, TaskOutput, SpawnFn, ApplyFn>(
+    specs: &[DagNodeSpec<NodeId>],
+    mut spawn: SpawnFn,
+    mut apply: ApplyFn,
+) -> Result<Vec<DagExecutionRecord>>
+where
+    NodeId: DagNode + Send + 'static,
+    TaskOutput: Send + 'static,
+    SpawnFn: FnMut(NodeId) -> Result<BoxFuture<'static, Result<TaskOutput>>>,
+    ApplyFn: FnMut(NodeId, TaskOutput) -> Result<()>,
+{
+    let mut completed = HashSet::new();
+    let mut in_flight = HashSet::new();
+    let mut join_set = JoinSet::new();
+    let mut recorded = Vec::with_capacity(specs.len());
+    let mut launch_sequence = 0usize;
+
+    while completed.len() < specs.len() {
+        let mut progressed = false;
+        loop {
+            let Some(spec) = specs
+                .iter()
+                .find(|candidate| {
+                    !candidate.enabled
+                        && !completed.contains(&candidate.id)
+                        && !in_flight.contains(&candidate.id)
+                        && candidate
+                            .dependencies
+                            .iter()
+                            .all(|dependency| completed.contains(dependency))
+                })
+                .cloned()
+            else {
+                break;
+            };
+
+            recorded.push((
+                launch_sequence,
+                DagExecutionRecord {
+                    name: spec.id.name().to_string(),
+                    enabled: false,
+                    duration_ms: 0,
+                },
+            ));
+            launch_sequence += 1;
+            completed.insert(spec.id);
+            progressed = true;
+        }
+
+        if completed.len() == specs.len() {
+            break;
+        }
+
+        let ready_indices = specs
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| {
+                candidate.enabled
+                    && !completed.contains(&candidate.id)
+                    && !in_flight.contains(&candidate.id)
+                    && candidate
+                        .dependencies
+                        .iter()
+                        .all(|dependency| completed.contains(dependency))
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+
+        if join_set.is_empty() {
+            if let Some(index) = ready_indices
+                .iter()
+                .copied()
+                .find(|index| !specs[*index].hints.parallelizable)
+            {
+                let spec = specs[index].clone();
+                let started = Instant::now();
+                let output = spawn(spec.id.clone())?.await?;
+                apply(spec.id.clone(), output)?;
+                recorded.push((
+                    launch_sequence,
+                    DagExecutionRecord {
+                        name: spec.id.name().to_string(),
+                        enabled: true,
+                        duration_ms: started.elapsed().as_millis() as u64,
+                    },
+                ));
+                launch_sequence += 1;
+                completed.insert(spec.id);
+                continue;
+            }
+
+            for index in ready_indices.iter().copied() {
+                let spec = specs[index].clone();
+                let sequence = launch_sequence;
+                launch_sequence += 1;
+                let id = spec.id.clone();
+                let future = spawn(id.clone())?;
+                let started = Instant::now();
+                in_flight.insert(id.clone());
+                join_set.spawn(async move {
+                    let output = future.await;
+                    (sequence, id, started.elapsed().as_millis() as u64, output)
+                });
+            }
+        } else {
+            for index in ready_indices
+                .iter()
+                .copied()
+                .filter(|index| specs[*index].hints.parallelizable)
+            {
+                let spec = specs[index].clone();
+                let sequence = launch_sequence;
+                launch_sequence += 1;
+                let id = spec.id.clone();
+                let future = spawn(id.clone())?;
+                let started = Instant::now();
+                in_flight.insert(id.clone());
+                join_set.spawn(async move {
+                    let output = future.await;
+                    (sequence, id, started.elapsed().as_millis() as u64, output)
+                });
+            }
+        }
+
+        if !join_set.is_empty() {
+            let Some(joined) = join_set.join_next().await else {
+                anyhow::bail!("DAG has unresolved or cyclic dependencies");
+            };
+            let (sequence, id, duration_ms, output) = joined
+                .map_err(|error| anyhow::anyhow!("parallel DAG task failed to join: {error}"))?;
+            let output = output?;
+            apply(id.clone(), output)?;
+            in_flight.remove(&id);
+            completed.insert(id.clone());
+            recorded.push((
+                sequence,
+                DagExecutionRecord {
+                    name: id.name().to_string(),
+                    enabled: true,
+                    duration_ms,
+                },
+            ));
+            continue;
+        }
+
+        if !progressed {
+            anyhow::bail!("DAG has unresolved or cyclic dependencies");
+        }
+    }
+
+    recorded.sort_by_key(|(sequence, _)| *sequence);
+    Ok(recorded.into_iter().map(|(_, record)| record).collect())
+}
+
 pub fn plan_dag_execution(
     graph: &DagGraphContract,
     completed: &[String],
@@ -248,6 +404,20 @@ fn derive_satisfied_nodes(
 mod tests {
     use super::*;
     use futures::FutureExt;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use std::time::Duration;
+
+    fn hints(parallelizable: bool) -> DagNodeExecutionHints {
+        DagNodeExecutionHints {
+            parallelizable,
+            retryable: true,
+            side_effects: false,
+            subgraph: None,
+        }
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     enum TestNode {
@@ -272,16 +442,19 @@ mod tests {
             DagNodeSpec {
                 id: TestNode::Root,
                 dependencies: vec![],
+                hints: hints(false),
                 enabled: true,
             },
             DagNodeSpec {
                 id: TestNode::Leaf,
                 dependencies: vec![TestNode::Branch],
+                hints: hints(false),
                 enabled: true,
             },
             DagNodeSpec {
                 id: TestNode::Branch,
                 dependencies: vec![TestNode::Root],
+                hints: hints(false),
                 enabled: true,
             },
         ];
@@ -307,11 +480,13 @@ mod tests {
             DagNodeSpec {
                 id: TestNode::Root,
                 dependencies: vec![],
+                hints: hints(false),
                 enabled: true,
             },
             DagNodeSpec {
                 id: TestNode::Leaf,
                 dependencies: vec![TestNode::Root],
+                hints: hints(true),
                 enabled: false,
             },
         ]);
@@ -421,5 +596,67 @@ mod tests {
         assert!(plan.nodes[0].satisfied);
         assert!(plan.nodes[1].ready);
         assert!(plan.nodes[1].unmet_dependencies.is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_dag_with_parallelism_runs_ready_parallel_nodes_concurrently() {
+        let specs = vec![
+            DagNodeSpec {
+                id: TestNode::Root,
+                dependencies: vec![],
+                hints: hints(false),
+                enabled: true,
+            },
+            DagNodeSpec {
+                id: TestNode::Branch,
+                dependencies: vec![TestNode::Root],
+                hints: hints(true),
+                enabled: true,
+            },
+            DagNodeSpec {
+                id: TestNode::Leaf,
+                dependencies: vec![TestNode::Root],
+                hints: hints(true),
+                enabled: true,
+            },
+        ];
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let mut applied = Vec::new();
+
+        let records = execute_dag_with_parallelism(
+            &specs,
+            |node| {
+                let active = Arc::clone(&active);
+                let max_active = Arc::clone(&max_active);
+                async move {
+                    if node != TestNode::Root {
+                        let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        let observed_max = max_active.load(Ordering::SeqCst);
+                        if current > observed_max {
+                            max_active.store(current, Ordering::SeqCst);
+                        }
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                        active.fetch_sub(1, Ordering::SeqCst);
+                    }
+                    Ok(node.name().to_string())
+                }
+                .boxed()
+            },
+            |_, output| {
+                applied.push(output);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].name, "root");
+        assert_eq!(records[1].name, "branch");
+        assert_eq!(records[2].name, "leaf");
+        assert!(max_active.load(Ordering::SeqCst) >= 2);
+        assert!(applied.contains(&"branch".to_string()));
+        assert!(applied.contains(&"leaf".to_string()));
     }
 }

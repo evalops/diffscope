@@ -14,6 +14,7 @@ use required::collect_required_matches;
 use rules::build_rule_match_metrics;
 use unexpected::collect_unexpected_matches;
 
+#[derive(Debug, Clone)]
 pub(super) struct FixtureMatchSummary {
     pub(super) failures: Vec<String>,
     pub(super) required_matches: usize,

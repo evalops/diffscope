@@ -127,6 +127,23 @@ pub(super) async fn run_postprocess_dag(
     Ok(result)
 }
 
+fn stage_hints(stage: ReviewPostprocessStage) -> DagNodeExecutionHints {
+    match stage {
+        ReviewPostprocessStage::SaveConventionStore => DagNodeExecutionHints {
+            parallelizable: false,
+            retryable: true,
+            side_effects: true,
+            subgraph: None,
+        },
+        _ => DagNodeExecutionHints {
+            parallelizable: false,
+            retryable: true,
+            side_effects: false,
+            subgraph: None,
+        },
+    }
+}
+
 pub(in super::super) fn describe_review_postprocess_graph(
     config: &crate::config::Config,
     has_convention_store_path: bool,
@@ -369,46 +386,55 @@ fn build_postprocess_specs(
         DagNodeSpec {
             id: ReviewPostprocessStage::SpecializedDedup,
             dependencies: vec![],
+            hints: stage_hints(ReviewPostprocessStage::SpecializedDedup),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::PluginPostProcessors,
             dependencies: vec![ReviewPostprocessStage::SpecializedDedup],
+            hints: stage_hints(ReviewPostprocessStage::PluginPostProcessors),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::Verification,
             dependencies: vec![ReviewPostprocessStage::PluginPostProcessors],
+            hints: stage_hints(ReviewPostprocessStage::Verification),
             enabled: config.verification_pass,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::SemanticFeedback,
             dependencies: vec![ReviewPostprocessStage::Verification],
+            hints: stage_hints(ReviewPostprocessStage::SemanticFeedback),
             enabled: config.semantic_feedback,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::FeedbackCalibration,
             dependencies: vec![ReviewPostprocessStage::SemanticFeedback],
+            hints: stage_hints(ReviewPostprocessStage::FeedbackCalibration),
             enabled: config.enhanced_feedback,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::ReviewFilters,
             dependencies: vec![ReviewPostprocessStage::FeedbackCalibration],
+            hints: stage_hints(ReviewPostprocessStage::ReviewFilters),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::EnhancedFilters,
             dependencies: vec![ReviewPostprocessStage::ReviewFilters],
+            hints: stage_hints(ReviewPostprocessStage::EnhancedFilters),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::ConventionSuppression,
             dependencies: vec![ReviewPostprocessStage::EnhancedFilters],
+            hints: stage_hints(ReviewPostprocessStage::ConventionSuppression),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::SaveConventionStore,
             dependencies: vec![ReviewPostprocessStage::ConventionSuppression],
+            hints: stage_hints(ReviewPostprocessStage::SaveConventionStore),
             enabled: has_convention_store_path,
         },
     ]
