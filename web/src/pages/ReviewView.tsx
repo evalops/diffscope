@@ -265,17 +265,15 @@ export function ReviewView() {
                     <span className="font-code text-[12px] text-text-primary font-medium">{file.split('/').pop()}</span>
                   </div>
                   <div className="space-y-2 ml-5">
-                    {fileComments
-                      .sort((a, b) => a.line_number - b.line_number)
-                      .map(comment => (
-                        <div key={comment.id}>
-                          <span className="text-[10px] text-text-muted font-code">L{comment.line_number}</span>
-                          <CommentCard
-                            comment={comment}
-                            onFeedback={action => handleFeedback(comment.id, action)}
-                          />
-                        </div>
-                      ))}
+                    {fileComments.map(comment => (
+                      <div key={comment.id}>
+                        <span className="text-[10px] text-text-muted font-code">L{comment.line_number}</span>
+                        <CommentCard
+                          comment={comment}
+                          onFeedback={action => handleFeedback(comment.id, action)}
+                        />
+                      </div>
+                    ))}
                   </div>
                 </div>
               ))}

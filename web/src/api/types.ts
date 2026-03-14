@@ -2,6 +2,7 @@ export type Severity = 'Error' | 'Warning' | 'Info' | 'Suggestion'
 export type Category = 'Bug' | 'Security' | 'Performance' | 'Style' | 'Documentation' | 'BestPractice' | 'Maintainability' | 'Testing' | 'Architecture'
 export type FixEffort = 'Low' | 'Medium' | 'High'
 export type ReviewStatus = 'Pending' | 'Running' | 'Complete' | 'Failed'
+export type FeedbackAction = 'accept' | 'reject'
 
 export interface CodeSuggestion {
   original_code: string
@@ -23,6 +24,7 @@ export interface Comment {
   code_suggestion?: CodeSuggestion
   tags: string[]
   fix_effort: FixEffort
+  feedback?: FeedbackAction
 }
 
 export interface ReviewSummary {
@@ -154,6 +156,68 @@ export interface ReviewSession {
   diff_content?: string
   event?: ReviewEvent
   progress?: ReviewProgress
+}
+
+export interface EvalTrendEntry {
+  timestamp: string
+  micro_f1: number
+  micro_precision: number
+  micro_recall: number
+  fixture_count: number
+  label?: string
+  weighted_score?: number
+  model?: string
+  provider?: string
+  suite_micro_f1: Record<string, number>
+  category_micro_f1: Record<string, number>
+  language_micro_f1: Record<string, number>
+  verification_warning_count?: number
+  verification_fail_open_count?: number
+  verification_parse_failure_count?: number
+  verification_request_failure_count?: number
+}
+
+export interface EvalQualityTrend {
+  entries: EvalTrendEntry[]
+}
+
+export interface FeedbackEvalTrendGap {
+  name: string
+  feedback_total: number
+  high_confidence_total: number
+  high_confidence_acceptance_rate: number
+  eval_score?: number
+  gap?: number
+}
+
+export interface FeedbackEvalTrendEntry {
+  timestamp: string
+  labeled_comments: number
+  accepted: number
+  rejected: number
+  acceptance_rate: number
+  confidence_threshold: number
+  confidence_agreement_rate?: number
+  confidence_precision?: number
+  confidence_recall?: number
+  confidence_f1?: number
+  eval_label?: string
+  eval_model?: string
+  eval_provider?: string
+  attention_by_category: FeedbackEvalTrendGap[]
+  attention_by_rule: FeedbackEvalTrendGap[]
+}
+
+export interface FeedbackEvalTrend {
+  entries: FeedbackEvalTrendEntry[]
+}
+
+export interface AnalyticsTrendsResponse {
+  eval_trend_path: string
+  feedback_eval_trend_path: string
+  eval_trend: EvalQualityTrend
+  feedback_eval_trend: FeedbackEvalTrend
+  warnings: string[]
 }
 
 export interface StatusResponse {

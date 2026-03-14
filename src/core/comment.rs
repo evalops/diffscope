@@ -21,7 +21,8 @@ mod types;
 use classify::{determine_category, determine_fix_effort, determine_severity};
 use confidence::calculate_confidence;
 use ordering::{
-    deduplicate_comments as deduplicate_comment_list, sort_by_priority as sort_comments_by_priority,
+    deduplicate_comments as deduplicate_comment_list,
+    sort_by_priority as order_comments_by_priority,
 };
 #[cfg(test)]
 use std::path::PathBuf;
@@ -96,6 +97,10 @@ impl CommentSynthesizer {
             feedback: None,
         })
     }
+}
+
+pub fn sort_comments_by_priority(comments: &mut [Comment]) {
+    order_comments_by_priority(comments);
 }
 
 #[cfg(test)]

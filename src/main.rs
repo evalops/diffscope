@@ -756,7 +756,7 @@ async fn main() -> Result<()> {
             commands::feedback_eval_command(
                 input,
                 output,
-                trend_file,
+                trend_file.or_else(|| Some(config.feedback_eval_trend_path.clone())),
                 confidence_threshold,
                 eval_report,
             )

@@ -19,6 +19,8 @@ interface Props {
 export function CommentCard({ comment, variant = 'card', onFeedback }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const accepted = comment.feedback === 'accept'
+  const rejected = comment.feedback === 'reject'
 
   const copyCode = () => {
     if (comment.code_suggestion?.suggested_code) {
@@ -57,15 +59,25 @@ export function CommentCard({ comment, variant = 'card', onFeedback }: Props) {
             <>
               <button
                 onClick={() => onFeedback('accept')}
-                className="p-1 rounded hover:bg-sev-suggestion/10 text-text-muted hover:text-sev-suggestion transition-colors"
-                title="Accept finding"
+                className={`p-1 rounded transition-colors ${
+                  accepted
+                    ? 'bg-sev-suggestion/15 text-sev-suggestion'
+                    : 'text-text-muted hover:bg-sev-suggestion/10 hover:text-sev-suggestion'
+                }`}
+                title={accepted ? 'Accepted finding' : 'Accept finding'}
+                aria-pressed={accepted}
               >
                 <Check size={13} />
               </button>
               <button
                 onClick={() => onFeedback('reject')}
-                className="p-1 rounded hover:bg-sev-error/10 text-text-muted hover:text-sev-error transition-colors"
-                title="Dismiss finding"
+                className={`p-1 rounded transition-colors ${
+                  rejected
+                    ? 'bg-sev-error/15 text-sev-error'
+                    : 'text-text-muted hover:bg-sev-error/10 hover:text-sev-error'
+                }`}
+                title={rejected ? 'Dismissed finding' : 'Dismiss finding'}
+                aria-pressed={rejected}
               >
                 <X size={13} />
               </button>

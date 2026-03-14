@@ -4,6 +4,8 @@ mod context;
 mod patterns;
 #[path = "feedback/persistence.rs"]
 mod persistence;
+#[path = "feedback/record.rs"]
+mod record;
 #[path = "feedback/semantic.rs"]
 mod semantic;
 #[path = "feedback/store.rs"]
@@ -15,6 +17,8 @@ pub use context::generate_feedback_context;
 pub use patterns::derive_file_patterns;
 #[allow(unused_imports)]
 pub use persistence::{load_feedback_store, load_feedback_store_from_path, save_feedback_store};
+#[allow(unused_imports)]
+pub use record::{apply_comment_feedback_signal, record_comment_feedback_stats};
 #[allow(unused_imports)]
 pub use semantic::{record_semantic_feedback_example, record_semantic_feedback_examples};
 #[allow(unused_imports)]
@@ -34,6 +38,8 @@ mod tests {
         assert!(store.by_category.is_empty());
         assert!(store.by_file_pattern.is_empty());
         assert!(store.by_category_file_pattern.is_empty());
+        assert!(store.by_rule.is_empty());
+        assert!(store.by_rule_file_pattern.is_empty());
     }
 
     #[test]
@@ -167,6 +173,8 @@ mod tests {
         assert_eq!(deserialized.by_category["Bug"].rejected, 3);
         assert_eq!(deserialized.by_file_pattern["*.ts"].total(), 8);
         assert_eq!(deserialized.by_category_file_pattern["Bug|*.ts"].total(), 8);
+        assert!(deserialized.by_rule.is_empty());
+        assert!(deserialized.by_rule_file_pattern.is_empty());
     }
 
     // ── generate_feedback_context tests ───────────────────────────────────
