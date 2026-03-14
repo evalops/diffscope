@@ -15,7 +15,7 @@ cargo mutants -f '*storage_pg*'
 cargo mutants -f '*cost*'
 ```
 
-CI runs mutation on `storage_json` with a timeout; see [CI job](#ci) below.
+CI runs mutation on `*storage_json*` with a timeout; see [CI job](#ci) below.
 
 ## Known equivalent / accepted mutants
 
@@ -40,7 +40,7 @@ If new mutants appear in these regions, add assertions that would fail on the wr
 ## Pre-push vs CI
 
 - **Pre-push** (`.githooks/pre-push`): Runs unit tests, `cargo audit`, web build+test. Does *not* run mutation (too slow for every push).
-- **CI mutation job**: Runs `cargo mutants -f storage_json` (or one crate) on a schedule or on PRs to main. Fails if "missed" count increases beyond the baseline in this doc.
+- **CI mutation job**: Runs `cargo mutants -f '*storage_json*'` on PRs/push to main. Fails if "missed" count increases beyond the baseline in this doc.
 - For a quick local push without full checks: `git push --no-verify` (use sparingly; CI will still run).
 
 ## CI
