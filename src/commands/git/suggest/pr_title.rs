@@ -14,7 +14,7 @@ pub(in super::super) async fn suggest_pr_title(config: config::Config) -> Result
     let diff_content = git.get_branch_diff(&base_branch)?;
 
     if diff_content.is_empty() {
-        println!("No changes found compared to {} branch.", base_branch);
+        println!("No changes found compared to {base_branch} branch.");
         return Ok(());
     }
 
@@ -24,7 +24,7 @@ pub(in super::super) async fn suggest_pr_title(config: config::Config) -> Result
     let title = extract_title_from_response(&response);
 
     println!("\nSuggested PR title:");
-    println!("{}", title);
+    println!("{title}");
 
     if title.len() > 65 {
         println!(

@@ -1,7 +1,7 @@
 use crate::core::offline::LocalModel;
 
 pub(in super::super) fn print_endpoint_models(endpoint_type: &str, models: &[LocalModel]) {
-    println!("\nEndpoint type: {}", endpoint_type);
+    println!("\nEndpoint type: {endpoint_type}");
     println!("\nAvailable models ({}):", models.len());
     if models.is_empty() {
         println!("  (none found)");
@@ -25,7 +25,7 @@ fn format_model_size_info(model: &LocalModel) -> String {
         + &model
             .quantization
             .as_ref()
-            .map(|quantization| format!(", {}", quantization))
+            .map(|quantization| format!(", {quantization}"))
             .unwrap_or_default()
         + ")"
 }

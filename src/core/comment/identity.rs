@@ -6,7 +6,7 @@ pub fn compute_comment_id(file_path: &Path, content: &str, category: &Category) 
     let normalized = normalize_content(content);
     let key = format!("{}|{}|{}", file_path.display(), category, normalized);
     let hash = fnv1a64(key.as_bytes());
-    format!("cmt_{:016x}", hash)
+    format!("cmt_{hash:016x}")
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {

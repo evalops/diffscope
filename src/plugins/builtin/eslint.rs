@@ -209,12 +209,11 @@ mod tests {
     async fn test_eslint_skips_non_js_files() {
         let analyzer = EslintAnalyzer::new();
         for ext in &[".rs", ".py", ".go", ".java", ".rb", ".css", ".html"] {
-            let diff = make_diff(&format!("file{}", ext));
+            let diff = make_diff(&format!("file{ext}"));
             let result = analyzer.run(&diff, "/tmp").await.unwrap();
             assert!(
                 result.context_chunks.is_empty() && result.findings.is_empty(),
-                "Should skip {}",
-                ext
+                "Should skip {ext}"
             );
         }
     }
@@ -225,16 +224,14 @@ mod tests {
         for ext in &[".js", ".ts", ".jsx", ".tsx"] {
             assert!(
                 JS_EXTENSIONS.contains(ext),
-                "JS_EXTENSIONS should contain {}",
-                ext
+                "JS_EXTENSIONS should contain {ext}"
             );
         }
         // And rejects non-JS extensions
         for ext in &[".rs", ".py", ".go"] {
             assert!(
                 !JS_EXTENSIONS.contains(ext),
-                "JS_EXTENSIONS should not contain {}",
-                ext
+                "JS_EXTENSIONS should not contain {ext}"
             );
         }
     }

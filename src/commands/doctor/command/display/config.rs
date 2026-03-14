@@ -27,17 +27,14 @@ pub(in super::super) fn print_configuration(config: &Config) {
         }
     );
     if let Some(cw) = config.context_window {
-        println!("  Context:  {} tokens", cw);
+        println!("  Context:  {cw} tokens");
     }
     println!();
 }
 
 pub(in super::super) fn print_unreachable(base_url: &str) -> Result<()> {
     println!("UNREACHABLE");
-    println!(
-        "\nCannot reach {}. Make sure your LLM server is running.",
-        base_url
-    );
+    println!("\nCannot reach {base_url}. Make sure your LLM server is running.");
     println!("\nQuick start:");
     println!("  Ollama:    ollama serve");
     println!("  vLLM:      vllm serve <model>");

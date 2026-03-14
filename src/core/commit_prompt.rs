@@ -47,7 +47,7 @@ Commit: docs: update installation instructions for v2.0
 </examples>
 
 <diff>
-{}
+{diff}
 </diff>
 
 <instructions>
@@ -57,8 +57,7 @@ Commit: docs: update installation instructions for v2.0
    - What is the primary purpose of these changes?
 
 2. Then provide your commit message in <commit> tags.
-</instructions>"#,
-            diff
+</instructions>"#
         );
 
         (system_prompt.to_string(), user_prompt)
@@ -124,13 +123,12 @@ Title: Optimize database queries for 3x faster loading
 </examples>
 
 <diff>
-{}
+{diff}
 </diff>
 
 <instructions>
 Analyze the changes and provide a PR title in <title> tags.
-</instructions>"#,
-            diff
+</instructions>"#
         );
 
         (system_prompt.to_string(), user_prompt)

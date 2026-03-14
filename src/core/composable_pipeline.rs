@@ -360,7 +360,7 @@ mod tests {
 
     fn make_comment(file: &str, line: usize, content: &str, confidence: f32) -> Comment {
         Comment {
-            id: format!("cmt_{}_{}", file, line),
+            id: format!("cmt_{file}_{line}"),
             file_path: PathBuf::from(file),
             line_number: line,
             content: content.to_string(),

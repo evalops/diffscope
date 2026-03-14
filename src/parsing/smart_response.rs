@@ -436,8 +436,7 @@ TAGS: auth, security
         let conf = parse_smart_confidence("0.85").unwrap();
         assert!(
             (conf - 0.85).abs() < 0.001,
-            "0.85 should be treated as 85% confidence, got {}",
-            conf
+            "0.85 should be treated as 85% confidence, got {conf}"
         );
     }
 
@@ -446,8 +445,7 @@ TAGS: auth, security
         let conf = parse_smart_confidence("0.5").unwrap();
         assert!(
             (conf - 0.5).abs() < 0.001,
-            "0.5 should be treated as 50% confidence, got {}",
-            conf
+            "0.5 should be treated as 50% confidence, got {conf}"
         );
     }
 }

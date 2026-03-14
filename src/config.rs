@@ -2079,8 +2079,7 @@ temperature: 0.3
         let model = default_model();
         assert!(
             model.contains("opus"),
-            "Default model should be Opus (frontier), got: {}",
-            model
+            "Default model should be Opus (frontier), got: {model}"
         );
     }
 

@@ -9,13 +9,10 @@ pub(in super::super) fn print_recommended_model_summary(
     readiness: &ReadinessCheck,
 ) {
     println!("\nRecommended for code review: {}", recommended.name);
-    println!("  Estimated RAM: ~{}MB", estimated_ram_mb);
+    println!("  Estimated RAM: ~{estimated_ram_mb}MB");
 
     if let Some(ctx_size) = detected_context_window {
-        println!(
-            "  Context window: {} tokens (detected from model)",
-            ctx_size
-        );
+        println!("  Context window: {ctx_size} tokens (detected from model)");
     }
 
     if readiness.ready {
@@ -23,7 +20,7 @@ pub(in super::super) fn print_recommended_model_summary(
     } else {
         println!("\nStatus: NOT READY");
         for warning in &readiness.warnings {
-            println!("  Warning: {}", warning);
+            println!("  Warning: {warning}");
         }
     }
 }
@@ -41,14 +38,11 @@ pub(in super::super) fn print_inference_success(elapsed: Duration, tokens_per_se
 
 pub(in super::super) fn print_inference_failure(error: &impl std::fmt::Display) {
     println!("FAILED");
-    println!("  Error: {}", error);
+    println!("  Error: {error}");
     println!("  The model may still be loading. Try again in a moment.");
 }
 
 pub(in super::super) fn print_usage(base_url: &str, model_flag: &str) {
     println!("\nUsage:");
-    println!(
-        "  git diff | diffscope review --base-url {} --model {}",
-        base_url, model_flag
-    );
+    println!("  git diff | diffscope review --base-url {base_url} --model {model_flag}");
 }

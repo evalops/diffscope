@@ -469,7 +469,7 @@ fn json_issue_text(item: &serde_json::Value) -> String {
         .filter(|value| !value.is_empty());
 
     match impact {
-        Some(impact) if !issue.contains(impact) => format!("{} Impact: {}", issue, impact),
+        Some(impact) if !issue.contains(impact) => format!("{issue} Impact: {impact}"),
         _ => issue,
     }
 }
@@ -616,10 +616,10 @@ fn capture_usize_lossy(captures: &regex::Captures<'_>, group: usize) -> Option<u
 fn build_suggestion_diff(original: &str, suggested: &str) -> String {
     let mut diff = String::new();
     for line in original.lines() {
-        diff.push_str(&format!("- {}\n", line));
+        diff.push_str(&format!("- {line}\n"));
     }
     for line in suggested.lines() {
-        diff.push_str(&format!("+ {}\n", line));
+        diff.push_str(&format!("+ {line}\n"));
     }
     // Remove trailing newline for consistency
     if diff.ends_with('\n') {

@@ -281,7 +281,7 @@ impl ChangelogGenerator {
         let mut output = String::new();
 
         // Header
-        output.push_str(&format!("# Release Notes - v{}\n\n", version));
+        output.push_str(&format!("# Release Notes - v{version}\n\n"));
         output.push_str(&format!(
             "📅 **Release Date**: {}\n\n",
             Local::now().format("%Y-%m-%d")
@@ -300,10 +300,10 @@ impl ChangelogGenerator {
 
         output.push_str("## 📊 Summary\n\n");
         output.push_str(&format!("- 🎯 **Total Changes**: {}\n", entries.len()));
-        output.push_str(&format!("- ✨ **New Features**: {}\n", features));
-        output.push_str(&format!("- 🐛 **Bug Fixes**: {}\n", fixes));
+        output.push_str(&format!("- ✨ **New Features**: {features}\n"));
+        output.push_str(&format!("- 🐛 **Bug Fixes**: {fixes}\n"));
         if breaking > 0 {
-            output.push_str(&format!("- ⚠️  **Breaking Changes**: {}\n", breaking));
+            output.push_str(&format!("- ⚠️  **Breaking Changes**: {breaking}\n"));
         }
         output.push('\n');
 
@@ -358,7 +358,7 @@ impl ChangelogGenerator {
         output.push_str("## 👥 Contributors\n\n");
         output.push_str("Thank you to all contributors:\n\n");
         for (author, count) in contributors.iter().take(10) {
-            output.push_str(&format!("- {} ({} commits)\n", author, count));
+            output.push_str(&format!("- {author} ({count} commits)\n"));
         }
 
         output

@@ -186,7 +186,7 @@ impl ReviewTool for ReadFileTool {
 
         let full_path = self.ctx.repo_path.join(file_path);
         if !full_path.exists() {
-            return Ok(format!("Error: file not found: {}", file_path));
+            return Ok(format!("Error: file not found: {file_path}"));
         }
 
         // Prevent path traversal
@@ -205,7 +205,7 @@ impl ReviewTool for ReadFileTool {
         for (i, line) in lines.iter().enumerate() {
             let line_num = i + 1;
             if line_num >= start && line_num <= end {
-                output.push_str(&format!("{:>4} | {}\n", line_num, line));
+                output.push_str(&format!("{line_num:>4} | {line}\n"));
             }
         }
 
@@ -338,7 +338,7 @@ impl ReviewTool for LookupSymbolTool {
                 }
                 Ok(truncate_output(output))
             }
-            None => Ok(format!("Symbol '{}' not found in index.", symbol_name)),
+            None => Ok(format!("Symbol '{symbol_name}' not found in index.")),
         }
     }
 }
@@ -468,7 +468,7 @@ impl ReviewTool for GetFileHistoryTool {
                 info.is_high_churn(),
                 info.is_bug_prone()
             )),
-            None => Ok(format!("No history found for '{}'.", file_path)),
+            None => Ok(format!("No history found for '{file_path}'.")),
         }
     }
 }
@@ -533,8 +533,7 @@ impl ReviewTool for GetDefinitionsTool {
 
         if chunks.is_empty() {
             return Ok(format!(
-                "No definitions found for {:?} in context of '{}'.",
-                symbols, file_path
+                "No definitions found for {symbols:?} in context of '{file_path}'."
             ));
         }
 
@@ -598,7 +597,7 @@ impl ReviewTool for GitBlameTool {
 
         let full_path = self.ctx.repo_path.join(file_path);
         if !full_path.exists() {
-            return Ok(format!("Error: file not found: {}", file_path));
+            return Ok(format!("Error: file not found: {file_path}"));
         }
 
         // Prevent path traversal
@@ -637,7 +636,7 @@ impl ReviewTool for GitBlameTool {
                 Some(&mut blame_options),
             ) {
                 Ok(b) => b,
-                Err(e) => return Ok(format!("Error: could not blame file: {}", e)),
+                Err(e) => return Ok(format!("Error: could not blame file: {e}")),
             };
 
             let mut commit_message_cache: HashMap<git2::Oid, String> = HashMap::new();
@@ -669,8 +668,7 @@ impl ReviewTool for GitBlameTool {
                         .clone();
 
                     output.push_str(&format!(
-                        "L{}: {} ({}) [{}] {}\n",
-                        line_num, author, date, short_hash, message
+                        "L{line_num}: {author} ({date}) [{short_hash}] {message}\n"
                     ));
                 }
             }
@@ -872,8 +870,7 @@ mod tests {
         if let Ok(msg) = result {
             assert!(
                 msg.contains("not allowed") || msg.contains("not found"),
-                "Got: {}",
-                msg
+                "Got: {msg}"
             );
         }
     }
@@ -918,8 +915,7 @@ mod tests {
             .unwrap();
         assert!(
             result.contains("println"),
-            "Should find println in results: {}",
-            result
+            "Should find println in results: {result}"
         );
     }
 
@@ -942,8 +938,7 @@ mod tests {
             .unwrap();
         assert!(
             result.contains("No matches"),
-            "Should indicate no matches: {}",
-            result
+            "Should indicate no matches: {result}"
         );
     }
 
@@ -991,8 +986,7 @@ mod tests {
             .unwrap();
         assert!(
             result.contains("No history"),
-            "Should indicate no history: {}",
-            result
+            "Should indicate no history: {result}"
         );
     }
 
@@ -1026,8 +1020,7 @@ mod tests {
             .unwrap();
         assert!(
             result.contains("No related"),
-            "Should indicate no related symbols: {}",
-            result
+            "Should indicate no related symbols: {result}"
         );
     }
 
@@ -1067,7 +1060,7 @@ mod tests {
         let names: Vec<&str> = info.iter().map(|t| t.name.as_str()).collect();
         let mut seen = std::collections::HashSet::new();
         for name in &names {
-            assert!(seen.insert(*name), "duplicate tool name: {}", name);
+            assert!(seen.insert(*name), "duplicate tool name: {name}");
         }
     }
 
@@ -1240,7 +1233,7 @@ mod tests {
             .execute(json!({"file_path": "nonexistent.rs"}))
             .await
             .unwrap();
-        assert!(result.contains("not found"), "Got: {}", result);
+        assert!(result.contains("not found"), "Got: {result}");
     }
 
     #[tokio::test]
@@ -1260,8 +1253,7 @@ mod tests {
         if let Ok(msg) = result {
             assert!(
                 msg.contains("not allowed") || msg.contains("not found"),
-                "Got: {}",
-                msg
+                "Got: {msg}"
             );
         }
     }
@@ -1313,18 +1305,15 @@ mod tests {
             .unwrap();
         assert!(
             result.contains("Test User"),
-            "Should contain author name: {}",
-            result
+            "Should contain author name: {result}"
         );
         assert!(
             result.contains("initial commit"),
-            "Should contain commit message: {}",
-            result
+            "Should contain commit message: {result}"
         );
         assert!(
             result.contains("L1:"),
-            "Should contain line numbers: {}",
-            result
+            "Should contain line numbers: {result}"
         );
     }
 
@@ -1350,16 +1339,14 @@ mod tests {
             .unwrap();
         assert!(
             !result.contains("L1:"),
-            "Should not contain line 1: {}",
-            result
+            "Should not contain line 1: {result}"
         );
-        assert!(result.contains("L2:"), "Should contain line 2: {}", result);
-        assert!(result.contains("L3:"), "Should contain line 3: {}", result);
-        assert!(result.contains("L4:"), "Should contain line 4: {}", result);
+        assert!(result.contains("L2:"), "Should contain line 2: {result}");
+        assert!(result.contains("L3:"), "Should contain line 3: {result}");
+        assert!(result.contains("L4:"), "Should contain line 4: {result}");
         assert!(
             !result.contains("L5:"),
-            "Should not contain line 5: {}",
-            result
+            "Should not contain line 5: {result}"
         );
     }
 

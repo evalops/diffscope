@@ -49,7 +49,7 @@ pub async fn smart_review_command(
     if let Some(path) = output_path {
         tokio::fs::write(path, output).await?;
     } else {
-        println!("{}", output);
+        println!("{output}");
     }
 
     Ok(())

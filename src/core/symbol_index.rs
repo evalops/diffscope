@@ -597,7 +597,7 @@ fn program_exists_in_dir(dir: &Path, program: &str) -> bool {
             if ext.is_empty() {
                 continue;
             }
-            let candidate = dir.join(format!("{}{}", program, ext));
+            let candidate = dir.join(format!("{program}{ext}"));
             if candidate.is_file() {
                 return true;
             }
@@ -749,8 +749,8 @@ fn extract_dependency_candidates(repo_root: &Path, relative: &Path, line: &str) 
         if let Some(module) = captures.get(1) {
             let module_name = module.as_str();
             let candidates = [
-                format!("./{}.rs", module_name),
-                format!("./{}/mod.rs", module_name),
+                format!("./{module_name}.rs"),
+                format!("./{module_name}/mod.rs"),
             ];
             for candidate in candidates {
                 for resolved in resolve_relative_dependency(repo_root, relative, &candidate) {
@@ -764,8 +764,8 @@ fn extract_dependency_candidates(repo_root: &Path, relative: &Path, line: &str) 
         if let Some(module_path) = captures.get(1) {
             let normalized = module_path.as_str().replace('.', "/");
             let candidates = [
-                format!("./{}.py", normalized),
-                format!("./{}/__init__.py", normalized),
+                format!("./{normalized}.py"),
+                format!("./{normalized}/__init__.py"),
             ];
             for candidate in candidates {
                 for resolved in resolve_relative_dependency(repo_root, relative, &candidate) {
@@ -1138,7 +1138,7 @@ fn path_to_uri(path: &Path) -> Result<String> {
         .map(url_encode)
         .collect::<Vec<_>>()
         .join("/");
-    Ok(format!("file://{}", encoded))
+    Ok(format!("file://{encoded}"))
 }
 
 fn url_encode(segment: &str) -> String {
@@ -1152,7 +1152,7 @@ fn url_encode(segment: &str) -> String {
         {
             out.push(byte as char);
         } else {
-            out.push_str(&format!("%{:02X}", byte));
+            out.push_str(&format!("%{byte:02X}"));
         }
     }
     out
@@ -1176,8 +1176,7 @@ mod tests {
         let encoded = url_encode("€");
         assert_eq!(
             encoded, "%E2%82%AC",
-            "Multi-byte UTF-8 chars must be percent-encoded per byte, got: {}",
-            encoded
+            "Multi-byte UTF-8 chars must be percent-encoded per byte, got: {encoded}"
         );
     }
 
@@ -1188,8 +1187,7 @@ mod tests {
         let encoded = url_encode("café");
         assert_eq!(
             encoded, "caf%C3%A9",
-            "Two-byte UTF-8 chars must be percent-encoded per byte, got: {}",
-            encoded
+            "Two-byte UTF-8 chars must be percent-encoded per byte, got: {encoded}"
         );
     }
 

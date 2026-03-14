@@ -162,7 +162,7 @@ impl OfflineModelManager {
     pub fn is_model_available(&self, model_name: &str) -> bool {
         self.models
             .iter()
-            .any(|m| m.name == model_name || m.name.starts_with(&format!("{}:", model_name)))
+            .any(|m| m.name == model_name || m.name.starts_with(&format!("{model_name}:")))
     }
 
     /// Get recommended model for code review based on available models.
@@ -770,8 +770,7 @@ mod tests {
             errors
                 .iter()
                 .any(|e| e.contains("URL") || e.contains("url")),
-            "Should flag invalid URL format, got: {:?}",
-            errors
+            "Should flag invalid URL format, got: {errors:?}"
         );
     }
 

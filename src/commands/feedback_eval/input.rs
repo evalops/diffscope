@@ -25,7 +25,7 @@ mod tests {
         severity: Severity,
     ) -> core::Comment {
         core::Comment {
-            id: format!("{}-{}", content, confidence),
+            id: format!("{content}-{confidence}"),
             file_path: PathBuf::from("src/lib.rs"),
             line_number: 12,
             content: content.to_string(),

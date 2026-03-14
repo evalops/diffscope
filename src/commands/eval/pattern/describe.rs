@@ -6,16 +6,16 @@ impl EvalPattern {
         if let Some(file) = &self.file {
             let file = file.trim();
             if !file.is_empty() {
-                parts.push(format!("file={}", file));
+                parts.push(format!("file={file}"));
             }
         }
         if let Some(line) = self.line {
-            parts.push(format!("line={}", line));
+            parts.push(format!("line={line}"));
         }
         if let Some(contains) = &self.contains {
             let contains = contains.trim();
             if !contains.is_empty() {
-                parts.push(format!("contains='{}'", contains));
+                parts.push(format!("contains='{contains}'"));
             }
         }
         let contains_any: Vec<&str> = self
@@ -30,19 +30,19 @@ impl EvalPattern {
         }
         if let Some(pattern) = self.matches_regex.as_deref().map(str::trim) {
             if !pattern.is_empty() {
-                parts.push(format!("matches_regex='{}'", pattern));
+                parts.push(format!("matches_regex='{pattern}'"));
             }
         }
         if let Some(severity) = &self.severity {
             let severity = severity.trim();
             if !severity.is_empty() {
-                parts.push(format!("severity={}", severity));
+                parts.push(format!("severity={severity}"));
             }
         }
         if let Some(category) = &self.category {
             let category = category.trim();
             if !category.is_empty() {
-                parts.push(format!("category={}", category));
+                parts.push(format!("category={category}"));
             }
         }
         let tags_any: Vec<&str> = self
@@ -56,24 +56,24 @@ impl EvalPattern {
             parts.push(format!("tags_any={}", tags_any.join("|")));
         }
         if let Some(min_confidence) = self.confidence_at_least {
-            parts.push(format!("confidence>={:.2}", min_confidence));
+            parts.push(format!("confidence>={min_confidence:.2}"));
         }
         if let Some(max_confidence) = self.confidence_at_most {
-            parts.push(format!("confidence<={:.2}", max_confidence));
+            parts.push(format!("confidence<={max_confidence:.2}"));
         }
         if let Some(fix_effort) = &self.fix_effort {
             let fix_effort = fix_effort.trim();
             if !fix_effort.is_empty() {
-                parts.push(format!("fix_effort={}", fix_effort));
+                parts.push(format!("fix_effort={fix_effort}"));
             }
         }
         if let Some(rule_id) = &self.rule_id {
             let rule_id = rule_id.trim();
             if !rule_id.is_empty() {
                 if self.require_rule_id {
-                    parts.push(format!("rule_id={} (required)", rule_id));
+                    parts.push(format!("rule_id={rule_id} (required)"));
                 } else {
-                    parts.push(format!("rule_id={} (label)", rule_id));
+                    parts.push(format!("rule_id={rule_id} (label)"));
                 }
             }
         }

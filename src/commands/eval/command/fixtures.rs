@@ -171,7 +171,7 @@ mod tests {
         language: Option<&str>,
     ) -> LoadedEvalFixture {
         LoadedEvalFixture {
-            fixture_path: PathBuf::from(format!("{}.yml", name)),
+            fixture_path: PathBuf::from(format!("{name}.yml")),
             fixture: EvalFixture {
                 name: Some(name.to_string()),
                 diff: Some("diff --git a/a b/b".to_string()),

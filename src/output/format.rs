@@ -26,7 +26,7 @@ pub async fn output_comments(
     if let Some(path) = output_path {
         tokio::fs::write(path, output).await?;
     } else {
-        println!("{}", output);
+        println!("{output}");
     }
 
     Ok(())
@@ -43,10 +43,10 @@ pub fn format_as_patch(comments: &[core::Comment]) -> String {
             comment.content
         ));
         if let Some(rule_id) = &comment.rule_id {
-            output.push_str(&format!("# Rule: {}\n", rule_id));
+            output.push_str(&format!("# Rule: {rule_id}\n"));
         }
         if let Some(suggestion) = &comment.suggestion {
-            output.push_str(&format!("# Suggestion: {}\n", suggestion));
+            output.push_str(&format!("# Suggestion: {suggestion}\n"));
         }
         if let Some(code_suggestion) = &comment.code_suggestion {
             output.push_str(&format!("# Code fix:\n{}\n", code_suggestion.diff));
@@ -95,7 +95,7 @@ pub fn format_as_markdown(comments: &[core::Comment], rule_priority: &[String]) 
             "Suggestion" => "💡",
             _ => "⚪",
         };
-        output.push_str(&format!("{} **{}:** {}\n", emoji, severity, count));
+        output.push_str(&format!("{emoji} **{severity}:** {count}\n"));
     }
     output.push('\n');
 
@@ -128,7 +128,7 @@ pub fn format_as_markdown(comments: &[core::Comment], rule_priority: &[String]) 
             "Architecture" => "🏗️",
             _ => "💭",
         };
-        output.push_str(&format!("{} **{}:** {}\n", emoji, category, count));
+        output.push_str(&format!("{emoji} **{category}:** {count}\n"));
     }
     output.push('\n');
 
@@ -150,7 +150,7 @@ pub fn format_as_markdown(comments: &[core::Comment], rule_priority: &[String]) 
     if !summary.recommendations.is_empty() {
         output.push_str("### Recommendations\n\n");
         for rec in &summary.recommendations {
-            output.push_str(&format!("- {}\n", rec));
+            output.push_str(&format!("- {rec}\n"));
         }
         output.push('\n');
     }
@@ -193,14 +193,14 @@ pub fn format_as_markdown(comments: &[core::Comment], rule_priority: &[String]) 
                 comment.confidence * 100.0
             ));
             if let Some(rule_id) = &comment.rule_id {
-                output.push_str(&format!("**Rule:** `{}`\n", rule_id));
+                output.push_str(&format!("**Rule:** `{rule_id}`\n"));
             }
-            output.push_str(&format!("**Fix Effort:** {}\n\n", effort_badge));
+            output.push_str(&format!("**Fix Effort:** {effort_badge}\n\n"));
 
             output.push_str(&format!("{}\n\n", comment.content));
 
             if let Some(suggestion) = &comment.suggestion {
-                output.push_str(&format!("💡 **Suggestion:** {}\n\n", suggestion));
+                output.push_str(&format!("💡 **Suggestion:** {suggestion}\n\n"));
             }
 
             if let Some(code_suggestion) = &comment.code_suggestion {
@@ -215,7 +215,7 @@ pub fn format_as_markdown(comments: &[core::Comment], rule_priority: &[String]) 
                     if i > 0 {
                         output.push_str(", ");
                     }
-                    output.push_str(&format!("`{}`", tag));
+                    output.push_str(&format!("`{tag}`"));
                 }
                 output.push_str("\n\n");
             }
@@ -283,7 +283,7 @@ pub fn format_smart_review_output(
     let severities = ["Error", "Warning", "Info", "Suggestion"];
     for severity in severities {
         let sev_count = summary.by_severity.get(severity).unwrap_or(&0);
-        output.push_str(&format!("| {} | {} |\n", severity, sev_count));
+        output.push_str(&format!("| {severity} | {sev_count} |\n"));
     }
     output.push('\n');
 
@@ -303,7 +303,7 @@ pub fn format_smart_review_output(
     ];
     for category in categories {
         let cat_count = summary.by_category.get(category).unwrap_or(&0);
-        output.push_str(&format!("| {} | {} |\n", category, cat_count));
+        output.push_str(&format!("| {category} | {cat_count} |\n"));
     }
     output.push('\n');
 
@@ -428,18 +428,18 @@ pub fn format_detailed_comment(comment: &core::Comment) -> String {
             if i > 0 {
                 output.push_str(", ");
             }
-            output.push_str(&format!("`{}`", tag));
+            output.push_str(&format!("`{tag}`"));
         }
         output.push_str("\n\n");
     }
     if let Some(rule_id) = &comment.rule_id {
-        output.push_str(&format!("**Rule:** `{}`\n\n", rule_id));
+        output.push_str(&format!("**Rule:** `{rule_id}`\n\n"));
     }
 
     output.push_str(&format!("{}\n\n", comment.content));
 
     if let Some(suggestion) = &comment.suggestion {
-        output.push_str(&format!("**💡 Recommended Fix:**\n{}\n\n", suggestion));
+        output.push_str(&format!("**💡 Recommended Fix:**\n{suggestion}\n\n"));
     }
 
     if let Some(code_suggestion) = &comment.code_suggestion {
@@ -467,14 +467,14 @@ pub fn format_pr_summary_section(summary: &core::pr_summary::PRSummary) -> Strin
     if !summary.key_changes.is_empty() {
         output.push_str("### Key Changes\n\n");
         for change in &summary.key_changes {
-            output.push_str(&format!("- {}\n", change));
+            output.push_str(&format!("- {change}\n"));
         }
         output.push('\n');
     }
 
     if let Some(breaking) = &summary.breaking_changes {
         output.push_str("### Breaking Changes\n\n");
-        output.push_str(&format!("{}\n\n", breaking));
+        output.push_str(&format!("{breaking}\n\n"));
     }
 
     if !summary.testing_notes.is_empty() {
@@ -921,7 +921,7 @@ mod tests {
     fn test_walkthrough_not_truncated_at_exactly_max() {
         let diffs: Vec<core::UnifiedDiff> = (0..50)
             .map(|i| core::UnifiedDiff {
-                file_path: PathBuf::from(format!("file{}.rs", i)),
+                file_path: PathBuf::from(format!("file{i}.rs")),
                 old_content: None,
                 new_content: None,
                 is_new: false,
@@ -951,9 +951,8 @@ mod tests {
         // All 50 files should be present
         for i in 0..50 {
             assert!(
-                output.contains(&format!("file{}.rs", i)),
-                "Missing file{}.rs in walkthrough",
-                i
+                output.contains(&format!("file{i}.rs")),
+                "Missing file{i}.rs in walkthrough"
             );
         }
     }

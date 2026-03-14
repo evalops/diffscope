@@ -604,7 +604,7 @@ async fn main() -> Result<()> {
 
     // Resolve API key from Vault if configured and api_key is not already set
     if let Err(e) = config.resolve_vault_api_key().await {
-        eprintln!("Warning: Failed to fetch API key from Vault: {:#}", e);
+        eprintln!("Warning: Failed to fetch API key from Vault: {e:#}");
     }
 
     match cli.command {

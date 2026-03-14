@@ -54,7 +54,7 @@ fn review_profile_section(config: &config::Config) -> Option<String> {
         _ => None,
     }?;
 
-    Some(format!("Review profile ({}): {}", profile, guidance))
+    Some(format!("Review profile ({profile}): {guidance}"))
 }
 
 fn global_instructions_section(config: &config::Config) -> Option<String> {
@@ -62,7 +62,7 @@ fn global_instructions_section(config: &config::Config) -> Option<String> {
     if instructions.is_empty() {
         None
     } else {
-        Some(format!("Global review instructions:\n{}", instructions))
+        Some(format!("Global review instructions:\n{instructions}"))
     }
 }
 
@@ -71,7 +71,7 @@ fn path_instructions_section(path_config: Option<&config::PathConfig>) -> Option
     if instructions.is_empty() {
         None
     } else {
-        Some(format!("Path-specific instructions:\n{}", instructions))
+        Some(format!("Path-specific instructions:\n{instructions}"))
     }
 }
 
@@ -81,8 +81,7 @@ fn output_language_section(config: &config::Config) -> Option<String> {
         None
     } else {
         Some(format!(
-            "Write all review comments and suggestions in {}.",
-            lang
+            "Write all review comments and suggestions in {lang}."
         ))
     }
 }

@@ -113,7 +113,7 @@ fn detect_auto_instructions(services: &PipelineServices) -> Option<String> {
         Some(
             detected
                 .iter()
-                .map(|(name, content)| format!("# From {}\n{}", name, content))
+                .map(|(name, content)| format!("# From {name}\n{content}"))
                 .collect::<Vec<_>>()
                 .join("\n\n"),
         )

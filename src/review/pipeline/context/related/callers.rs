@@ -42,7 +42,7 @@ mod tests {
     #[test]
     fn test_utf8_safe_truncation() {
         let prefix = "a".repeat(1999);
-        let value = format!("{}€rest", prefix);
+        let value = format!("{prefix}€rest");
         assert!(value.len() > 2000);
 
         let truncated = truncate_summary(&value);

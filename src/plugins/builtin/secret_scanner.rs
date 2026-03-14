@@ -509,8 +509,8 @@ impl AllowlistEntry {
 }
 
 fn secret_fingerprint(rule_id: &str, secret: &str) -> String {
-    let digest = Sha256::digest(format!("{}:{}", rule_id, secret).as_bytes());
-    format!("{:x}", digest)
+    let digest = Sha256::digest(format!("{rule_id}:{secret}").as_bytes());
+    format!("{digest:x}")
 }
 
 fn provider_name(rule_id: &str) -> &'static str {
@@ -889,10 +889,7 @@ mod tests {
     fn test_redacts_all_detected_secrets_on_same_line() {
         let github_token = fake_token("ghp_", 'A', 40);
         let slack_webhook = "https://hooks.slack.com/services/TAAAAAAAAA/BAAAAAAAAA/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let line = format!(
-            "GITHUB_TOKEN={} SLACK_WEBHOOK={}",
-            github_token, slack_webhook
-        );
+        let line = format!("GITHUB_TOKEN={github_token} SLACK_WEBHOOK={slack_webhook}");
 
         let findings = SecretScanner::scan_line(&line, 1);
         assert!(findings.len() >= 2, "Should detect both secrets");
@@ -997,7 +994,7 @@ mod tests {
         .unwrap();
         let diff = make_diff_with_lines(
             "config.env",
-            vec![(&format!("TOKEN={}", github_pat), ChangeType::Added)],
+            vec![(&format!("TOKEN={github_pat}"), ChangeType::Added)],
         );
 
         let scanner = SecretScanner::new();
@@ -1018,7 +1015,7 @@ mod tests {
             "BAAAAAAAAA",
             "a".repeat(45)
         );
-        let line = format!("WEBHOOK={}", webhook);
+        let line = format!("WEBHOOK={webhook}");
         let findings = SecretScanner::scan_line(&line, 1);
         assert!(!findings.is_empty(), "Should detect Slack webhook URL");
     }

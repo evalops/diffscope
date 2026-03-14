@@ -227,13 +227,13 @@ pub async fn run_agent_loop(
                     },
                     Err(e) => ContentBlock::ToolResult {
                         tool_use_id: call_id.clone(),
-                        content: format!("Error: {}", e),
+                        content: format!("Error: {e}"),
                         is_error: true,
                     },
                 },
                 None => ContentBlock::ToolResult {
                     tool_use_id: call_id.clone(),
-                    content: format!("Error: unknown tool '{}'", call_name),
+                    content: format!("Error: unknown tool '{call_name}'"),
                     is_error: true,
                 },
             };
@@ -548,7 +548,7 @@ mod tests {
         for i in 0..5 {
             responses.push(ChatResponse {
                 content: vec![ContentBlock::ToolUse {
-                    id: format!("call_{}", i),
+                    id: format!("call_{i}"),
                     name: "read_file".to_string(),
                     input: serde_json::json!({"file_path": "test.rs"}),
                 }],
@@ -1224,8 +1224,7 @@ mod tests {
         assert_eq!(tokens, 40, "total_tokens should be 15 + 25 = 40");
         assert!(
             reason.contains("EndTurn"),
-            "reason should contain EndTurn, got: {}",
-            reason
+            "reason should contain EndTurn, got: {reason}"
         );
     }
 
@@ -1726,7 +1725,7 @@ mod tests {
         for i in 0..3 {
             responses.push(ChatResponse {
                 content: vec![ContentBlock::ToolUse {
-                    id: format!("c{}", i),
+                    id: format!("c{i}"),
                     name: "read_file".to_string(),
                     input: serde_json::json!({}),
                 }],

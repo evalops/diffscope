@@ -26,7 +26,7 @@ pub fn build_pr_summary_comment_body(
     body.push_str("\n### Severity Breakdown\n");
     for severity in ["Error", "Warning", "Info", "Suggestion"] {
         let count = summary.by_severity.get(severity).copied().unwrap_or(0);
-        body.push_str(&format!("- {}: {}\n", severity, count));
+        body.push_str(&format!("- {severity}: {count}\n"));
     }
 
     let rule_hits = summarize_rule_hits(comments, 8, rule_priority);

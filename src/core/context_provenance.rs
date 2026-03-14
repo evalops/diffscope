@@ -105,25 +105,22 @@ impl ContextProvenance {
     fn label(&self) -> String {
         match self {
             Self::ActiveReviewRules => "active review rules".to_string(),
-            Self::Analyzer { name } => format!("{} analyzer", name),
+            Self::Analyzer { name } => format!("{name} analyzer"),
             Self::CustomContextNotes => "custom context notes".to_string(),
             Self::DependencyGraphNeighborhood => "dependency graph neighborhood".to_string(),
             Self::PathSpecificFocusAreas => "path-specific focus areas".to_string(),
             Self::PatternRepositoryContext { source } => {
-                format!("pattern repository: {}", source)
+                format!("pattern repository: {source}")
             }
             Self::PatternRepositorySource { source } => {
-                format!("pattern repository source: {}", source)
+                format!("pattern repository source: {source}")
             }
             Self::RelatedTestFile => "related test file".to_string(),
             Self::ReverseDependencySummary => "reverse dependency summary".to_string(),
             Self::SemanticRetrieval {
                 similarity,
                 symbol_name,
-            } => format!(
-                "semantic retrieval (similarity={:.2}, symbol={})",
-                similarity, symbol_name
-            ),
+            } => format!("semantic retrieval (similarity={similarity:.2}, symbol={symbol_name})"),
             Self::SymbolGraphPath {
                 relation_path,
                 hops,

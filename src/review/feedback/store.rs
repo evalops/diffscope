@@ -88,7 +88,7 @@ impl FeedbackStore {
             let fp_stats = self.by_file_pattern.entry(pattern.clone()).or_default();
             update_pattern_stats(fp_stats, accepted);
 
-            let composite = format!("{}|{}", category, pattern);
+            let composite = format!("{category}|{pattern}");
             let comp_stats = self.by_category_file_pattern.entry(composite).or_default();
             update_pattern_stats(comp_stats, accepted);
         }

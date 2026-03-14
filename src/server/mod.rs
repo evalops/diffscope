@@ -69,8 +69,8 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
     let state = Arc::new(state::AppState::new(config).await?);
 
     let origin_strings = [
-        format!("http://localhost:{}", port),
-        format!("http://127.0.0.1:{}", port),
+        format!("http://localhost:{port}"),
+        format!("http://127.0.0.1:{port}"),
         "http://localhost:5173".to_string(),
     ];
     let allowed_origins: Vec<axum::http::HeaderValue> = origin_strings
@@ -126,7 +126,7 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .fallback(serve_embedded)
         .layer(cors);
 
-    let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
+    let addr: SocketAddr = format!("{host}:{port}").parse()?;
     info!("DiffScope server running at http://{}", addr);
     info!("Press Ctrl+C to stop");
 

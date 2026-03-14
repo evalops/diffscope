@@ -530,7 +530,7 @@ fn normalize_relative_path(path: PathBuf) -> PathBuf {
 
 fn hash_text(content: &str) -> String {
     let digest = Sha256::digest(content.as_bytes());
-    format!("{:x}", digest)
+    format!("{digest:x}")
 }
 
 fn is_code_file(path: &Path) -> bool {

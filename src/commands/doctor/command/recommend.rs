@@ -53,7 +53,7 @@ pub(super) async fn inspect_recommended_model(
         &readiness,
     );
 
-    print!("\nTesting model {}... ", recommended_name);
+    print!("\nTesting model {recommended_name}... ");
     let test_client = Client::builder().timeout(Duration::from_secs(10)).build()?;
     let started_at = Instant::now();
     match test_model_inference(

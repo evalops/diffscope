@@ -347,7 +347,7 @@ async fn run_review_task(
     let diff_content = match diff_result {
         Ok(diff) => diff,
         Err(e) => {
-            let err_msg = format!("Failed to get diff: {}", e);
+            let err_msg = format!("Failed to get diff: {e}");
             let event = ReviewEventBuilder::new(&review_id, "review.failed", &diff_source, &model)
                 .provider(provider.as_deref())
                 .base_url(base_url.as_deref())
@@ -479,7 +479,7 @@ async fn run_review_task(
             }
         }
         Ok(Err(e)) => {
-            let err_msg = format!("Review failed: {}", e);
+            let err_msg = format!("Review failed: {e}");
             let event = ReviewEventBuilder::new(&review_id, "review.failed", &diff_source, &model)
                 .provider(provider.as_deref())
                 .base_url(base_url.as_deref())
@@ -542,7 +542,7 @@ fn get_diff_from_git(
         "branch" => {
             let base_branch = base.unwrap_or("main");
             Command::new("git")
-                .args(["diff", &format!("{}...HEAD", base_branch)])
+                .args(["diff", &format!("{base_branch}...HEAD")])
                 .current_dir(repo_path)
                 .output()?
         }
@@ -783,7 +783,7 @@ pub async fn get_doctor(State(state): State<Arc<AppState>>) -> Json<serde_json::
     };
 
     // Check Ollama
-    let ollama_url = format!("{}/api/tags", base_url);
+    let ollama_url = format!("{base_url}/api/tags");
     if let Ok(resp) = client.get(&ollama_url).send().await {
         if resp.status().is_success() {
             result["endpoint_reachable"] = serde_json::json!(true);
@@ -818,7 +818,7 @@ pub async fn get_doctor(State(state): State<Arc<AppState>>) -> Json<serde_json::
 
     // Check OpenAI-compatible
     if !result["endpoint_reachable"].as_bool().unwrap_or(false) {
-        let openai_url = format!("{}/v1/models", base_url);
+        let openai_url = format!("{base_url}/v1/models");
         if let Ok(resp) = client.get(&openai_url).send().await {
             if resp.status().is_success() {
                 result["endpoint_reachable"] = serde_json::json!(true);
@@ -857,7 +857,7 @@ pub async fn update_config(
     }
 
     let new_config: crate::config::Config = serde_json::from_value(current)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid config: {}", e)))?;
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid config: {e}")))?;
 
     *config = new_config;
     config.normalize();
@@ -930,7 +930,7 @@ pub async fn test_provider(Json(request): Json<TestProviderRequest>) -> Json<Tes
         Err(e) => {
             return Json(TestProviderResponse {
                 ok: false,
-                message: format!("Failed to create HTTP client: {}", e),
+                message: format!("Failed to create HTTP client: {e}"),
                 models: Vec::new(),
             });
         }
@@ -969,7 +969,7 @@ pub async fn test_provider(Json(request): Json<TestProviderRequest>) -> Json<Tes
                 }),
                 Err(e) => Json(TestProviderResponse {
                     ok: false,
-                    message: format!("Failed to connect to Ollama at {}: {}", url, e),
+                    message: format!("Failed to connect to Ollama at {url}: {e}"),
                     models: Vec::new(),
                 }),
             }
@@ -992,7 +992,7 @@ pub async fn test_provider(Json(request): Json<TestProviderRequest>) -> Json<Tes
             }
             let req = client
                 .get(&url)
-                .header("Authorization", format!("Bearer {}", api_key));
+                .header("Authorization", format!("Bearer {api_key}"));
             match req.send().await {
                 Ok(resp) if resp.status().is_success() => {
                     let mut models = Vec::new();
@@ -1021,7 +1021,7 @@ pub async fn test_provider(Json(request): Json<TestProviderRequest>) -> Json<Tes
                     let msg = if status.as_u16() == 401 {
                         "Authentication failed. Check your API key.".to_string()
                     } else {
-                        format!("{} returned status {}: {}", provider, status, body)
+                        format!("{provider} returned status {status}: {body}")
                     };
                     Json(TestProviderResponse {
                         ok: false,
@@ -1031,7 +1031,7 @@ pub async fn test_provider(Json(request): Json<TestProviderRequest>) -> Json<Tes
                 }
                 Err(e) => Json(TestProviderResponse {
                     ok: false,
-                    message: format!("Failed to connect to {}: {}", provider, e),
+                    message: format!("Failed to connect to {provider}: {e}"),
                     models: Vec::new(),
                 }),
             }
@@ -1076,7 +1076,7 @@ pub async fn test_provider(Json(request): Json<TestProviderRequest>) -> Json<Tes
                     let msg = if status.as_u16() == 401 {
                         "Authentication failed. Check your API key.".to_string()
                     } else {
-                        format!("Anthropic returned status {}: {}", status, body_text)
+                        format!("Anthropic returned status {status}: {body_text}")
                     };
                     Json(TestProviderResponse {
                         ok: false,
@@ -1086,7 +1086,7 @@ pub async fn test_provider(Json(request): Json<TestProviderRequest>) -> Json<Tes
                 }
                 Err(e) => Json(TestProviderResponse {
                     ok: false,
-                    message: format!("Failed to connect to Anthropic: {}", e),
+                    message: format!("Failed to connect to Anthropic: {e}"),
                     models: Vec::new(),
                 }),
             }
@@ -1120,11 +1120,11 @@ async fn github_api_get(
 ) -> Result<reqwest::Response, String> {
     let resp = client
         .get(url)
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|e| format!("GitHub API error: {}", e))?;
+        .map_err(|e| format!("GitHub API error: {e}"))?;
 
     log_rate_limit(&resp);
 
@@ -1148,12 +1148,12 @@ async fn github_api_post(
 ) -> Result<reqwest::Response, String> {
     let resp = client
         .post(url)
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/vnd.github+json")
         .json(body)
         .send()
         .await
-        .map_err(|e| format!("GitHub API error: {}", e))?;
+        .map_err(|e| format!("GitHub API error: {e}"))?;
 
     log_rate_limit(&resp);
     Ok(resp)
@@ -1167,24 +1167,24 @@ async fn github_api_get_diff(
 ) -> Result<String, String> {
     let resp = client
         .get(url)
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/vnd.github.v3.diff")
         .send()
         .await
-        .map_err(|e| format!("GitHub API error: {}", e))?;
+        .map_err(|e| format!("GitHub API error: {e}"))?;
 
     log_rate_limit(&resp);
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("GitHub API returned {}: {}", status, body));
+        return Err(format!("GitHub API returned {status}: {body}"));
     }
 
     let text = resp
         .text()
         .await
-        .map_err(|e| format!("Failed to read diff response: {}", e))?;
+        .map_err(|e| format!("Failed to read diff response: {e}"))?;
 
     // Enforce diff size limit
     if text.len() > MAX_DIFF_SIZE {
@@ -1355,14 +1355,14 @@ pub async fn get_gh_repos(
             let body = resp.text().await.unwrap_or_default();
             return Err((
                 StatusCode::BAD_GATEWAY,
-                format!("GitHub API returned {}: {}", status, body),
+                format!("GitHub API returned {status}: {body}"),
             ));
         }
 
         let body: serde_json::Value = resp.json().await.map_err(|e| {
             (
                 StatusCode::BAD_GATEWAY,
-                format!("Failed to parse response: {}", e),
+                format!("Failed to parse response: {e}"),
             )
         })?;
 
@@ -1413,8 +1413,7 @@ pub async fn get_gh_repos(
         Ok(Json(repos))
     } else {
         let url = format!(
-            "https://api.github.com/user/repos?sort=updated&per_page={}&page={}",
-            per_page, page,
+            "https://api.github.com/user/repos?sort=updated&per_page={per_page}&page={page}",
         );
 
         let resp = github_api_get(&state.http_client, &token, &url)
@@ -1426,14 +1425,14 @@ pub async fn get_gh_repos(
             let body = resp.text().await.unwrap_or_default();
             return Err((
                 StatusCode::BAD_GATEWAY,
-                format!("GitHub API returned {}: {}", status, body),
+                format!("GitHub API returned {status}: {body}"),
             ));
         }
 
         let items: Vec<serde_json::Value> = resp.json().await.map_err(|e| {
             (
                 StatusCode::BAD_GATEWAY,
-                format!("Failed to parse response: {}", e),
+                format!("Failed to parse response: {e}"),
             )
         })?;
 
@@ -1508,7 +1507,7 @@ async fn get_github_username(client: &reqwest::Client, token: &str) -> Result<St
     let body: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("Failed to parse user response: {}", e))?;
+        .map_err(|e| format!("Failed to parse user response: {e}"))?;
     body.get("login")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
@@ -1603,14 +1602,14 @@ pub async fn get_gh_prs(
         let body = resp.text().await.unwrap_or_default();
         return Err((
             StatusCode::BAD_GATEWAY,
-            format!("GitHub API returned {}: {}", status, body),
+            format!("GitHub API returned {status}: {body}"),
         ));
     }
 
     let items: Vec<serde_json::Value> = resp.json().await.map_err(|e| {
         (
             StatusCode::BAD_GATEWAY,
-            format!("Failed to parse response: {}", e),
+            format!("Failed to parse response: {e}"),
         )
     })?;
 
@@ -1815,7 +1814,7 @@ async fn run_pr_review_task(
     };
 
     let task_start = std::time::Instant::now();
-    let diff_source = format!("pr:{}#{}", repo, pr_number);
+    let diff_source = format!("pr:{repo}#{pr_number}");
     AppState::mark_running(&state, &review_id).await;
 
     let config = state.config.read().await.clone();
@@ -1942,7 +1941,7 @@ async fn run_pr_review_task(
             }
         }
         Ok(Err(e)) => {
-            let err_msg = format!("Review failed: {}", e);
+            let err_msg = format!("Review failed: {e}");
             let event = ReviewEventBuilder::new(&review_id, "review.failed", &diff_source, &model)
                 .provider(provider.as_deref())
                 .base_url(base_url.as_deref())
@@ -2075,17 +2074,17 @@ pub(super) async fn post_pr_review_comments(
     summary: Option<&crate::core::comment::ReviewSummary>,
 ) -> Result<(), String> {
     // Fetch PR head SHA (required for inline comments)
-    let pr_url = format!("https://api.github.com/repos/{}/pulls/{}", repo, pr_number,);
+    let pr_url = format!("https://api.github.com/repos/{repo}/pulls/{pr_number}",);
     let pr_resp = github_api_get(client, token, &pr_url).await?;
     if !pr_resp.status().is_success() {
         let status = pr_resp.status();
         let body = pr_resp.text().await.unwrap_or_default();
-        return Err(format!("Failed to get PR info {}: {}", status, body));
+        return Err(format!("Failed to get PR info {status}: {body}"));
     }
     let pr_data: serde_json::Value = pr_resp
         .json()
         .await
-        .map_err(|e| format!("Failed to parse PR response: {}", e))?;
+        .map_err(|e| format!("Failed to parse PR response: {e}"))?;
     let commit_id = pr_data
         .get("head")
         .and_then(|h| h.get("sha"))
@@ -2113,7 +2112,7 @@ pub(super) async fn post_pr_review_comments(
         comment_body.push_str(&format!("\n\n{}", c.content));
 
         if let Some(ref suggestion) = c.suggestion {
-            comment_body.push_str(&format!("\n\n> **Suggestion:** {}", suggestion));
+            comment_body.push_str(&format!("\n\n> **Suggestion:** {suggestion}"));
         }
         // Calculate the line span for multi-line suggestions.
         // GitHub requires `start_line` + `line` when a suggestion covers multiple lines.
@@ -2171,7 +2170,7 @@ pub(super) async fn post_pr_review_comments(
         if !s.recommendations.is_empty() {
             review_body_text.push_str("**Recommendations:**\n");
             for rec in &s.recommendations {
-                review_body_text.push_str(&format!("- {}\n", rec));
+                review_body_text.push_str(&format!("- {rec}\n"));
             }
             review_body_text.push('\n');
         }
@@ -2202,10 +2201,7 @@ pub(super) async fn post_pr_review_comments(
         "comments": inline_comments,
     });
 
-    let url = format!(
-        "https://api.github.com/repos/{}/pulls/{}/reviews",
-        repo, pr_number,
-    );
+    let url = format!("https://api.github.com/repos/{repo}/pulls/{pr_number}/reviews",);
 
     let resp = github_api_post(client, token, &url, &review_payload).await?;
 
@@ -2215,7 +2211,7 @@ pub(super) async fn post_pr_review_comments(
     } else {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        Err(format!("GitHub API returned {}: {}", status, body))
+        Err(format!("GitHub API returned {status}: {body}"))
     }
 }
 

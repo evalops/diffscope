@@ -7,7 +7,7 @@ pub(super) async fn emit_changelog_output(output_path: Option<&Path>, output: &s
         tokio::fs::write(path, output).await?;
         info!("Changelog written to file");
     } else {
-        println!("{}", output);
+        println!("{output}");
     }
 
     Ok(())

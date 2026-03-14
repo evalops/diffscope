@@ -122,7 +122,7 @@ TAGS: [comma-separated relevant tags]
                     chunk.context_type,
                     chunk
                         .provenance_label()
-                        .map(|value| format!(" | {}", value))
+                        .map(|value| format!(" | {value}"))
                         .unwrap_or_default()
                 );
                 let block = format!(

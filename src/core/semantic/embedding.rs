@@ -41,7 +41,7 @@ pub async fn embed_texts_with_fallback(
 }
 
 pub fn build_feedback_embedding_text(content: &str, category: &str) -> String {
-    format!("Category: {}\nComment: {}", category, content)
+    format!("Category: {category}\nComment: {content}")
 }
 
 pub(super) fn local_hash_embedding(text: &str) -> Vec<f32> {

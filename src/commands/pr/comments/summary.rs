@@ -23,7 +23,7 @@ pub(super) fn upsert_pr_summary_comment(
 ) -> Result<()> {
     const SUMMARY_MARKER: &str = "<!-- diffscope:summary -->";
     let summary_body = review::build_pr_summary_comment_body(comments, rule_priority);
-    let full_body = format!("{}\n\n{}", SUMMARY_MARKER, summary_body);
+    let full_body = format!("{SUMMARY_MARKER}\n\n{summary_body}");
 
     let comments_endpoint = format!(
         "repos/{}/issues/{}/comments?per_page=100",

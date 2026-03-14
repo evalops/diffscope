@@ -40,7 +40,7 @@ mod tests {
 
     fn make_comment(file: &str, line: usize, content: &str, tag: &str) -> core::Comment {
         core::Comment {
-            id: format!("cmt_{}", line),
+            id: format!("cmt_{line}"),
             file_path: PathBuf::from(file),
             line_number: line,
             content: content.to_string(),

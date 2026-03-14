@@ -237,8 +237,7 @@ mod tests {
         let err = format!("{:#}", result.unwrap_err());
         assert!(
             err.contains("connect") || err.contains("Vault"),
-            "Error should mention connection failure: {}",
-            err
+            "Error should mention connection failure: {err}"
         );
     }
 
@@ -264,8 +263,8 @@ mod tests {
         let result = fetch_secret(&config).await;
         assert!(result.is_err());
         let err = format!("{:#}", result.unwrap_err());
-        assert!(err.contains("404"), "Should contain 404: {}", err);
-        assert!(err.contains("not found"), "Should contain hint: {}", err);
+        assert!(err.contains("404"), "Should contain 404: {err}");
+        assert!(err.contains("not found"), "Should contain hint: {err}");
         mock.assert_async().await;
     }
 
@@ -291,11 +290,10 @@ mod tests {
         let result = fetch_secret(&config).await;
         assert!(result.is_err());
         let err = format!("{:#}", result.unwrap_err());
-        assert!(err.contains("403"), "Should contain 403: {}", err);
+        assert!(err.contains("403"), "Should contain 403: {err}");
         assert!(
             err.contains("read access"),
-            "Should contain token hint: {}",
-            err
+            "Should contain token hint: {err}"
         );
         mock.assert_async().await;
     }
@@ -334,7 +332,7 @@ mod tests {
         };
 
         let result = fetch_secret(&config).await;
-        assert!(result.is_ok(), "Expected success: {:?}", result);
+        assert!(result.is_ok(), "Expected success: {result:?}");
         assert_eq!(result.unwrap(), "sk-secret-from-vault");
         mock.assert_async().await;
     }
@@ -408,14 +406,12 @@ mod tests {
         let err = format!("{:#}", result.unwrap_err());
         assert!(
             err.contains("api_key") && err.contains("not found"),
-            "Should list the missing key: {}",
-            err
+            "Should list the missing key: {err}"
         );
         // Should list available keys
         assert!(
             err.contains("password") || err.contains("token"),
-            "Should list available keys: {}",
-            err
+            "Should list available keys: {err}"
         );
     }
 

@@ -18,7 +18,7 @@ pub(super) fn audit_extension_counts(
     let top_extensions = extension_list
         .iter()
         .take(10)
-        .map(|(ext, count)| format!("{}({})", ext, count))
+        .map(|(ext, count)| format!("{ext}({count})"))
         .collect();
 
     let mut unmapped = extension_counts

@@ -58,7 +58,7 @@ pub async fn start_device_flow(
         .map_err(|e| {
             (
                 StatusCode::BAD_GATEWAY,
-                format!("GitHub request failed: {}", e),
+                format!("GitHub request failed: {e}"),
             )
         })?;
 
@@ -67,14 +67,14 @@ pub async fn start_device_flow(
         let body = resp.text().await.unwrap_or_default();
         return Err((
             StatusCode::BAD_GATEWAY,
-            format!("GitHub returned {}: {}", status, body),
+            format!("GitHub returned {status}: {body}"),
         ));
     }
 
     let body: serde_json::Value = resp.json().await.map_err(|e| {
         (
             StatusCode::BAD_GATEWAY,
-            format!("Failed to parse response: {}", e),
+            format!("Failed to parse response: {e}"),
         )
     })?;
 
@@ -138,14 +138,14 @@ pub async fn poll_device_flow(
         .map_err(|e| {
             (
                 StatusCode::BAD_GATEWAY,
-                format!("GitHub request failed: {}", e),
+                format!("GitHub request failed: {e}"),
             )
         })?;
 
     let body: serde_json::Value = resp.json().await.map_err(|e| {
         (
             StatusCode::BAD_GATEWAY,
-            format!("Failed to parse response: {}", e),
+            format!("Failed to parse response: {e}"),
         )
     })?;
 
@@ -174,7 +174,7 @@ pub async fn poll_device_flow(
     let user_resp = state
         .http_client
         .get("https://api.github.com/user")
-        .header("Authorization", format!("Bearer {}", access_token))
+        .header("Authorization", format!("Bearer {access_token}"))
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "DiffScope")
         .send()
@@ -182,7 +182,7 @@ pub async fn poll_device_flow(
         .map_err(|e| {
             (
                 StatusCode::BAD_GATEWAY,
-                format!("Failed to fetch user: {}", e),
+                format!("Failed to fetch user: {e}"),
             )
         })?;
 
@@ -285,7 +285,7 @@ pub async fn handle_webhook(
     match event_type {
         "pull_request" => {
             let payload: serde_json::Value = serde_json::from_str(&body)
-                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {}", e)))?;
+                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")))?;
 
             let action = payload["action"].as_str().unwrap_or("");
 
@@ -337,7 +337,7 @@ pub async fn handle_webhook(
                 // Determine whether to fetch an incremental diff or the full PR diff.
                 // For "synchronize" events, if we have a previously reviewed SHA,
                 // fetch only the commits since that SHA via the compare API.
-                let pr_key = format!("{}#{}", repo, pr_number);
+                let pr_key = format!("{repo}#{pr_number}");
                 let last_reviewed_sha = if action == "synchronize" {
                     AppState::get_last_reviewed_sha(&state, &pr_key).await
                 } else {
@@ -354,13 +354,12 @@ pub async fn handle_webhook(
                         "Fetching incremental diff (push-by-push)"
                     );
                     let compare_url = format!(
-                        "https://api.github.com/repos/{}/compare/{}...{}",
-                        repo, base_sha, head_sha,
+                        "https://api.github.com/repos/{repo}/compare/{base_sha}...{head_sha}",
                     );
                     let compare_resp = state
                         .http_client
                         .get(&compare_url)
-                        .header("Authorization", format!("Bearer {}", auth_token))
+                        .header("Authorization", format!("Bearer {auth_token}"))
                         .header("Accept", "application/vnd.github.v3.diff")
                         .header("User-Agent", "DiffScope")
                         .send()
@@ -368,7 +367,7 @@ pub async fn handle_webhook(
                         .map_err(|e| {
                             (
                                 StatusCode::BAD_GATEWAY,
-                                format!("Failed to fetch incremental diff: {}", e),
+                                format!("Failed to fetch incremental diff: {e}"),
                             )
                         })?;
 
@@ -416,7 +415,7 @@ pub async fn handle_webhook(
                 };
 
                 let review_id = uuid::Uuid::new_v4().to_string();
-                let diff_source = format!("pr:{}#{}", repo, pr_number);
+                let diff_source = format!("pr:{repo}#{pr_number}");
 
                 let session = ReviewSession {
                     id: review_id.clone(),
@@ -470,7 +469,7 @@ pub async fn handle_webhook(
         }
         "issue_comment" => {
             let payload: serde_json::Value = serde_json::from_str(&body)
-                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {}", e)))?;
+                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid JSON: {e}")))?;
 
             let action = payload["action"].as_str().unwrap_or("");
             let comment_body = payload["comment"]["body"].as_str().unwrap_or("");
@@ -506,9 +505,9 @@ pub async fn handle_webhook(
                             match crate::adapters::llm::create_adapter(&model_config) {
                                 Ok(adapter) => match cmd.execute(adapter.as_ref(), None).await {
                                     Ok(result) => result,
-                                    Err(e) => format!("Command failed: {}", e),
+                                    Err(e) => format!("Command failed: {e}"),
                                 },
-                                Err(e) => format!("Failed to create adapter: {}", e),
+                                Err(e) => format!("Failed to create adapter: {e}"),
                             }
                         }
                     };
@@ -516,13 +515,12 @@ pub async fn handle_webhook(
                     // Post response comment if we have a token
                     if let Some(ref auth) = token {
                         let comment_url = format!(
-                            "https://api.github.com/repos/{}/issues/{}/comments",
-                            repo, issue_number
+                            "https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
                         );
                         let _ = state
                             .http_client
                             .post(&comment_url)
-                            .header("Authorization", format!("Bearer {}", auth))
+                            .header("Authorization", format!("Bearer {auth}"))
                             .header("User-Agent", "DiffScope")
                             .json(&serde_json::json!({ "body": response_body }))
                             .send()
@@ -553,7 +551,7 @@ fn verify_webhook_signature(secret: &str, body: &str, signature: &str) -> Result
         .ok_or_else(|| "Invalid signature format".to_string())?;
 
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
-        .map_err(|e| format!("HMAC init failed: {}", e))?;
+        .map_err(|e| format!("HMAC init failed: {e}"))?;
     mac.update(body.as_bytes());
 
     let expected = hex::encode(mac.finalize().into_bytes());
@@ -575,11 +573,7 @@ fn verify_webhook_signature(secret: &str, body: &str, signature: &str) -> Result
 /// Hex-encode bytes (avoids adding hex crate).
 mod hex {
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect()
+        bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
     }
 }
 
@@ -598,7 +592,7 @@ fn create_app_jwt(app_id: u64, private_key_pem: &str) -> Result<String, String> 
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| format!("Time error: {}", e))?
+        .map_err(|e| format!("Time error: {e}"))?
         .as_secs();
 
     let claims = Claims {
@@ -608,10 +602,10 @@ fn create_app_jwt(app_id: u64, private_key_pem: &str) -> Result<String, String> 
     };
 
     let key = EncodingKey::from_rsa_pem(private_key_pem.as_bytes())
-        .map_err(|e| format!("Invalid private key: {}", e))?;
+        .map_err(|e| format!("Invalid private key: {e}"))?;
 
     encode(&Header::new(Algorithm::RS256), &claims, &key)
-        .map_err(|e| format!("JWT encoding failed: {}", e))
+        .map_err(|e| format!("JWT encoding failed: {e}"))
 }
 
 /// Get an installation access token for a specific installation.
@@ -623,30 +617,27 @@ async fn get_installation_token(
 ) -> Result<String, String> {
     let jwt = create_app_jwt(app_id, private_key_pem)?;
 
-    let url = format!(
-        "https://api.github.com/app/installations/{}/access_tokens",
-        installation_id,
-    );
+    let url = format!("https://api.github.com/app/installations/{installation_id}/access_tokens",);
 
     let resp = client
         .post(&url)
-        .header("Authorization", format!("Bearer {}", jwt))
+        .header("Authorization", format!("Bearer {jwt}"))
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "DiffScope")
         .send()
         .await
-        .map_err(|e| format!("Installation token request failed: {}", e))?;
+        .map_err(|e| format!("Installation token request failed: {e}"))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("GitHub returned {}: {}", status, body));
+        return Err(format!("GitHub returned {status}: {body}"));
     }
 
     let body: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("Failed to parse token response: {}", e))?;
+        .map_err(|e| format!("Failed to parse token response: {e}"))?;
 
     body["token"]
         .as_str()
@@ -715,7 +706,7 @@ async fn create_check_run(
                 summary
                     .recommendations
                     .iter()
-                    .map(|r| format!("- {}", r))
+                    .map(|r| format!("- {r}"))
                     .collect::<Vec<_>>()
                     .join("\n")
             )
@@ -734,17 +725,17 @@ async fn create_check_run(
         },
     });
 
-    let url = format!("https://api.github.com/repos/{}/check-runs", repo);
+    let url = format!("https://api.github.com/repos/{repo}/check-runs");
 
     let resp = client
         .post(&url)
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "DiffScope")
         .json(&check_run)
         .send()
         .await
-        .map_err(|e| format!("Check run request failed: {}", e))?;
+        .map_err(|e| format!("Check run request failed: {e}"))?;
 
     if resp.status().is_success() {
         info!(repo = %repo, sha = %head_sha, conclusion = %conclusion, "Created check run");
@@ -753,7 +744,7 @@ async fn create_check_run(
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         warn!(repo = %repo, status = %status, "Failed to create check run: {}", body);
-        Err(format!("GitHub returned {}: {}", status, body))
+        Err(format!("GitHub returned {status}: {body}"))
     }
 }
 
@@ -767,10 +758,7 @@ async fn post_pr_summary_comment(
     pr_number: u32,
     summary_markdown: &str,
 ) -> Result<(), String> {
-    let url = format!(
-        "https://api.github.com/repos/{}/issues/{}/comments",
-        repo, pr_number,
-    );
+    let url = format!("https://api.github.com/repos/{repo}/issues/{pr_number}/comments",);
 
     let body = serde_json::json!({
         "body": summary_markdown,
@@ -778,13 +766,13 @@ async fn post_pr_summary_comment(
 
     let resp = client
         .post(&url)
-        .header("Authorization", format!("Bearer {}", token))
+        .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "DiffScope")
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Failed to post PR summary comment: {}", e))?;
+        .map_err(|e| format!("Failed to post PR summary comment: {e}"))?;
 
     if resp.status().is_success() {
         info!(repo = %repo, pr = pr_number, "Posted PR summary comment");
@@ -792,7 +780,7 @@ async fn post_pr_summary_comment(
     } else {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        Err(format!("GitHub returned {}: {}", status, body))
+        Err(format!("GitHub returned {status}: {body}"))
     }
 }
 
@@ -817,11 +805,11 @@ async fn fetch_full_pr_diff(
     repo: &str,
     pr_number: u32,
 ) -> Result<String, (StatusCode, String)> {
-    let diff_url = format!("https://api.github.com/repos/{}/pulls/{}", repo, pr_number);
+    let diff_url = format!("https://api.github.com/repos/{repo}/pulls/{pr_number}");
     let diff_resp = state
         .http_client
         .get(&diff_url)
-        .header("Authorization", format!("Bearer {}", auth_token))
+        .header("Authorization", format!("Bearer {auth_token}"))
         .header("Accept", "application/vnd.github.v3.diff")
         .header("User-Agent", "DiffScope")
         .send()
@@ -829,7 +817,7 @@ async fn fetch_full_pr_diff(
         .map_err(|e| {
             (
                 StatusCode::BAD_GATEWAY,
-                format!("Failed to fetch diff: {}", e),
+                format!("Failed to fetch diff: {e}"),
             )
         })?;
 
@@ -838,14 +826,14 @@ async fn fetch_full_pr_diff(
         let body = diff_resp.text().await.unwrap_or_default();
         return Err((
             StatusCode::BAD_GATEWAY,
-            format!("GitHub returned {}: {}", status, body),
+            format!("GitHub returned {status}: {body}"),
         ));
     }
 
     diff_resp.text().await.map_err(|e| {
         (
             StatusCode::BAD_GATEWAY,
-            format!("Failed to read diff body: {}", e),
+            format!("Failed to read diff body: {e}"),
         )
     })
 }
@@ -879,7 +867,7 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
     };
 
     let task_start = std::time::Instant::now();
-    let diff_source = format!("pr:{}#{}", repo, pr_number);
+    let diff_source = format!("pr:{repo}#{pr_number}");
 
     AppState::mark_running(&state, &review_id).await;
 
@@ -915,7 +903,7 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
         )
         .await;
         // Record the reviewed SHA for future incremental reviews
-        let pr_key = format!("{}#{}", repo, pr_number);
+        let pr_key = format!("{repo}#{pr_number}");
         AppState::record_reviewed_sha(&state, &pr_key, &head_sha).await;
         AppState::save_reviews_async(&state);
         return;
@@ -1034,7 +1022,7 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
                 .await;
 
             // Record the reviewed SHA for future incremental reviews
-            let pr_key = format!("{}#{}", repo, pr_number);
+            let pr_key = format!("{repo}#{pr_number}");
             AppState::record_reviewed_sha(&state, &pr_key, &head_sha).await;
             if is_incremental {
                 info!(
@@ -1073,7 +1061,7 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
             }
         }
         Ok(Err(e)) => {
-            let err_msg = format!("Review failed: {}", e);
+            let err_msg = format!("Review failed: {e}");
             warn!(review_id = %review_id, error = %err_msg, "Webhook review failed");
             let event = ReviewEventBuilder::new(&review_id, "review.failed", &diff_source, &model)
                 .provider(provider.as_deref())
@@ -1136,7 +1124,7 @@ mod tests {
         let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(body.as_bytes());
         let expected = hex::encode(mac.finalize().into_bytes());
-        let signature = format!("sha256={}", expected);
+        let signature = format!("sha256={expected}");
 
         assert!(verify_webhook_signature(secret, body, &signature).is_ok());
     }
@@ -1176,7 +1164,7 @@ mod tests {
         let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(body.as_bytes());
         let expected = hex::encode(mac.finalize().into_bytes());
-        let signature = format!("sha256={}", expected);
+        let signature = format!("sha256={expected}");
 
         assert!(verify_webhook_signature(secret, body, &signature).is_ok());
     }

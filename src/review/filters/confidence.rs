@@ -63,7 +63,7 @@ fn lookup_feedback_confidence_stats<'a>(
     file_patterns
         .iter()
         .find_map(|pattern| {
-            let key = format!("{}|{}", category, pattern);
+            let key = format!("{category}|{pattern}");
             feedback.by_category_file_pattern.get(&key)
         })
         .or_else(|| {

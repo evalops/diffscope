@@ -405,7 +405,7 @@ mod tests {
             age_days: None,
         };
         let score = info.risk_score();
-        assert!(score > 0.5, "Expected high risk, got {}", score);
+        assert!(score > 0.5, "Expected high risk, got {score}");
     }
 
     #[test]
@@ -421,7 +421,7 @@ mod tests {
             age_days: None,
         };
         let score = info.risk_score();
-        assert!(score < 0.3, "Expected low risk, got {}", score);
+        assert!(score < 0.3, "Expected low risk, got {score}");
     }
 
     #[test]
@@ -466,7 +466,7 @@ mod tests {
         // Add more commits to hot.rs
         for i in 0..20 {
             analyzer.ingest_log(vec![make_entry(
-                &format!("commit_{}", i),
+                &format!("commit_{i}"),
                 "alice",
                 "Fix another bug",
                 vec![("src/hot.rs", 10, 5)],
@@ -490,7 +490,7 @@ mod tests {
         for i in 0..10 {
             let msg = if i % 2 == 0 { "Fix bug" } else { "Add feature" };
             analyzer.ingest_log(vec![make_entry(
-                &format!("c{}", i),
+                &format!("c{i}"),
                 "alice",
                 msg,
                 vec![("buggy.rs", 5, 3)],
@@ -507,7 +507,7 @@ mod tests {
         let mut analyzer = GitHistoryAnalyzer::new();
         for i in 0..15 {
             analyzer.ingest_log(vec![make_entry(
-                &format!("c{}", i),
+                &format!("c{i}"),
                 "alice",
                 "Fix issue",
                 vec![("src/risky.rs", 20, 10)],

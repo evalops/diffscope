@@ -22,7 +22,7 @@ pub(super) fn render_comment_section(
     );
 
     if let Some(suggestion) = comment.suggestion.as_ref() {
-        section.push_str(&format!("- Suggestion: {}\n", suggestion));
+        section.push_str(&format!("- Suggestion: {suggestion}\n"));
     }
 
     if let Some(diff) = diff {
@@ -56,7 +56,7 @@ fn append_code_block(section: &mut String, label: &str, language: &str, content:
     }
 
     section.push_str(label);
-    section.push_str(&format!("```{}\n", language));
+    section.push_str(&format!("```{language}\n"));
     section.push_str(content);
     section.push_str("\n```\n");
 }
@@ -68,7 +68,7 @@ fn format_context_chunk_for_verification(chunk: &LLMContextChunk) -> String {
         chunk.file_path.display(),
         chunk
             .line_range
-            .map(|(start, end)| format!(":{}-{}", start, end))
+            .map(|(start, end)| format!(":{start}-{end}"))
             .unwrap_or_default()
     );
 
