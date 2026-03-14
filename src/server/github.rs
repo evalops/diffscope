@@ -420,6 +420,7 @@ pub async fn handle_webhook(
                     status: ReviewStatus::Pending,
                     diff_source: diff_source.clone(),
                     github_head_sha: Some(head_sha.clone()),
+                    github_post_results_requested: None,
                     started_at: current_timestamp(),
                     completed_at: None,
                     comments: Vec::new(),

@@ -12,7 +12,7 @@ use uuid::Uuid;
 use super::pr_readiness::{
     apply_dynamic_review_state, build_pr_readiness_snapshot, build_repo_blocker_rollups,
     get_pr_readiness_snapshot, latest_pr_review_session, latest_review_head_by_source,
-    load_review_inventory, pr_diff_source, PrReadinessSnapshot,
+    load_review_inventory, parse_pr_diff_source, pr_diff_source, PrReadinessSnapshot,
 };
 use super::state::{
     build_progress_callback, count_diff_files, count_reviewed_files, current_timestamp,
@@ -668,6 +668,7 @@ pub async fn start_review(
         status: ReviewStatus::Pending,
         diff_source: display_source,
         github_head_sha: None,
+        github_post_results_requested: None,
         started_at: current_timestamp(),
         completed_at: None,
         comments: Vec::new(),
@@ -2634,18 +2635,51 @@ pub async fn get_gh_pr_findings(
 
 // === GitHub PR Review ===
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct StartPrReviewRequest {
     pub repo: String,
     pub pr_number: u32,
     pub post_results: bool,
 }
 
-#[tracing::instrument(name = "api.start_pr_review", skip(state, request), fields(repo = %request.repo, pr_number = request.pr_number))]
-pub async fn start_pr_review(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<StartPrReviewRequest>,
-) -> Result<Json<StartReviewResponse>, (StatusCode, String)> {
+#[derive(Deserialize)]
+pub struct RerunPrReviewRequest {
+    pub review_id: String,
+    pub post_results: Option<bool>,
+}
+
+fn resolve_rerun_post_results(
+    session: &ReviewSession,
+    post_results_override: Option<bool>,
+) -> bool {
+    post_results_override
+        .or(session.github_post_results_requested)
+        .or_else(|| session.event.as_ref().map(|event| event.github_posted))
+        .unwrap_or(false)
+}
+
+fn build_rerun_pr_review_request(
+    session: &ReviewSession,
+    post_results_override: Option<bool>,
+) -> Result<StartPrReviewRequest, (StatusCode, String)> {
+    let Some((repo, pr_number)) = parse_pr_diff_source(&session.diff_source) else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Review is not tied to a GitHub PR.".to_string(),
+        ));
+    };
+
+    Ok(StartPrReviewRequest {
+        repo,
+        pr_number,
+        post_results: resolve_rerun_post_results(session, post_results_override),
+    })
+}
+
+async fn dispatch_pr_review(
+    state: &Arc<AppState>,
+    request: StartPrReviewRequest,
+) -> Result<StartReviewResponse, (StatusCode, String)> {
     info!(repo = %request.repo, pr = request.pr_number, post_results = request.post_results, "Starting PR review");
 
     if !is_valid_repo_name(&request.repo) {
@@ -2673,7 +2707,6 @@ pub async fn start_pr_review(
         .to_string();
     drop(config);
 
-    // Fetch the diff via GitHub API
     let diff_url = format!(
         "https://api.github.com/repos/{}/pulls/{}",
         request.repo, request.pr_number,
@@ -2687,13 +2720,14 @@ pub async fn start_pr_review(
             .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
     let id = Uuid::new_v4().to_string();
-    let diff_source = format!("pr:{}#{}", request.repo, request.pr_number);
+    let diff_source = pr_diff_source(&request.repo, request.pr_number);
 
     let session = ReviewSession {
         id: id.clone(),
         status: ReviewStatus::Pending,
         diff_source: diff_source.clone(),
         github_head_sha: Some(head_sha.clone()),
+        github_post_results_requested: Some(request.post_results),
         started_at: current_timestamp(),
         completed_at: None,
         comments: Vec::new(),
@@ -2728,10 +2762,39 @@ pub async fn start_pr_review(
         .await;
     });
 
-    Ok(Json(StartReviewResponse {
+    Ok(StartReviewResponse {
         id,
         status: ReviewStatus::Pending,
-    }))
+    })
+}
+
+#[tracing::instrument(name = "api.start_pr_review", skip(state, request), fields(repo = %request.repo, pr_number = request.pr_number))]
+pub async fn start_pr_review(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<StartPrReviewRequest>,
+) -> Result<Json<StartReviewResponse>, (StatusCode, String)> {
+    Ok(Json(dispatch_pr_review(&state, request).await?))
+}
+
+#[tracing::instrument(name = "api.rerun_pr_review", skip(state, request), fields(review_id = %request.review_id))]
+pub async fn rerun_pr_review(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<RerunPrReviewRequest>,
+) -> Result<Json<StartReviewResponse>, (StatusCode, String)> {
+    let review_id = request.review_id.trim();
+    let session = load_review_session_for_update(&state, review_id)
+        .await
+        .map_err(|status| match status {
+            StatusCode::NOT_FOUND => (
+                StatusCode::NOT_FOUND,
+                format!("Review '{}' not found.", review_id),
+            ),
+            _ => (status, "Failed to load review session.".to_string()),
+        })?;
+
+    let start_request = build_rerun_pr_review_request(&session, request.post_results)?;
+
+    Ok(Json(dispatch_pr_review(&state, start_request).await?))
 }
 
 async fn run_pr_review_task(
@@ -3994,6 +4057,73 @@ mod tests {
             groups.iter().map(|group| group.count).collect::<Vec<_>>(),
             vec![1, 1, 1]
         );
+    }
+
+    fn make_pr_review_session(
+        diff_source: &str,
+        requested_post_results: Option<bool>,
+        github_posted: bool,
+    ) -> ReviewSession {
+        ReviewSession {
+            id: "review-123".to_string(),
+            status: ReviewStatus::Complete,
+            diff_source: diff_source.to_string(),
+            github_head_sha: Some("abc123".to_string()),
+            github_post_results_requested: requested_post_results,
+            started_at: 10,
+            completed_at: Some(20),
+            comments: Vec::new(),
+            summary: None,
+            files_reviewed: 0,
+            error: None,
+            pr_summary_text: None,
+            diff_content: None,
+            event: Some(
+                ReviewEventBuilder::new("review-123", "review.completed", diff_source, "gpt-4")
+                    .github_posted(github_posted)
+                    .build(),
+            ),
+            progress: None,
+        }
+    }
+
+    #[test]
+    fn test_build_rerun_pr_review_request_reuses_saved_policy() {
+        let session = make_pr_review_session("pr:owner/repo#42", Some(true), false);
+
+        let request = build_rerun_pr_review_request(&session, None).expect("rerun request");
+
+        assert_eq!(request.repo, "owner/repo");
+        assert_eq!(request.pr_number, 42);
+        assert!(request.post_results);
+    }
+
+    #[test]
+    fn test_build_rerun_pr_review_request_prefers_override() {
+        let session = make_pr_review_session("pr:owner/repo#42", Some(true), false);
+
+        let request = build_rerun_pr_review_request(&session, Some(false)).expect("rerun request");
+
+        assert!(!request.post_results);
+    }
+
+    #[test]
+    fn test_build_rerun_pr_review_request_falls_back_to_legacy_event_signal() {
+        let session = make_pr_review_session("pr:owner/repo#42", None, true);
+
+        let request = build_rerun_pr_review_request(&session, None).expect("rerun request");
+
+        assert!(request.post_results);
+    }
+
+    #[test]
+    fn test_build_rerun_pr_review_request_rejects_non_pr_reviews() {
+        let session = make_pr_review_session("head", Some(true), false);
+
+        let err = build_rerun_pr_review_request(&session, None).expect_err("non-pr review");
+
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(err.1, "Review is not tied to a GitHub PR.");
     }
 
     #[test]

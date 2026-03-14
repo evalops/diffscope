@@ -129,6 +129,8 @@ pub struct ReviewSession {
     pub diff_source: String,
     #[serde(default)]
     pub github_head_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_post_results_requested: Option<bool>,
     pub started_at: i64,
     pub completed_at: Option<i64>,
     pub comments: Vec<Comment>,
