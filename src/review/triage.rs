@@ -11,7 +11,8 @@ mod run;
 
 #[allow(unused_imports)]
 pub use result::TriageResult;
-pub use run::triage_diff;
+#[allow(unused_imports)]
+pub use run::{triage_diff, triage_diff_with_options, TriageOptions};
 
 #[cfg(test)]
 mod tests {
@@ -657,6 +658,7 @@ mod tests {
         assert!(TriageResult::SkipWhitespaceOnly.should_skip());
         assert!(TriageResult::SkipGenerated.should_skip());
         assert!(TriageResult::SkipCommentOnly.should_skip());
+        assert!(TriageResult::SkipDeletionOnly.should_skip());
     }
 
     #[test]
@@ -671,6 +673,7 @@ mod tests {
         assert!(!TriageResult::SkipWhitespaceOnly.reason().is_empty());
         assert!(!TriageResult::SkipGenerated.reason().is_empty());
         assert!(!TriageResult::SkipCommentOnly.reason().is_empty());
+        assert!(!TriageResult::SkipDeletionOnly.reason().is_empty());
     }
 
     #[test]
@@ -681,6 +684,7 @@ mod tests {
             TriageResult::SkipWhitespaceOnly.reason(),
             TriageResult::SkipGenerated.reason(),
             TriageResult::SkipCommentOnly.reason(),
+            TriageResult::SkipDeletionOnly.reason(),
         ];
         // All should be unique
         let unique: std::collections::HashSet<&str> = reasons.iter().copied().collect();
@@ -688,6 +692,42 @@ mod tests {
             unique.len(),
             reasons.len(),
             "Reason strings should be unique"
+        );
+    }
+
+    // ── #29 optional skip deletion-only ──────────────────────────────────
+
+    #[test]
+    fn test_triage_deletion_only_with_skip_true_returns_skip_deletion_only() {
+        let diff = make_diff(
+            "src/lib.rs",
+            vec![
+                make_line(1, ChangeType::Removed, "let x = 1;"),
+                make_line(2, ChangeType::Removed, "let y = 2;"),
+            ],
+        );
+        let options = TriageOptions {
+            skip_deletion_only: true,
+        };
+        assert_eq!(
+            triage_diff_with_options(&diff, options),
+            TriageResult::SkipDeletionOnly
+        );
+    }
+
+    #[test]
+    fn test_triage_deletion_only_with_skip_false_returns_needs_review() {
+        let diff = make_diff(
+            "src/lib.rs",
+            vec![make_line(1, ChangeType::Removed, "removed line")],
+        );
+        assert_eq!(triage_diff(&diff), TriageResult::NeedsReview);
+        let options = TriageOptions {
+            skip_deletion_only: false,
+        };
+        assert_eq!(
+            triage_diff_with_options(&diff, options),
+            TriageResult::NeedsReview
         );
     }
 

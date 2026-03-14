@@ -5,6 +5,8 @@ pub enum TriageResult {
     SkipWhitespaceOnly,
     SkipGenerated,
     SkipCommentOnly,
+    /// File has only removal hunks; skip when config triage_skip_deletion_only is true (#29).
+    SkipDeletionOnly,
 }
 
 impl TriageResult {
@@ -19,6 +21,7 @@ impl TriageResult {
             TriageResult::SkipWhitespaceOnly => "whitespace-only changes",
             TriageResult::SkipGenerated => "generated file",
             TriageResult::SkipCommentOnly => "comment-only changes",
+            TriageResult::SkipDeletionOnly => "deletion-only changes",
         }
     }
 }

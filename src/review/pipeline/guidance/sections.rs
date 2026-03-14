@@ -9,6 +9,7 @@ pub(super) fn collect_guidance_sections(
     push_section(&mut sections, comment_types_section(config));
     push_section(&mut sections, review_profile_section(config));
     push_section(&mut sections, global_instructions_section(config));
+    push_section(&mut sections, prose_rules_section(config));
     push_section(&mut sections, path_instructions_section(path_config));
     push_section(&mut sections, output_language_section(config));
     sections.push(fix_suggestion_section(config));
@@ -63,6 +64,25 @@ fn global_instructions_section(config: &config::Config) -> Option<String> {
         None
     } else {
         Some(format!("Global review instructions:\n{instructions}"))
+    }
+}
+
+fn prose_rules_section(config: &config::Config) -> Option<String> {
+    let rules = config.review_rules_prose.as_deref()?;
+    let rules: Vec<&str> = rules
+        .iter()
+        .map(String::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    if rules.is_empty() {
+        None
+    } else {
+        let bullets = rules
+            .iter()
+            .map(|r| format!("- {}", r.trim()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(format!("Custom rules (natural language):\n{bullets}"))
     }
 }
 

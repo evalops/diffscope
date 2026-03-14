@@ -7,7 +7,20 @@ use super::comments::is_comment_line;
 use super::files::{is_generated_file, is_lock_file};
 use super::result::TriageResult;
 
+/// Options for triage behavior (e.g. from config).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TriageOptions {
+    /// When true, treat deletion-only diffs as skip (#29). Default false (deletions still get review).
+    pub skip_deletion_only: bool,
+}
+
+/// Convenience: triage with default options (skip_deletion_only = false). Used by tests and callers that do not need config.
+#[allow(dead_code)]
 pub fn triage_diff(diff: &UnifiedDiff) -> TriageResult {
+    triage_diff_with_options(diff, TriageOptions::default())
+}
+
+pub fn triage_diff_with_options(diff: &UnifiedDiff, options: TriageOptions) -> TriageResult {
     if is_lock_file(&diff.file_path) {
         return TriageResult::SkipLockFile;
     }
@@ -34,6 +47,9 @@ pub fn triage_diff(diff: &UnifiedDiff) -> TriageResult {
     }
 
     if is_deletion_only_change(&all_changes) {
+        if options.skip_deletion_only {
+            return TriageResult::SkipDeletionOnly;
+        }
         // Pure deletions can still remove required fields, checks, or error handling.
         return TriageResult::NeedsReview;
     }

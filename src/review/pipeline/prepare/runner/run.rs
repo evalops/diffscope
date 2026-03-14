@@ -29,7 +29,11 @@ pub(in super::super::super) async fn prepare_file_review_jobs(
             continue;
         }
 
-        match prepare_diff_analysis(&diff, &mut batched_pre_analysis)? {
+        match prepare_diff_analysis(
+            &diff,
+            &mut batched_pre_analysis,
+            services.config.triage_skip_deletion_only,
+        )? {
             DiffPreparationDecision::Skip => {
                 progress.skip_file();
             }
