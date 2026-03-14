@@ -1,12 +1,13 @@
 use anyhow::Result;
-use futures::FutureExt;
+use futures::{future::BoxFuture, FutureExt};
+use std::cell::RefCell;
 use tracing::debug;
 
 use crate::config;
 use crate::core;
 use crate::core::dag::{
-    describe_dag, execute_dag, DagExecutionRecord, DagExecutionTrace, DagGraphContract, DagNode,
-    DagNodeContract, DagNodeExecutionHints, DagNodeKind, DagNodeSpec,
+    describe_dag, execute_dag_with_parallelism, DagExecutionRecord, DagExecutionTrace,
+    DagGraphContract, DagNode, DagNodeContract, DagNodeExecutionHints, DagNodeKind, DagNodeSpec,
 };
 use crate::core::eval_benchmarks::FixtureResult as BenchmarkFixtureResult;
 use crate::review::review_diff_content_raw;
@@ -46,10 +47,10 @@ impl DagNode for EvalFixtureStage {
     }
 }
 
-pub(super) struct EvalFixtureDagConfig<'a> {
+pub(super) struct EvalFixtureDagConfig {
     pub(super) repro_validate: bool,
     pub(super) repro_max_comments: usize,
-    pub(super) artifact_context: Option<&'a EvalFixtureArtifactContext>,
+    pub(super) artifact_context: Option<EvalFixtureArtifactContext>,
 }
 
 pub(super) struct EvalFixtureExecutionOutcome {
@@ -60,9 +61,9 @@ pub(super) struct EvalFixtureExecutionOutcome {
     pub(super) details: FixtureResultDetails,
 }
 
-struct EvalFixtureDagContext<'a> {
+struct EvalFixtureDagContext {
     prepared: PreparedFixtureExecution,
-    dag_config: EvalFixtureDagConfig<'a>,
+    dag_config: EvalFixtureDagConfig,
     comments: Vec<core::Comment>,
     warnings: Vec<String>,
     verification_report: Option<EvalVerificationReport>,
@@ -76,8 +77,36 @@ struct EvalFixtureDagContext<'a> {
     dag_traces: Vec<DagExecutionTrace>,
 }
 
-impl<'a> EvalFixtureDagContext<'a> {
-    fn new(prepared: PreparedFixtureExecution, dag_config: EvalFixtureDagConfig<'a>) -> Self {
+#[derive(Debug)]
+enum EvalFixtureStageOutput {
+    Review {
+        comments: Vec<core::Comment>,
+        warnings: Vec<String>,
+        verification_report: Option<EvalVerificationReport>,
+        agent_activity: Option<EvalAgentActivity>,
+        dag_traces: Vec<DagExecutionTrace>,
+    },
+    ExpectationMatching {
+        match_summary: FixtureMatchSummary,
+        failures: Vec<String>,
+    },
+    CommentCountValidation {
+        failures: Vec<String>,
+    },
+    BenchmarkMetrics {
+        benchmark_metrics: Option<BenchmarkFixtureResult>,
+    },
+    ReproductionValidation {
+        reproduction_summary: Option<EvalReproductionSummary>,
+        warnings: Vec<String>,
+    },
+    ArtifactCapture {
+        artifact_path: Option<String>,
+    },
+}
+
+impl EvalFixtureDagContext {
+    fn new(prepared: PreparedFixtureExecution, dag_config: EvalFixtureDagConfig) -> Self {
         Self {
             prepared,
             dag_config,
@@ -127,19 +156,59 @@ impl<'a> EvalFixtureDagContext<'a> {
 pub(super) async fn execute_eval_fixture_dag(
     config: &config::Config,
     prepared: PreparedFixtureExecution,
-    dag_config: EvalFixtureDagConfig<'_>,
+    dag_config: EvalFixtureDagConfig,
 ) -> Result<EvalFixtureExecutionOutcome> {
     let specs = build_stage_specs(dag_config.repro_validate);
     let dag_description = describe_dag(&specs);
     debug!(?dag_description, "Executing eval fixture DAG");
-    let mut context = EvalFixtureDagContext::new(prepared, dag_config);
-    let records = execute_dag(&specs, &mut context, |stage, context| {
-        async move { execute_stage(stage, config, context).await }.boxed()
-    })
+    let context = RefCell::new(EvalFixtureDagContext::new(prepared, dag_config));
+    let records = execute_dag_with_parallelism(
+        &specs,
+        |stage| {
+            let mut context = context.borrow_mut();
+            spawn_stage(stage, config, &mut context)
+        },
+        |stage, output| {
+            let mut context = context.borrow_mut();
+            apply_stage_output(stage, output, &mut context)
+        },
+    )
     .await?;
+    let mut context = context.into_inner();
     rewrite_fixture_artifact_with_eval_trace(&mut context, &records).await?;
 
     context.into_outcome(records)
+}
+
+fn stage_hints(stage: EvalFixtureStage) -> DagNodeExecutionHints {
+    match stage {
+        EvalFixtureStage::Review => DagNodeExecutionHints {
+            parallelizable: false,
+            retryable: true,
+            side_effects: false,
+            subgraph: Some("review_pipeline".to_string()),
+        },
+        EvalFixtureStage::ExpectationMatching
+        | EvalFixtureStage::CommentCountValidation
+        | EvalFixtureStage::BenchmarkMetrics => DagNodeExecutionHints {
+            parallelizable: true,
+            retryable: true,
+            side_effects: false,
+            subgraph: None,
+        },
+        EvalFixtureStage::ReproductionValidation => DagNodeExecutionHints {
+            parallelizable: true,
+            retryable: true,
+            side_effects: false,
+            subgraph: None,
+        },
+        EvalFixtureStage::ArtifactCapture => DagNodeExecutionHints {
+            parallelizable: false,
+            retryable: true,
+            side_effects: true,
+            subgraph: None,
+        },
+    }
 }
 
 pub(in super::super::super) fn describe_eval_fixture_graph(
@@ -166,12 +235,7 @@ pub(in super::super::super) fn describe_eval_fixture_graph(
                     "verification_report".to_string(),
                     "agent_activity".to_string(),
                 ],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: Some("review_pipeline".to_string()),
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             EvalFixtureStage::ExpectationMatching => DagNodeContract {
@@ -187,12 +251,7 @@ pub(in super::super::super) fn describe_eval_fixture_graph(
                     .collect(),
                 inputs: vec!["comments".to_string(), "fixture_expectations".to_string()],
                 outputs: vec!["match_summary".to_string(), "failures".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: true,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             EvalFixtureStage::CommentCountValidation => DagNodeContract {
@@ -211,12 +270,7 @@ pub(in super::super::super) fn describe_eval_fixture_graph(
                     "failures".to_string(),
                 ],
                 outputs: vec!["failures".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: true,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             EvalFixtureStage::BenchmarkMetrics => DagNodeContract {
@@ -236,12 +290,7 @@ pub(in super::super::super) fn describe_eval_fixture_graph(
                     "failures".to_string(),
                 ],
                 outputs: vec!["benchmark_metrics".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: true,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             EvalFixtureStage::ReproductionValidation => DagNodeContract {
@@ -261,12 +310,7 @@ pub(in super::super::super) fn describe_eval_fixture_graph(
                     "comments".to_string(),
                 ],
                 outputs: vec!["reproduction_summary".to_string(), "warnings".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             EvalFixtureStage::ArtifactCapture => DagNodeContract {
@@ -288,12 +332,7 @@ pub(in super::super::super) fn describe_eval_fixture_graph(
                     "benchmark_metrics".to_string(),
                 ],
                 outputs: vec!["artifact_path".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: true,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
         })
@@ -315,26 +354,31 @@ fn build_stage_specs(repro_validate: bool) -> Vec<DagNodeSpec<EvalFixtureStage>>
         DagNodeSpec {
             id: EvalFixtureStage::Review,
             dependencies: vec![],
+            hints: stage_hints(EvalFixtureStage::Review),
             enabled: true,
         },
         DagNodeSpec {
             id: EvalFixtureStage::ExpectationMatching,
             dependencies: vec![EvalFixtureStage::Review],
+            hints: stage_hints(EvalFixtureStage::ExpectationMatching),
             enabled: true,
         },
         DagNodeSpec {
             id: EvalFixtureStage::CommentCountValidation,
             dependencies: vec![EvalFixtureStage::ExpectationMatching],
+            hints: stage_hints(EvalFixtureStage::CommentCountValidation),
             enabled: true,
         },
         DagNodeSpec {
             id: EvalFixtureStage::BenchmarkMetrics,
             dependencies: vec![EvalFixtureStage::CommentCountValidation],
+            hints: stage_hints(EvalFixtureStage::BenchmarkMetrics),
             enabled: true,
         },
         DagNodeSpec {
             id: EvalFixtureStage::ReproductionValidation,
             dependencies: vec![EvalFixtureStage::Review],
+            hints: stage_hints(EvalFixtureStage::ReproductionValidation),
             enabled: repro_validate,
         },
         DagNodeSpec {
@@ -347,131 +391,236 @@ fn build_stage_specs(repro_validate: bool) -> Vec<DagNodeSpec<EvalFixtureStage>>
             } else {
                 vec![EvalFixtureStage::BenchmarkMetrics]
             },
+            hints: stage_hints(EvalFixtureStage::ArtifactCapture),
             enabled: true,
         },
     ]
 }
 
-async fn execute_stage(
+fn spawn_stage(
     stage: EvalFixtureStage,
     config: &config::Config,
-    context: &mut EvalFixtureDagContext<'_>,
-) -> Result<()> {
+    context: &mut EvalFixtureDagContext,
+) -> Result<BoxFuture<'static, Result<EvalFixtureStageOutput>>> {
     match stage {
-        EvalFixtureStage::Review => execute_review_stage(config, context).await,
-        EvalFixtureStage::ExpectationMatching => execute_expectation_stage(context),
-        EvalFixtureStage::CommentCountValidation => execute_comment_count_stage(context),
-        EvalFixtureStage::BenchmarkMetrics => execute_benchmark_metrics_stage(context),
-        EvalFixtureStage::ReproductionValidation => {
-            execute_reproduction_stage(config, context).await
-        }
-        EvalFixtureStage::ArtifactCapture => execute_artifact_stage(context).await,
-    }
-}
-
-async fn execute_review_stage(
-    config: &config::Config,
-    context: &mut EvalFixtureDagContext<'_>,
-) -> Result<()> {
-    let review_result = review_diff_content_raw(
-        &context.prepared.diff_content,
-        config.clone(),
-        &context.prepared.repo_path,
-    )
-    .await?;
-    context.verification_report = convert_verification_report(review_result.verification_report);
-    context.agent_activity = convert_agent_activity(review_result.agent_activity);
-    context.dag_traces = review_result.dag_traces;
-    context.comments = review_result.comments;
-    context.warnings = review_result.warnings;
-    context.total_comments = context.comments.len();
-    Ok(())
-}
-
-fn execute_expectation_stage(context: &mut EvalFixtureDagContext<'_>) -> Result<()> {
-    let match_summary =
-        evaluate_fixture_expectations(&context.prepared.fixture.expect, &context.comments);
-    context.failures = match_summary.failures.clone();
-    context.match_summary = Some(match_summary);
-    Ok(())
-}
-
-fn execute_comment_count_stage(context: &mut EvalFixtureDagContext<'_>) -> Result<()> {
-    if context.match_summary.is_none() {
-        anyhow::bail!("comment count validation requires expectation matches");
-    }
-    append_total_comment_failures(
-        &mut context.failures,
-        context.total_comments,
-        &context.prepared.fixture.expect,
-    );
-    Ok(())
-}
-
-fn execute_benchmark_metrics_stage(context: &mut EvalFixtureDagContext<'_>) -> Result<()> {
-    let Some(match_summary) = context.match_summary.as_ref() else {
-        anyhow::bail!("benchmark metrics require expectation matches");
-    };
-    context.benchmark_metrics = build_benchmark_metrics(
-        &context.prepared,
-        context.total_comments,
-        match_summary,
-        &context.failures,
-    );
-    Ok(())
-}
-
-async fn execute_reproduction_stage(
-    config: &config::Config,
-    context: &mut EvalFixtureDagContext<'_>,
-) -> Result<()> {
-    context.reproduction_summary = maybe_run_reproduction_validation(
-        config,
-        &context.prepared,
-        &context.comments,
-        context.dag_config.repro_max_comments,
-    )
-    .await?;
-    if let Some(summary) = context.reproduction_summary.as_ref() {
-        context
-            .warnings
-            .extend(summary.checks.iter().filter_map(|check| {
-                check.warning.as_ref().map(|warning| {
-                    format!(
-                        "reproduction validator for comment {} ({}) reported: {}",
-                        check.comment_id, check.model, warning
-                    )
+        EvalFixtureStage::Review => {
+            let diff_content = context.prepared.diff_content.clone();
+            let repo_path = context.prepared.repo_path.clone();
+            let config = config.clone();
+            Ok(async move {
+                let review_result =
+                    review_diff_content_raw(&diff_content, config, &repo_path).await?;
+                Ok(EvalFixtureStageOutput::Review {
+                    verification_report: convert_verification_report(
+                        review_result.verification_report,
+                    ),
+                    agent_activity: convert_agent_activity(review_result.agent_activity),
+                    dag_traces: review_result.dag_traces,
+                    comments: review_result.comments,
+                    warnings: review_result.warnings,
                 })
-            }));
+            }
+            .boxed())
+        }
+        EvalFixtureStage::ExpectationMatching => {
+            let expectations = context.prepared.fixture.expect.clone();
+            let comments = context.comments.clone();
+            Ok(async move {
+                let match_summary = evaluate_fixture_expectations(&expectations, &comments);
+                Ok(EvalFixtureStageOutput::ExpectationMatching {
+                    failures: match_summary.failures.clone(),
+                    match_summary,
+                })
+            }
+            .boxed())
+        }
+        EvalFixtureStage::CommentCountValidation => {
+            let Some(_) = context.match_summary.as_ref() else {
+                anyhow::bail!("comment count validation requires expectation matches");
+            };
+            let total_comments = context.total_comments;
+            let expectations = context.prepared.fixture.expect.clone();
+            let mut failures = context.failures.clone();
+            Ok(async move {
+                append_total_comment_failures(&mut failures, total_comments, &expectations);
+                Ok(EvalFixtureStageOutput::CommentCountValidation { failures })
+            }
+            .boxed())
+        }
+        EvalFixtureStage::BenchmarkMetrics => {
+            let Some(match_summary) = context.match_summary.clone() else {
+                anyhow::bail!("benchmark metrics require expectation matches");
+            };
+            let prepared = context.prepared.clone();
+            let total_comments = context.total_comments;
+            let failures = context.failures.clone();
+            Ok(async move {
+                Ok(EvalFixtureStageOutput::BenchmarkMetrics {
+                    benchmark_metrics: build_benchmark_metrics(
+                        &prepared,
+                        total_comments,
+                        &match_summary,
+                        &failures,
+                    ),
+                })
+            }
+            .boxed())
+        }
+        EvalFixtureStage::ReproductionValidation => {
+            let config = config.clone();
+            let prepared = context.prepared.clone();
+            let comments = context.comments.clone();
+            let repro_max_comments = context.dag_config.repro_max_comments;
+            Ok(async move {
+                let reproduction_summary = maybe_run_reproduction_validation(
+                    &config,
+                    &prepared,
+                    &comments,
+                    repro_max_comments,
+                )
+                .await?;
+                let warnings = reproduction_summary
+                    .as_ref()
+                    .map(build_reproduction_warnings)
+                    .unwrap_or_default();
+                Ok(EvalFixtureStageOutput::ReproductionValidation {
+                    reproduction_summary,
+                    warnings,
+                })
+            }
+            .boxed())
+        }
+        EvalFixtureStage::ArtifactCapture => {
+            let Some(match_summary) = context.match_summary.clone() else {
+                anyhow::bail!("artifact stage requires expectation matching output");
+            };
+            let prepared = context.prepared.clone();
+            let artifact_context = context.dag_config.artifact_context.clone();
+            let total_comments = context.total_comments;
+            let comments = context.comments.clone();
+            let warnings = context.warnings.clone();
+            let failures = context.failures.clone();
+            let benchmark_metrics = context.benchmark_metrics.clone();
+            let verification_report = context.verification_report.clone();
+            let agent_activity = context.agent_activity.clone();
+            let reproduction_summary = context.reproduction_summary.clone();
+            let dag_traces = context.dag_traces.clone();
+            Ok(async move {
+                let artifact_path = maybe_write_fixture_artifact(EvalFixtureArtifactInput {
+                    context: artifact_context.as_ref(),
+                    prepared: &prepared,
+                    total_comments,
+                    comments: &comments,
+                    warnings: &warnings,
+                    failures: &failures,
+                    benchmark_metrics: benchmark_metrics.as_ref(),
+                    rule_metrics: &match_summary.rule_metrics,
+                    rule_summary: match_summary.rule_summary,
+                    verification_report: verification_report.as_ref(),
+                    agent_activity: agent_activity.as_ref(),
+                    reproduction_summary: reproduction_summary.as_ref(),
+                    dag_traces: &dag_traces,
+                })
+                .await?;
+                Ok(EvalFixtureStageOutput::ArtifactCapture { artifact_path })
+            }
+            .boxed())
+        }
     }
-    Ok(())
 }
 
-async fn execute_artifact_stage(context: &mut EvalFixtureDagContext<'_>) -> Result<()> {
-    let Some(match_summary) = context.match_summary.as_ref() else {
-        anyhow::bail!("artifact stage requires expectation matching output");
-    };
-    context.artifact_path = maybe_write_fixture_artifact(EvalFixtureArtifactInput {
-        context: context.dag_config.artifact_context,
-        prepared: &context.prepared,
-        total_comments: context.total_comments,
-        comments: &context.comments,
-        warnings: &context.warnings,
-        failures: &context.failures,
-        benchmark_metrics: context.benchmark_metrics.as_ref(),
-        rule_metrics: &match_summary.rule_metrics,
-        rule_summary: match_summary.rule_summary,
-        verification_report: context.verification_report.as_ref(),
-        agent_activity: context.agent_activity.as_ref(),
-        reproduction_summary: context.reproduction_summary.as_ref(),
-        dag_traces: &context.dag_traces,
-    })
-    .await?;
-    Ok(())
+fn apply_stage_output(
+    stage: EvalFixtureStage,
+    output: EvalFixtureStageOutput,
+    context: &mut EvalFixtureDagContext,
+) -> Result<()> {
+    match (stage, output) {
+        (
+            EvalFixtureStage::Review,
+            EvalFixtureStageOutput::Review {
+                comments,
+                warnings,
+                verification_report,
+                agent_activity,
+                dag_traces,
+            },
+        ) => {
+            context.total_comments = comments.len();
+            context.comments = comments;
+            context.warnings = warnings;
+            context.verification_report = verification_report;
+            context.agent_activity = agent_activity;
+            context.dag_traces = dag_traces;
+            Ok(())
+        }
+        (
+            EvalFixtureStage::ExpectationMatching,
+            EvalFixtureStageOutput::ExpectationMatching {
+                match_summary,
+                failures,
+            },
+        ) => {
+            context.match_summary = Some(match_summary);
+            context.failures = failures;
+            Ok(())
+        }
+        (
+            EvalFixtureStage::CommentCountValidation,
+            EvalFixtureStageOutput::CommentCountValidation { failures },
+        ) => {
+            context.failures = failures;
+            Ok(())
+        }
+        (
+            EvalFixtureStage::BenchmarkMetrics,
+            EvalFixtureStageOutput::BenchmarkMetrics { benchmark_metrics },
+        ) => {
+            context.benchmark_metrics = benchmark_metrics;
+            Ok(())
+        }
+        (
+            EvalFixtureStage::ReproductionValidation,
+            EvalFixtureStageOutput::ReproductionValidation {
+                reproduction_summary,
+                warnings,
+            },
+        ) => {
+            context.reproduction_summary = reproduction_summary;
+            context.warnings.extend(warnings);
+            Ok(())
+        }
+        (
+            EvalFixtureStage::ArtifactCapture,
+            EvalFixtureStageOutput::ArtifactCapture { artifact_path },
+        ) => {
+            context.artifact_path = artifact_path;
+            Ok(())
+        }
+        (stage, output) => anyhow::bail!(
+            "fixture DAG stage '{}' received incompatible output: {:?}",
+            stage.name(),
+            output
+        ),
+    }
+}
+
+fn build_reproduction_warnings(summary: &EvalReproductionSummary) -> Vec<String> {
+    summary
+        .checks
+        .iter()
+        .filter_map(|check| {
+            check.warning.as_ref().map(|warning| {
+                format!(
+                    "reproduction validator for comment {} ({}) reported: {}",
+                    check.comment_id, check.model, warning
+                )
+            })
+        })
+        .collect()
 }
 
 async fn rewrite_fixture_artifact_with_eval_trace(
-    context: &mut EvalFixtureDagContext<'_>,
+    context: &mut EvalFixtureDagContext,
     eval_records: &[DagExecutionRecord],
 ) -> Result<()> {
     if context.artifact_path.is_none() {
@@ -487,7 +636,7 @@ async fn rewrite_fixture_artifact_with_eval_trace(
         records: eval_records.to_vec(),
     });
     context.artifact_path = maybe_write_fixture_artifact(EvalFixtureArtifactInput {
-        context: context.dag_config.artifact_context,
+        context: context.dag_config.artifact_context.as_ref(),
         prepared: &context.prepared,
         total_comments: context.total_comments,
         comments: &context.comments,
@@ -540,6 +689,17 @@ mod tests {
 
         assert!(!reproduction.enabled);
         assert_eq!(artifact.dependencies, vec!["benchmark_metrics"]);
+    }
+
+    #[test]
+    fn build_stage_specs_marks_reproduction_parallelizable() {
+        let specs = build_stage_specs(true);
+        let reproduction = specs
+            .iter()
+            .find(|spec| spec.id == EvalFixtureStage::ReproductionValidation)
+            .unwrap();
+
+        assert!(reproduction.hints.parallelizable);
     }
 
     #[test]

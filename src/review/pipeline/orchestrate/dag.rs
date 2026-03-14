@@ -101,6 +101,29 @@ pub(super) async fn execute_review_pipeline_dag(
     Ok(result)
 }
 
+fn stage_hints(stage: ReviewPipelineStage) -> DagNodeExecutionHints {
+    match stage {
+        ReviewPipelineStage::InitializeServices
+        | ReviewPipelineStage::BuildSession
+        | ReviewPipelineStage::PrepareJobs
+        | ReviewPipelineStage::Postprocess => DagNodeExecutionHints {
+            parallelizable: false,
+            retryable: true,
+            side_effects: false,
+            subgraph: match stage {
+                ReviewPipelineStage::Postprocess => Some("review_postprocess".to_string()),
+                _ => None,
+            },
+        },
+        ReviewPipelineStage::ExecuteJobs => DagNodeExecutionHints {
+            parallelizable: true,
+            retryable: true,
+            side_effects: false,
+            subgraph: None,
+        },
+    }
+}
+
 pub(in super::super) fn describe_review_pipeline_graph() -> DagGraphContract {
     DagGraphContract {
         name: "review_pipeline".to_string(),
@@ -117,12 +140,7 @@ pub(in super::super) fn describe_review_pipeline_graph() -> DagGraphContract {
                 dependencies: vec![],
                 inputs: vec!["config".to_string(), "repo_path".to_string()],
                 outputs: vec!["pipeline_services".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(ReviewPipelineStage::InitializeServices),
                 enabled: true,
             },
             DagNodeContract {
@@ -132,12 +150,7 @@ pub(in super::super) fn describe_review_pipeline_graph() -> DagGraphContract {
                 dependencies: vec!["initialize_services".to_string()],
                 inputs: vec!["diff_content".to_string(), "pipeline_services".to_string(), "progress_callback".to_string()],
                 outputs: vec!["review_session".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(ReviewPipelineStage::BuildSession),
                 enabled: true,
             },
             DagNodeContract {
@@ -147,12 +160,7 @@ pub(in super::super) fn describe_review_pipeline_graph() -> DagGraphContract {
                 dependencies: vec!["build_session".to_string()],
                 inputs: vec!["pipeline_services".to_string(), "review_session".to_string()],
                 outputs: vec!["prepared_review_jobs".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(ReviewPipelineStage::PrepareJobs),
                 enabled: true,
             },
             DagNodeContract {
@@ -162,12 +170,7 @@ pub(in super::super) fn describe_review_pipeline_graph() -> DagGraphContract {
                 dependencies: vec!["prepare_jobs".to_string()],
                 inputs: vec!["prepared_review_jobs".to_string(), "pipeline_services".to_string(), "review_session".to_string()],
                 outputs: vec!["execution_summary".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: true,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(ReviewPipelineStage::ExecuteJobs),
                 enabled: true,
             },
             DagNodeContract {
@@ -177,12 +180,7 @@ pub(in super::super) fn describe_review_pipeline_graph() -> DagGraphContract {
                 dependencies: vec!["execute_jobs".to_string()],
                 inputs: vec!["execution_summary".to_string(), "pipeline_services".to_string(), "review_session".to_string()],
                 outputs: vec!["review_result".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: Some("review_postprocess".to_string()),
-                },
+                hints: stage_hints(ReviewPipelineStage::Postprocess),
                 enabled: true,
             },
         ],
@@ -194,26 +192,31 @@ fn build_review_pipeline_specs() -> Vec<DagNodeSpec<ReviewPipelineStage>> {
         DagNodeSpec {
             id: ReviewPipelineStage::InitializeServices,
             dependencies: vec![],
+            hints: stage_hints(ReviewPipelineStage::InitializeServices),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPipelineStage::BuildSession,
             dependencies: vec![ReviewPipelineStage::InitializeServices],
+            hints: stage_hints(ReviewPipelineStage::BuildSession),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPipelineStage::PrepareJobs,
             dependencies: vec![ReviewPipelineStage::BuildSession],
+            hints: stage_hints(ReviewPipelineStage::PrepareJobs),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPipelineStage::ExecuteJobs,
             dependencies: vec![ReviewPipelineStage::PrepareJobs],
+            hints: stage_hints(ReviewPipelineStage::ExecuteJobs),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPipelineStage::Postprocess,
             dependencies: vec![ReviewPipelineStage::ExecuteJobs],
+            hints: stage_hints(ReviewPipelineStage::Postprocess),
             enabled: true,
         },
     ]

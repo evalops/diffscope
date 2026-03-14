@@ -12,6 +12,7 @@ use super::super::super::{EvalFixture, EvalFixtureMetadata, LoadedEvalFixture};
 use diff::load_diff_content;
 use repo::resolve_repo_path;
 
+#[derive(Debug, Clone)]
 pub(super) struct PreparedFixtureExecution {
     pub(super) fixture_path: PathBuf,
     pub(super) fixture_name: String,

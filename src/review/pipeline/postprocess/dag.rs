@@ -129,6 +129,23 @@ pub(super) async fn run_postprocess_dag(
     Ok(result)
 }
 
+fn stage_hints(stage: ReviewPostprocessStage) -> DagNodeExecutionHints {
+    match stage {
+        ReviewPostprocessStage::SaveConventionStore => DagNodeExecutionHints {
+            parallelizable: false,
+            retryable: true,
+            side_effects: true,
+            subgraph: None,
+        },
+        _ => DagNodeExecutionHints {
+            parallelizable: false,
+            retryable: true,
+            side_effects: false,
+            subgraph: None,
+        },
+    }
+}
+
 pub(in super::super) fn describe_review_postprocess_graph(
     config: &crate::config::Config,
     has_convention_store_path: bool,
@@ -149,12 +166,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
                     .collect(),
                 inputs: vec!["comments".to_string()],
                 outputs: vec!["comments".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             ReviewPostprocessStage::PluginPostProcessors => DagNodeContract {
@@ -169,12 +181,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
                     .collect(),
                 inputs: vec!["comments".to_string(), "repo_path".to_string()],
                 outputs: vec!["comments".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             ReviewPostprocessStage::Verification => DagNodeContract {
@@ -197,12 +204,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
                     "verification_report".to_string(),
                     "warnings".to_string(),
                 ],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             ReviewPostprocessStage::SemanticFeedback => DagNodeContract {
@@ -222,12 +224,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
                     "embedding_adapter".to_string(),
                 ],
                 outputs: vec!["comments".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             ReviewPostprocessStage::FeedbackCalibration => DagNodeContract {
@@ -243,12 +240,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
                     .collect(),
                 inputs: vec!["comments".to_string(), "feedback_store".to_string()],
                 outputs: vec!["comments".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             ReviewPostprocessStage::ReviewFilters => DagNodeContract {
@@ -267,12 +259,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
                     "feedback_store".to_string(),
                 ],
                 outputs: vec!["comments".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             ReviewPostprocessStage::EnhancedFilters => DagNodeContract {
@@ -290,12 +277,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
                     "enhanced_review_context".to_string(),
                 ],
                 outputs: vec!["comments".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             ReviewPostprocessStage::ConventionSuppression => DagNodeContract {
@@ -313,12 +295,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
                     "comments".to_string(),
                     "convention_suppressed_count".to_string(),
                 ],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             ReviewPostprocessStage::PrioritizeFindings => DagNodeContract {
@@ -334,12 +311,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
                     .collect(),
                 inputs: vec!["comments".to_string()],
                 outputs: vec!["comments".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: false,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
             ReviewPostprocessStage::SaveConventionStore => DagNodeContract {
@@ -358,12 +330,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
                     "convention_store_path".to_string(),
                 ],
                 outputs: vec!["convention_store_saved".to_string()],
-                hints: DagNodeExecutionHints {
-                    parallelizable: false,
-                    retryable: true,
-                    side_effects: true,
-                    subgraph: None,
-                },
+                hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
         })
@@ -392,51 +359,61 @@ fn build_postprocess_specs(
         DagNodeSpec {
             id: ReviewPostprocessStage::SpecializedDedup,
             dependencies: vec![],
+            hints: stage_hints(ReviewPostprocessStage::SpecializedDedup),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::PluginPostProcessors,
             dependencies: vec![ReviewPostprocessStage::SpecializedDedup],
+            hints: stage_hints(ReviewPostprocessStage::PluginPostProcessors),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::Verification,
             dependencies: vec![ReviewPostprocessStage::PluginPostProcessors],
+            hints: stage_hints(ReviewPostprocessStage::Verification),
             enabled: config.verification_pass,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::SemanticFeedback,
             dependencies: vec![ReviewPostprocessStage::Verification],
+            hints: stage_hints(ReviewPostprocessStage::SemanticFeedback),
             enabled: config.semantic_feedback,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::FeedbackCalibration,
             dependencies: vec![ReviewPostprocessStage::SemanticFeedback],
+            hints: stage_hints(ReviewPostprocessStage::FeedbackCalibration),
             enabled: config.enhanced_feedback,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::ReviewFilters,
             dependencies: vec![ReviewPostprocessStage::FeedbackCalibration],
+            hints: stage_hints(ReviewPostprocessStage::ReviewFilters),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::EnhancedFilters,
             dependencies: vec![ReviewPostprocessStage::ReviewFilters],
+            hints: stage_hints(ReviewPostprocessStage::EnhancedFilters),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::ConventionSuppression,
             dependencies: vec![ReviewPostprocessStage::EnhancedFilters],
+            hints: stage_hints(ReviewPostprocessStage::ConventionSuppression),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::PrioritizeFindings,
             dependencies: vec![ReviewPostprocessStage::ConventionSuppression],
+            hints: stage_hints(ReviewPostprocessStage::PrioritizeFindings),
             enabled: true,
         },
         DagNodeSpec {
             id: ReviewPostprocessStage::SaveConventionStore,
             dependencies: vec![ReviewPostprocessStage::PrioritizeFindings],
+            hints: stage_hints(ReviewPostprocessStage::SaveConventionStore),
             enabled: has_convention_store_path,
         },
     ]
