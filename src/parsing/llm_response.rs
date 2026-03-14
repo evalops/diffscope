@@ -400,6 +400,14 @@ fn repair_json_candidates(candidate: &str) -> Vec<String> {
         candidates.push(with_double_quotes);
     }
 
+    // Tab-to-space conversion: some LLMs emit tabs inside JSON (issue #28).
+    if trimmed.contains('\t') && (trimmed.starts_with('[') || trimmed.starts_with('{')) {
+        let tab_to_space = trimmed.replace('\t', " ");
+        if tab_to_space != trimmed {
+            candidates.push(tab_to_space);
+        }
+    }
+
     candidates
 }
 
@@ -1388,6 +1396,17 @@ let data = &input;
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].line_number, 3);
         assert!(comments[0].content.contains("don't"));
+    }
+
+    #[test]
+    fn parse_json_with_tabs() {
+        // LLM sometimes emits tabs inside JSON; repair converts tab to space (issue #28).
+        let input = "[{\"line\":\t4,\t\"issue\":\t\"Tab-indented\"}]";
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 4);
+        assert!(comments[0].content.contains("Tab-indented"));
     }
 
     // ── Bug: find_json_array uses mismatched brackets ──────────────────

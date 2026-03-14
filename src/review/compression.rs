@@ -534,4 +534,19 @@ mod tests {
             + result.skipped_indices.len();
         assert_eq!(total_accounted, 2, "All files must be accounted for");
     }
+
+    /// #30: Adaptive compression — when total tokens exactly equals budget, strategy is Full.
+    #[test]
+    fn test_adaptive_compression_exact_budget_returns_full() {
+        let diff = make_simple_diff("single.rs", 200);
+        let budget = estimate_diff_tokens(&diff);
+        let result = compress_diffs(&[diff], budget, 5);
+        assert_eq!(
+            result.strategy,
+            CompressionStrategy::Full,
+            "Exact budget should use Full strategy"
+        );
+        assert_eq!(result.batches.len(), 1);
+        assert_eq!(result.skipped_indices.len(), 0);
+    }
 }
