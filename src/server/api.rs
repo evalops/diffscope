@@ -5,6 +5,7 @@ use axum::{
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -1844,12 +1845,46 @@ pub struct PrCommentSearchParams {
     pub status: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct PrFindingsParams {
+    pub repo: String,
+    pub pr_number: u32,
+    pub group_by: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommentSearchFilter {
     All,
     Unresolved,
     Resolved,
     Dismissed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FindingsGroupBy {
+    Severity,
+    File,
+    Lifecycle,
+}
+
+impl FindingsGroupBy {
+    fn from_api_value(value: Option<&str>) -> Option<Self> {
+        match value.map(|value| value.trim().to_ascii_lowercase()) {
+            None => Some(Self::Severity),
+            Some(value) if value.is_empty() || value == "severity" => Some(Self::Severity),
+            Some(value) if value == "file" => Some(Self::File),
+            Some(value) if value == "lifecycle" || value == "status" => Some(Self::Lifecycle),
+            _ => None,
+        }
+    }
+
+    fn as_api_str(self) -> &'static str {
+        match self {
+            Self::Severity => "severity",
+            Self::File => "file",
+            Self::Lifecycle => "lifecycle",
+        }
+    }
 }
 
 impl CommentSearchFilter {
@@ -1899,6 +1934,30 @@ pub struct PrCommentSearchResponse {
     pub comments: Vec<crate::core::Comment>,
 }
 
+#[derive(Serialize)]
+pub struct PrFindingsGroup {
+    pub value: String,
+    pub count: usize,
+    #[serde(default)]
+    pub findings: Vec<crate::core::Comment>,
+}
+
+#[derive(Serialize)]
+pub struct PrFindingsResponse {
+    pub repo: String,
+    pub pr_number: u32,
+    pub diff_source: String,
+    pub group_by: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_review_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_review_status: Option<ReviewStatus>,
+    #[serde(default)]
+    pub total_findings: usize,
+    #[serde(default)]
+    pub groups: Vec<PrFindingsGroup>,
+}
+
 fn filter_comments_by_search_filter(
     comments: &[crate::core::Comment],
     filter: CommentSearchFilter,
@@ -1907,6 +1966,58 @@ fn filter_comments_by_search_filter(
         .iter()
         .filter(|comment| filter.matches(comment.status))
         .cloned()
+        .collect()
+}
+
+fn group_pr_findings(
+    findings: &[crate::core::Comment],
+    group_by: FindingsGroupBy,
+) -> Vec<PrFindingsGroup> {
+    let mut grouped: BTreeMap<String, Vec<crate::core::Comment>> = BTreeMap::new();
+
+    for finding in findings {
+        let key = match group_by {
+            FindingsGroupBy::Severity => match finding.severity {
+                crate::core::comment::Severity::Error => "Error".to_string(),
+                crate::core::comment::Severity::Warning => "Warning".to_string(),
+                crate::core::comment::Severity::Info => "Info".to_string(),
+                crate::core::comment::Severity::Suggestion => "Suggestion".to_string(),
+            },
+            FindingsGroupBy::File => finding.file_path.display().to_string(),
+            FindingsGroupBy::Lifecycle => match finding.status {
+                CommentStatus::Open => "Open".to_string(),
+                CommentStatus::Resolved => "Resolved".to_string(),
+                CommentStatus::Dismissed => "Dismissed".to_string(),
+            },
+        };
+
+        grouped.entry(key).or_default().push(finding.clone());
+    }
+
+    let ordered_keys: Vec<String> = match group_by {
+        FindingsGroupBy::Severity => ["Error", "Warning", "Info", "Suggestion"]
+            .into_iter()
+            .filter(|key| grouped.contains_key(*key))
+            .map(str::to_string)
+            .collect(),
+        FindingsGroupBy::Lifecycle => ["Open", "Resolved", "Dismissed"]
+            .into_iter()
+            .filter(|key| grouped.contains_key(*key))
+            .map(str::to_string)
+            .collect(),
+        FindingsGroupBy::File => grouped.keys().cloned().collect(),
+    };
+
+    ordered_keys
+        .into_iter()
+        .map(|value| {
+            let findings = grouped.remove(&value).unwrap_or_default();
+            PrFindingsGroup {
+                count: findings.len(),
+                value,
+                findings,
+            }
+        })
         .collect()
 }
 
@@ -2194,6 +2305,49 @@ pub async fn get_gh_pr_comments(
         latest_review_status: latest_review.as_ref().map(|review| review.status.clone()),
         total_comments: comments.len(),
         comments,
+    }))
+}
+
+pub async fn get_gh_pr_findings(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PrFindingsParams>,
+) -> Result<Json<PrFindingsResponse>, (StatusCode, String)> {
+    if !is_valid_repo_name(&params.repo) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid repo format. Expected 'owner/repo'.".to_string(),
+        ));
+    }
+
+    if params.pr_number == 0 || params.pr_number > 999_999_999 {
+        return Err((StatusCode::BAD_REQUEST, "Invalid PR number.".to_string()));
+    }
+
+    let group_by =
+        FindingsGroupBy::from_api_value(params.group_by.as_deref()).ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Invalid group_by. Must be severity, file, or lifecycle.".to_string(),
+            )
+        })?;
+
+    let inventory = load_review_inventory(&state).await;
+    let latest_review = latest_pr_review_session(&inventory, &params.repo, params.pr_number);
+    let findings = latest_review
+        .as_ref()
+        .map(|review| review.comments.clone())
+        .unwrap_or_default();
+    let groups = group_pr_findings(&findings, group_by);
+
+    Ok(Json(PrFindingsResponse {
+        repo: params.repo.clone(),
+        pr_number: params.pr_number,
+        diff_source: pr_diff_source(&params.repo, params.pr_number),
+        group_by: group_by.as_api_str().to_string(),
+        latest_review_id: latest_review.as_ref().map(|review| review.id.clone()),
+        latest_review_status: latest_review.as_ref().map(|review| review.status.clone()),
+        total_findings: findings.len(),
+        groups,
     }))
 }
 
@@ -3347,6 +3501,18 @@ mod tests {
         }
     }
 
+    fn make_grouped_comment(
+        id: &str,
+        file_path: &str,
+        severity: crate::core::comment::Severity,
+        status: CommentStatus,
+    ) -> crate::core::Comment {
+        let mut comment = make_search_comment(id, status);
+        comment.file_path = std::path::PathBuf::from(file_path);
+        comment.severity = severity;
+        comment
+    }
+
     #[test]
     fn test_comment_search_filter_parses_aliases() {
         assert_eq!(
@@ -3407,6 +3573,145 @@ mod tests {
                 .map(|comment| comment.id)
                 .collect::<Vec<_>>(),
             vec!["dismissed"]
+        );
+    }
+
+    #[test]
+    fn test_findings_group_by_parser_defaults_to_severity() {
+        assert_eq!(
+            FindingsGroupBy::from_api_value(None),
+            Some(FindingsGroupBy::Severity)
+        );
+        assert_eq!(
+            FindingsGroupBy::from_api_value(Some("severity")),
+            Some(FindingsGroupBy::Severity)
+        );
+        assert_eq!(
+            FindingsGroupBy::from_api_value(Some("file")),
+            Some(FindingsGroupBy::File)
+        );
+        assert_eq!(
+            FindingsGroupBy::from_api_value(Some("lifecycle")),
+            Some(FindingsGroupBy::Lifecycle)
+        );
+        assert_eq!(
+            FindingsGroupBy::from_api_value(Some("status")),
+            Some(FindingsGroupBy::Lifecycle)
+        );
+        assert_eq!(FindingsGroupBy::from_api_value(Some("wat")), None);
+    }
+
+    #[test]
+    fn test_group_pr_findings_by_severity_orders_buckets() {
+        let findings = vec![
+            make_grouped_comment(
+                "warning",
+                "src/b.rs",
+                crate::core::comment::Severity::Warning,
+                CommentStatus::Open,
+            ),
+            make_grouped_comment(
+                "error",
+                "src/a.rs",
+                crate::core::comment::Severity::Error,
+                CommentStatus::Resolved,
+            ),
+            make_grouped_comment(
+                "info",
+                "src/c.rs",
+                crate::core::comment::Severity::Info,
+                CommentStatus::Dismissed,
+            ),
+        ];
+
+        let groups = group_pr_findings(&findings, FindingsGroupBy::Severity);
+
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Error", "Warning", "Info"]
+        );
+        assert_eq!(
+            groups.iter().map(|group| group.count).collect::<Vec<_>>(),
+            vec![1, 1, 1]
+        );
+    }
+
+    #[test]
+    fn test_group_pr_findings_by_file_orders_paths() {
+        let findings = vec![
+            make_grouped_comment(
+                "b",
+                "src/z.rs",
+                crate::core::comment::Severity::Warning,
+                CommentStatus::Open,
+            ),
+            make_grouped_comment(
+                "a",
+                "src/a.rs",
+                crate::core::comment::Severity::Error,
+                CommentStatus::Open,
+            ),
+            make_grouped_comment(
+                "a-2",
+                "src/a.rs",
+                crate::core::comment::Severity::Info,
+                CommentStatus::Resolved,
+            ),
+        ];
+
+        let groups = group_pr_findings(&findings, FindingsGroupBy::File);
+
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["src/a.rs", "src/z.rs"]
+        );
+        assert_eq!(
+            groups.iter().map(|group| group.count).collect::<Vec<_>>(),
+            vec![2, 1]
+        );
+    }
+
+    #[test]
+    fn test_group_pr_findings_by_lifecycle_orders_statuses() {
+        let findings = vec![
+            make_grouped_comment(
+                "resolved",
+                "src/a.rs",
+                crate::core::comment::Severity::Warning,
+                CommentStatus::Resolved,
+            ),
+            make_grouped_comment(
+                "open",
+                "src/b.rs",
+                crate::core::comment::Severity::Error,
+                CommentStatus::Open,
+            ),
+            make_grouped_comment(
+                "dismissed",
+                "src/c.rs",
+                crate::core::comment::Severity::Info,
+                CommentStatus::Dismissed,
+            ),
+        ];
+
+        let groups = group_pr_findings(&findings, FindingsGroupBy::Lifecycle);
+
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Open", "Resolved", "Dismissed"]
+        );
+        assert_eq!(
+            groups.iter().map(|group| group.count).collect::<Vec<_>>(),
+            vec![1, 1, 1]
         );
     }
 }
