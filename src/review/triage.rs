@@ -695,6 +695,25 @@ mod tests {
         );
     }
 
+    // ── TriageOptions and reason strings ───────────────────────────────────
+
+    #[test]
+    fn test_triage_options_default_skip_deletion_only_false() {
+        let options = TriageOptions::default();
+        assert!(
+            !options.skip_deletion_only,
+            "default should not skip deletion-only so deletions still get review"
+        );
+    }
+
+    #[test]
+    fn test_reason_skip_deletion_only_exact() {
+        assert_eq!(
+            TriageResult::SkipDeletionOnly.reason(),
+            "deletion-only changes"
+        );
+    }
+
     // ── #29 optional skip deletion-only ──────────────────────────────────
 
     #[test]

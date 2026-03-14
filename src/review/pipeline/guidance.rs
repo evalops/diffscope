@@ -115,4 +115,53 @@ mod tests {
         assert!(guidance.contains("Always use parameterized queries"));
         assert!(guidance.contains("No direct SQL string concatenation"));
     }
+
+    #[test]
+    fn build_review_guidance_no_prose_section_when_rules_none() {
+        let config = config::Config {
+            review_rules_prose: None,
+            ..config::Config::default()
+        };
+        let guidance = build_review_guidance(&config, None).unwrap();
+        assert!(
+            !guidance.contains("Custom rules (natural language)"),
+            "guidance should not include prose section when review_rules_prose is None"
+        );
+    }
+
+    #[test]
+    fn build_review_guidance_no_prose_section_when_rules_empty() {
+        let config = config::Config {
+            review_rules_prose: Some(vec![]),
+            ..config::Config::default()
+        };
+        let guidance = build_review_guidance(&config, None).unwrap();
+        assert!(
+            !guidance.contains("Custom rules (natural language)"),
+            "guidance should not include prose section when review_rules_prose is empty"
+        );
+    }
+
+    #[test]
+    fn build_review_guidance_single_prose_rule() {
+        let config = config::Config {
+            review_rules_prose: Some(vec!["Single rule.".to_string()]),
+            ..config::Config::default()
+        };
+        let guidance = build_review_guidance(&config, None).unwrap();
+        assert!(guidance.contains("Custom rules (natural language)"));
+        assert!(guidance.contains("Single rule."));
+    }
+
+    #[test]
+    fn build_review_guidance_prose_rule_with_special_chars() {
+        let config = config::Config {
+            review_rules_prose: Some(vec!["Check for <script> injection in HTML.".to_string()]),
+            ..config::Config::default()
+        };
+        let guidance = build_review_guidance(&config, None).unwrap();
+        assert!(guidance.contains("Custom rules (natural language)"));
+        assert!(guidance.contains("<script>"));
+        assert!(guidance.contains("injection"));
+    }
 }

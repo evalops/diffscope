@@ -436,19 +436,23 @@ fn convert_single_quoted_json_to_double(s: &str) -> String {
         }
         if c == '\'' {
             // Start of single-quoted string: emit " and copy until unescaped ', escaping " and \.
+            // Inside single-quoted: \' → one quote in JSON (emit \"); \\ → emit \\; \" → emit \"
             out.push('"');
+            let mut single_escape = false;
             for c in chars.by_ref() {
-                if c == '\\' {
-                    escape_next = true;
-                    out.push(c);
-                } else if c == '\'' {
-                    if escape_next {
-                        escape_next = false;
-                        out.push('\'');
+                if single_escape {
+                    single_escape = false;
+                    if c == '\'' {
+                        out.push('\''); // apostrophe in JSON string needs no escape
                     } else {
-                        out.push('"');
-                        break;
+                        out.push('\\');
+                        out.push(c);
                     }
+                } else if c == '\\' {
+                    single_escape = true;
+                } else if c == '\'' {
+                    out.push('"');
+                    break;
                 } else if c == '"' {
                     out.push('\\');
                     out.push('"');
@@ -456,8 +460,8 @@ fn convert_single_quoted_json_to_double(s: &str) -> String {
                     out.push(c);
                 }
             }
-            if escape_next {
-                escape_next = false;
+            if single_escape {
+                out.push('\\');
             }
             continue;
         }
@@ -1347,6 +1351,43 @@ let data = &input;
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].line_number, 9);
         assert!(comments[0].content.contains("deprecated"));
+    }
+
+    #[test]
+    fn parse_json_single_quoted_object_wrapped_in_findings() {
+        // Outer object with "findings" key; inner array uses single quotes — raw bracket span + repair.
+        let input = r#"{"findings": [{'line': 2, 'issue': 'Minor bug'}]}"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 2);
+        assert!(comments[0].content.contains("Minor bug"));
+    }
+
+    #[test]
+    fn parse_json_single_quoted_value_with_escaped_apostrophe() {
+        // Single-quoted value containing escaped apostrophe (e.g. "don't") — converter preserves it.
+        let input = r#"[{'line': 1, 'issue': 'don\'t forget'}]"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 1);
+        assert!(
+            comments[0].content.contains("don't"),
+            "content should contain apostrophe: {:?}",
+            comments[0].content
+        );
+    }
+
+    #[test]
+    fn parse_json_double_quoted_value_with_apostrophe_unchanged() {
+        // Valid JSON with apostrophe in double-quoted string — no repair; parses as-is.
+        let input = r#"[{"line": 3, "issue": "don't use deprecated API"}]"#;
+        let file_path = PathBuf::from("src/lib.rs");
+        let comments = parse_llm_response(input, &file_path).unwrap();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].line_number, 3);
+        assert!(comments[0].content.contains("don't"));
     }
 
     // ── Bug: find_json_array uses mismatched brackets ──────────────────
