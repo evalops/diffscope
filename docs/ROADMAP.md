@@ -72,6 +72,8 @@ Create labels once: `priority: high`, `priority: medium`, `priority: low`, `area
 
 ## Shipped (recent)
 
+- **Natural language rules (#12):** `review_rules_prose: [ "Rule one", "Rule two" ]` in config; injected as "Custom rules (natural language)" bullets into review guidance. Tests: `test_config_deserialize_review_rules_prose_from_yaml`, `build_review_guidance_includes_prose_rules`.
+- **Triage skip deletion-only (#29):** `triage_skip_deletion_only: true` in config; when true, deletion-only diffs get `SkipDeletionOnly` and skip expensive review. Default false. Tests: `test_triage_deletion_only_with_skip_true_returns_skip_deletion_only`, config deserialize.
 - **LLM parsing (#28):** Repair candidate for diff-style line prefixes (`+` on each line) in `repair_json_candidates`; test `parse_json_with_diff_prefix_artifact`.
 - **Secrets (#20):** Built-in secret scanner in `plugins/builtin/secret_scanner.rs`.
 - **Verification (#23):** Verification pass and config (verification.*) in pipeline.

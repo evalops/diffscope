@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::core;
 use crate::plugins::PreAnalysis;
-use crate::review::triage::triage_diff;
+use crate::review::triage::{triage_diff_with_options, TriageOptions};
 
 use super::super::super::comments::{filter_comments_for_diff, synthesize_analyzer_comments};
 
@@ -22,6 +22,7 @@ pub(super) struct PreparedDiffAnalysis {
 pub(super) fn prepare_diff_analysis(
     diff: &core::UnifiedDiff,
     batched_pre_analysis: &mut HashMap<PathBuf, PreAnalysis>,
+    triage_skip_deletion_only: bool,
 ) -> Result<DiffPreparationDecision> {
     let pre_analysis = batched_pre_analysis
         .remove(&diff.file_path)
@@ -31,7 +32,12 @@ pub(super) fn prepare_diff_analysis(
         synthesize_analyzer_comments(pre_analysis.findings.clone())?,
     );
 
-    let triage_result = triage_diff(diff);
+    let triage_result = triage_diff_with_options(
+        diff,
+        TriageOptions {
+            skip_deletion_only: triage_skip_deletion_only,
+        },
+    );
     if triage_result.should_skip() {
         if deterministic_comments.is_empty() {
             tracing::info!(

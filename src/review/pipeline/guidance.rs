@@ -96,4 +96,23 @@ mod tests {
         let guidance = build_review_guidance(&config, None).unwrap();
         assert!(guidance.contains("Do not include code fix suggestions"));
     }
+
+    #[test]
+    fn build_review_guidance_includes_prose_rules() {
+        // #12: natural language custom rules — injected as bullets into guidance
+        let config = config::Config {
+            review_rules_prose: Some(vec![
+                "Always use parameterized queries.".to_string(),
+                "No direct SQL string concatenation.".to_string(),
+            ]),
+            ..config::Config::default()
+        };
+        let guidance = build_review_guidance(&config, None).unwrap();
+        assert!(
+            guidance.contains("Custom rules (natural language)"),
+            "guidance should include prose rules section"
+        );
+        assert!(guidance.contains("Always use parameterized queries"));
+        assert!(guidance.contains("No direct SQL string concatenation"));
+    }
 }

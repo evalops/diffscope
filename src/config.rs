@@ -269,6 +269,10 @@ pub struct Config {
     #[serde(default)]
     pub review_instructions: Option<String>,
 
+    /// Natural language review rules (one per item); injected into prompt as bullets (#12).
+    #[serde(default)]
+    pub review_rules_prose: Option<Vec<String>>,
+
     #[serde(default = "default_true")]
     pub smart_review_summary: bool,
 
@@ -301,6 +305,10 @@ pub struct Config {
 
     #[serde(default = "default_symbol_index_lsp_languages")]
     pub symbol_index_lsp_languages: HashMap<String, String>,
+
+    /// When true, triage skips deletion-only diffs (#29). Default false (deletions get review).
+    #[serde(default)]
+    pub triage_skip_deletion_only: bool,
 
     #[serde(default = "default_feedback_path")]
     pub feedback_path: PathBuf,
@@ -557,6 +565,7 @@ impl Default for Config {
             comment_types: default_comment_types(),
             review_profile: None,
             review_instructions: None,
+            review_rules_prose: None,
             smart_review_summary: true,
             smart_review_diagram: false,
             symbol_index: true,
@@ -568,6 +577,7 @@ impl Default for Config {
             symbol_index_graph_max_files: default_symbol_index_graph_max_files(),
             symbol_index_lsp_command: None,
             symbol_index_lsp_languages: default_symbol_index_lsp_languages(),
+            triage_skip_deletion_only: false,
             feedback_path: default_feedback_path(),
             eval_trend_path: default_eval_trend_path(),
             feedback_eval_trend_path: default_feedback_eval_trend_path(),
@@ -2145,6 +2155,33 @@ verification_consensus_mode: all
             config.verification.consensus_mode,
             VerificationConsensusMode::All
         );
+    }
+
+    #[test]
+    fn test_config_deserialize_review_rules_prose_from_yaml() {
+        // #12: natural language rules — list of strings in YAML
+        let yaml = r#"
+model: claude-sonnet-4-6
+review_rules_prose:
+  - Always use parameterized queries.
+  - No direct SQL string concatenation.
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let rules = config.review_rules_prose.as_ref().unwrap();
+        assert_eq!(rules.len(), 2);
+        assert!(rules[0].contains("parameterized"));
+        assert!(rules[1].contains("SQL"));
+    }
+
+    #[test]
+    fn test_config_deserialize_triage_skip_deletion_only() {
+        // #29: optional skip deletion-only diffs
+        let yaml = r#"
+model: claude-sonnet-4-6
+triage_skip_deletion_only: true
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.triage_skip_deletion_only);
     }
 
     #[test]
