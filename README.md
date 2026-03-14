@@ -1002,6 +1002,8 @@ The summary includes:
 
 Contributions are welcome! Please open an issue first to discuss what you would like to change.
 
+**PR workflow:** Open a PR → ensure CI is green (version, lint, security, test, mutation, review) → merge when ready. Use a short test plan in the PR description. Small, focused PRs are preferred.
+
 ### Local Development Checks
 
 Enable the repository-managed git hooks after cloning:
