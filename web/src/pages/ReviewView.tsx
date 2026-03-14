@@ -421,6 +421,8 @@ export function ReviewView() {
         ? normalizeCommentFilePath(comment.file_path)
         : null
 
+    // Sync URL search params to local state (single batch per param change)
+    /* eslint-disable react-hooks/set-state-in-effect -- URL is source of truth for view state */
     setViewMode(nextViewMode ?? (comment ? 'list' : 'diff'))
     setSelectedFile(nextSelectedFile)
     setCategoryFilter(nextCategoryFilter)
@@ -428,6 +430,7 @@ export function ReviewView() {
     setLifecycleFilter(nextLifecycleFilter)
     setShowOnlyBlockers(searchParams.get('blockers') === '1')
     setActiveCommentId(comment?.id ?? null)
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [review, searchParams])
 
   useEffect(() => {

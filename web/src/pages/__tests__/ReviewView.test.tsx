@@ -12,7 +12,7 @@ const lifecycleMutate = vi.fn()
 vi.mock('react-router-dom', () => ({
   useParams: () => ({ id: 'review-1' }),
   useSearchParams: () => [
-    { get: (_key: string) => null },
+    { get: () => null },
     () => {},
   ],
 }))
