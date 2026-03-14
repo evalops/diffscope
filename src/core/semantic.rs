@@ -247,6 +247,7 @@ pub async fn semantic_context_for_diff(
     embedding_adapter: Option<&dyn LLMAdapter>,
     limit: usize,
     min_similarity: f32,
+    preferred_files: &[PathBuf],
 ) -> Vec<LLMContextChunk> {
     let query_texts = build_query_texts(diff, file_content);
     if query_texts.is_empty() {
@@ -254,8 +255,15 @@ pub async fn semantic_context_for_diff(
     }
 
     let query_embeddings = embed_texts_with_fallback(embedding_adapter, &query_texts).await;
-    let matches =
-        find_related_chunks_for_diff(index, &query_embeddings, diff, limit, min_similarity);
+    let matches = find_related_chunks_for_diff(
+        index,
+        &query_embeddings,
+        diff,
+        limit,
+        min_similarity,
+        preferred_files,
+    );
+    let preferred_file_ranks = build_preferred_file_ranks(preferred_files);
 
     let mut seen = HashSet::new();
     let mut chunks = Vec::new();
@@ -263,9 +271,14 @@ pub async fn semantic_context_for_diff(
         if !seen.insert(semantic_match.chunk.key.clone()) {
             continue;
         }
+        let ranking_note = preferred_file_ranks
+            .get(&semantic_match.chunk.file_path)
+            .map(|rank| format!(", graph-ranked file #{}", rank + 1))
+            .unwrap_or_default();
         let content = format!(
-            "Semantic match (similarity {:.2})\nSymbol: {}\nSummary: {}\nCode:\n{}",
+            "Semantic match (similarity {:.2}{})\nSymbol: {}\nSummary: {}\nCode:\n{}",
             semantic_match.similarity,
+            ranking_note,
             semantic_match.chunk.symbol_name,
             semantic_match.chunk.summary,
             semantic_match.chunk.code_excerpt,
@@ -323,8 +336,10 @@ fn find_related_chunks_for_diff(
     diff: &UnifiedDiff,
     limit: usize,
     min_similarity: f32,
+    preferred_files: &[PathBuf],
 ) -> Vec<SemanticMatch> {
     let changed_ranges = changed_line_ranges(diff);
+    let preferred_file_ranks = build_preferred_file_ranks(preferred_files);
     let mut best_matches: HashMap<String, SemanticMatch> = HashMap::new();
 
     for query_embedding in query_embeddings {
@@ -351,9 +366,32 @@ fn find_related_chunks_for_diff(
     }
 
     let mut matches = best_matches.into_values().collect::<Vec<_>>();
-    matches.sort_by(|a, b| b.similarity.total_cmp(&a.similarity));
+    matches.sort_by(|a, b| {
+        let a_rank = preferred_file_ranks
+            .get(&a.chunk.file_path)
+            .copied()
+            .unwrap_or(usize::MAX);
+        let b_rank = preferred_file_ranks
+            .get(&b.chunk.file_path)
+            .copied()
+            .unwrap_or(usize::MAX);
+        a_rank
+            .cmp(&b_rank)
+            .then_with(|| b.similarity.total_cmp(&a.similarity))
+            .then_with(|| a.chunk.key.cmp(&b.chunk.key))
+    });
     matches.truncate(limit.max(1));
     matches
+}
+
+fn build_preferred_file_ranks(preferred_files: &[PathBuf]) -> HashMap<PathBuf, usize> {
+    let mut preferred_file_ranks = HashMap::new();
+    for (rank, file_path) in preferred_files.iter().enumerate() {
+        preferred_file_ranks
+            .entry(file_path.clone())
+            .or_insert(rank);
+    }
+    preferred_file_ranks
 }
 
 pub fn find_similar_feedback_examples(
@@ -622,8 +660,76 @@ mod tests {
             }],
         };
 
-        let chunks = semantic_context_for_diff(&index, &diff, None, None, 3, 0.1).await;
+        let chunks = semantic_context_for_diff(&index, &diff, None, None, 3, 0.1, &[]).await;
         assert_eq!(chunks.len(), 1);
         assert!(chunks[0].content.contains("Semantic match"));
+    }
+
+    #[test]
+    fn find_related_chunks_for_diff_prioritizes_graph_ranked_files() {
+        let mut index = SemanticIndex::default();
+        index.entries.insert(
+            "src/graph.rs:helper:1:5".to_string(),
+            SemanticChunk {
+                key: "src/graph.rs:helper:1:5".to_string(),
+                file_path: PathBuf::from("src/graph.rs"),
+                symbol_name: "graph_helper".to_string(),
+                line_range: (1, 5),
+                summary: "Graph-ranked helper".to_string(),
+                embedding_text: "graph-ranked helper".to_string(),
+                code_excerpt: "fn graph_helper() {}".to_string(),
+                embedding: vec![0.8, 0.6],
+                content_hash: "graph".to_string(),
+            },
+        );
+        index.entries.insert(
+            "src/other.rs:helper:1:5".to_string(),
+            SemanticChunk {
+                key: "src/other.rs:helper:1:5".to_string(),
+                file_path: PathBuf::from("src/other.rs"),
+                symbol_name: "other_helper".to_string(),
+                line_range: (1, 5),
+                summary: "Higher-similarity helper".to_string(),
+                embedding_text: "higher-similarity helper".to_string(),
+                code_excerpt: "fn other_helper() {}".to_string(),
+                embedding: vec![1.0, 0.0],
+                content_hash: "other".to_string(),
+            },
+        );
+
+        let diff = UnifiedDiff {
+            old_content: None,
+            new_content: None,
+            file_path: PathBuf::from("src/current.rs"),
+            is_new: false,
+            is_deleted: false,
+            is_binary: false,
+            hunks: vec![DiffHunk {
+                old_start: 1,
+                old_lines: 0,
+                new_start: 1,
+                new_lines: 1,
+                context: String::new(),
+                changes: vec![DiffLine {
+                    old_line_no: None,
+                    new_line_no: Some(1),
+                    change_type: ChangeType::Added,
+                    content: "graph-aware semantic ranking".to_string(),
+                }],
+            }],
+        };
+
+        let matches = find_related_chunks_for_diff(
+            &index,
+            &[vec![1.0, 0.0]],
+            &diff,
+            2,
+            0.1,
+            &[PathBuf::from("src/graph.rs")],
+        );
+
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].chunk.file_path, PathBuf::from("src/graph.rs"));
+        assert_eq!(matches[1].chunk.file_path, PathBuf::from("src/other.rs"));
     }
 }

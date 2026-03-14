@@ -67,7 +67,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 34. [ ] Add "similar implementation" lookup so repeated patterns and divergences are explicit.
 35. [ ] Add cross-file blast-radius summaries to findings when a change affects many callers.
 36. [ ] Add graph freshness/version metadata so reviews know whether they are using stale repository intelligence.
-37. [ ] Add graph-backed ranking of related files before semantic RAG retrieval.
+37. [x] Add graph-backed ranking of related files before semantic RAG retrieval.
 38. [ ] Add graph query traces to `dag_traces` or review artifacts for explainability and debugging.
 39. [x] Add graph-aware eval fixtures that require multi-hop code understanding to pass.
 40. [ ] Split `src/core/symbol_graph.rs` into construction, persistence, traversal, and ranking modules as it grows.
