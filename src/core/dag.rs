@@ -629,7 +629,7 @@ mod tests {
             |node| {
                 let active = Arc::clone(&active);
                 let max_active = Arc::clone(&max_active);
-                async move {
+                Ok(async move {
                     if node != TestNode::Root {
                         let current = active.fetch_add(1, Ordering::SeqCst) + 1;
                         let observed_max = max_active.load(Ordering::SeqCst);
@@ -641,7 +641,7 @@ mod tests {
                     }
                     Ok(node.name().to_string())
                 }
-                .boxed()
+                .boxed())
             },
             |_, output| {
                 applied.push(output);
