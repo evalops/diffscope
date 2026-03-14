@@ -75,6 +75,76 @@ pub(in super::super) struct FeedbackEvalCorrelationReport {
     pub(in super::super) attention_by_rule: Vec<FeedbackEvalRuleCorrelation>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(in super::super) struct FeedbackEvalTrendGap {
+    #[serde(default)]
+    pub(in super::super) name: String,
+    #[serde(default)]
+    pub(in super::super) feedback_total: usize,
+    #[serde(default)]
+    pub(in super::super) high_confidence_total: usize,
+    #[serde(default)]
+    pub(in super::super) high_confidence_acceptance_rate: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) eval_score: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) gap: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(in super::super) struct FeedbackEvalTrendEntry {
+    #[serde(default)]
+    pub(in super::super) timestamp: String,
+    #[serde(default)]
+    pub(in super::super) labeled_comments: usize,
+    #[serde(default)]
+    pub(in super::super) accepted: usize,
+    #[serde(default)]
+    pub(in super::super) rejected: usize,
+    #[serde(default)]
+    pub(in super::super) acceptance_rate: f32,
+    #[serde(default)]
+    pub(in super::super) confidence_threshold: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) confidence_agreement_rate: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) confidence_precision: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) confidence_recall: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) confidence_f1: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) eval_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) eval_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in super::super) eval_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in super::super) attention_by_category: Vec<FeedbackEvalTrendGap>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in super::super) attention_by_rule: Vec<FeedbackEvalTrendGap>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(in super::super) struct FeedbackEvalTrend {
+    #[serde(default)]
+    pub(in super::super) entries: Vec<FeedbackEvalTrendEntry>,
+}
+
+impl FeedbackEvalTrend {
+    pub(in super::super) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(in super::super) fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    pub(in super::super) fn from_json(json: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub(in super::super) struct FeedbackThresholdMetrics {
     #[serde(default)]

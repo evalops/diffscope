@@ -884,6 +884,7 @@ fn mask_config_secrets(obj: &mut serde_json::Map<String, serde_json::Value>) {
         "github_client_secret",
         "github_private_key",
         "github_webhook_secret",
+        "vault_token",
     ] {
         if obj.get(*key).and_then(|v| v.as_str()).is_some() {
             obj.insert(key.to_string(), serde_json::json!("***"));
@@ -2401,6 +2402,7 @@ mod tests {
             "github_webhook_secret".to_string(),
             serde_json::json!("secret5"),
         );
+        obj.insert("vault_token".to_string(), serde_json::json!("secret6"));
         mask_config_secrets(&mut obj);
         assert_eq!(obj.get("api_key").unwrap(), &serde_json::json!("***"));
         assert_eq!(obj.get("github_token").unwrap(), &serde_json::json!("***"));
@@ -2416,6 +2418,7 @@ mod tests {
             obj.get("github_webhook_secret").unwrap(),
             &serde_json::json!("***")
         );
+        assert_eq!(obj.get("vault_token").unwrap(), &serde_json::json!("***"));
     }
 
     #[test]

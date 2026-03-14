@@ -7,9 +7,9 @@ export interface ModelPreset {
 
 export const MODEL_PRESETS: ModelPreset[] = [
   { id: 'openai/gpt-5.4-pro', label: 'GPT-5.4 Pro', ctx: '1.1M', price: '$30' },
-  { id: 'anthropic/claude-opus-4.6', label: 'Claude Opus 4.6', ctx: '1M', price: '$5' },
+  { id: 'anthropic/claude-opus-4.5', label: 'Claude Opus 4.5', ctx: '1M', price: '$5' },
   { id: 'openai/gpt-5.4', label: 'GPT-5.4', ctx: '1.1M', price: '$2.50' },
-  { id: 'anthropic/claude-sonnet-4.6', label: 'Claude Sonnet 4.6', ctx: '1M', price: '$3' },
+  { id: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5', ctx: '1M', price: '$3' },
   { id: 'google/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro', ctx: '1M', price: '$2' },
   { id: 'openai/gpt-5.3-codex', label: 'GPT-5.3 Codex', ctx: '400K', price: '$1.75' },
   { id: 'openai/gpt-5.2-codex', label: 'GPT-5.2 Codex', ctx: '400K', price: '$1.75' },

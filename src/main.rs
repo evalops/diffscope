@@ -427,6 +427,12 @@ enum Commands {
 
         #[arg(
             long,
+            help = "Append feedback calibration summary to this JSON history file"
+        )]
+        trend_file: Option<PathBuf>,
+
+        #[arg(
+            long,
             default_value_t = 0.75,
             help = "Confidence threshold used for acceptance calibration (0.0-1.0)"
         )]
@@ -743,11 +749,18 @@ async fn main() -> Result<()> {
         Commands::FeedbackEval {
             input,
             output,
+            trend_file,
             confidence_threshold,
             eval_report,
         } => {
-            commands::feedback_eval_command(input, output, confidence_threshold, eval_report)
-                .await?;
+            commands::feedback_eval_command(
+                input,
+                output,
+                trend_file,
+                confidence_threshold,
+                eval_report,
+            )
+            .await?;
         }
         Commands::Dag { command } => match command {
             DagCommands::Review => {

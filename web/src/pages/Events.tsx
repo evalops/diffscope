@@ -460,7 +460,7 @@ export function Events() {
   const [exportOpen, setExportOpen] = useState(false)
   const exportRef = useRef<HTMLDivElement>(null)
 
-  const allEvents = events ?? []
+  const allEvents = useMemo(() => events ?? [], [events])
 
   // Inject styles on mount
   useEffect(() => { ensureStyles() }, [])

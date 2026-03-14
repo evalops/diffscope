@@ -12,6 +12,7 @@ use report::emit_feedback_eval_report;
 pub async fn feedback_eval_command(
     input_path: PathBuf,
     output_path: Option<PathBuf>,
+    trend_path: Option<PathBuf>,
     confidence_threshold: f32,
     eval_report_path: Option<PathBuf>,
 ) -> Result<()> {
@@ -23,6 +24,7 @@ pub async fn feedback_eval_command(
     emit_feedback_eval_report(
         &loaded,
         output_path.as_deref(),
+        trend_path.as_deref(),
         confidence_threshold,
         eval_report.as_ref(),
     )

@@ -21,11 +21,12 @@ export function ReviewView() {
   const [severityFilter, setSeverityFilter] = useState<Set<Severity>>(new Set(['Error', 'Warning', 'Info', 'Suggestion']))
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
   const [showEvent, setShowEvent] = useState(false)
+  const diffContent = review?.diff_content
 
   const diffFiles = useMemo(() => {
-    if (!review?.diff_content) return []
-    return parseDiff(review.diff_content)
-  }, [review?.diff_content])
+    if (!diffContent) return []
+    return parseDiff(diffContent)
+  }, [diffContent])
 
   // All hooks MUST be above this line — no hooks after early returns
 
