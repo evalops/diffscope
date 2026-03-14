@@ -25,6 +25,18 @@ pub fn record_comment_feedback_stats(
     }
 }
 
+pub fn record_comment_dismissal_stats(store: &mut FeedbackStore, comment: &core::Comment) {
+    let key = classify_comment_type(comment).as_str().to_string();
+    let stats = store.by_comment_type.entry(key).or_default();
+    stats.dismissed = stats.dismissed.saturating_add(1);
+
+    let file_patterns = derive_file_patterns(&comment.file_path);
+    store.record_dismissal_patterns(&comment.category.to_string(), &file_patterns);
+    if let Some(rule_id) = normalize_rule_id(comment.rule_id.as_deref()) {
+        store.record_rule_dismissal_patterns(&rule_id, &file_patterns);
+    }
+}
+
 pub fn apply_comment_feedback_signal(
     store: &mut FeedbackStore,
     comment: &core::Comment,
@@ -40,6 +52,16 @@ pub fn apply_comment_feedback_signal(
 
     if changed {
         record_comment_feedback_stats(store, comment, accepted);
+    }
+
+    changed
+}
+
+pub fn apply_comment_dismissal_signal(store: &mut FeedbackStore, comment: &core::Comment) -> bool {
+    let changed = store.dismissed.insert(comment.id.clone());
+
+    if changed {
+        record_comment_dismissal_stats(store, comment);
     }
 
     changed
@@ -112,5 +134,24 @@ mod tests {
         assert_eq!(store.by_category["Security"].rejected, 1);
         assert_eq!(store.by_rule["sec.sql.injection"].accepted, 1);
         assert_eq!(store.by_rule["sec.sql.injection"].rejected, 1);
+    }
+
+    #[test]
+    fn apply_comment_dismissal_signal_is_idempotent() {
+        let comment = sample_comment();
+        let mut store = FeedbackStore::default();
+
+        assert!(apply_comment_dismissal_signal(&mut store, &comment));
+        assert!(!apply_comment_dismissal_signal(&mut store, &comment));
+
+        assert!(store.dismissed.contains(&comment.id));
+        assert_eq!(store.by_comment_type["logic"].dismissed, 1);
+        assert_eq!(store.by_category["Security"].dismissed, 1);
+        assert_eq!(store.by_file_pattern["src/**"].dismissed, 1);
+        assert_eq!(store.by_rule["sec.sql.injection"].dismissed, 1);
+        assert_eq!(
+            store.by_rule_file_pattern["sec.sql.injection|*.rs"].dismissed,
+            1
+        );
     }
 }

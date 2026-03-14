@@ -18,7 +18,10 @@ pub use patterns::derive_file_patterns;
 #[allow(unused_imports)]
 pub use persistence::{load_feedback_store, load_feedback_store_from_path, save_feedback_store};
 #[allow(unused_imports)]
-pub use record::{apply_comment_feedback_signal, record_comment_feedback_stats};
+pub use record::{
+    apply_comment_dismissal_signal, apply_comment_feedback_signal, record_comment_dismissal_stats,
+    record_comment_feedback_stats,
+};
 #[allow(unused_imports)]
 pub use semantic::{record_semantic_feedback_example, record_semantic_feedback_examples};
 #[allow(unused_imports)]
@@ -34,6 +37,7 @@ mod tests {
         let store = FeedbackStore::default();
         assert!(store.suppress.is_empty());
         assert!(store.accept.is_empty());
+        assert!(store.dismissed.is_empty());
         assert!(store.by_comment_type.is_empty());
         assert!(store.by_category.is_empty());
         assert!(store.by_file_pattern.is_empty());
@@ -62,11 +66,13 @@ mod tests {
         let mut store = FeedbackStore::default();
         store.suppress.insert("c1".to_string());
         store.accept.insert("c2".to_string());
+        store.dismissed.insert("c3".to_string());
         store.by_comment_type.insert(
             "style".to_string(),
             FeedbackTypeStats {
                 accepted: 1,
                 rejected: 2,
+                dismissed: 3,
             },
         );
 
@@ -74,8 +80,10 @@ mod tests {
         let deserialized: FeedbackStore = serde_json::from_str(&json).unwrap();
         assert!(deserialized.suppress.contains("c1"));
         assert!(deserialized.accept.contains("c2"));
+        assert!(deserialized.dismissed.contains("c3"));
         assert_eq!(deserialized.by_comment_type["style"].accepted, 1);
         assert_eq!(deserialized.by_comment_type["style"].rejected, 2);
+        assert_eq!(deserialized.by_comment_type["style"].dismissed, 3);
     }
 
     #[test]
@@ -98,6 +106,7 @@ mod tests {
         let stats = FeedbackPatternStats {
             accepted: 10,
             rejected: 0,
+            dismissed: 0,
         };
         assert_eq!(stats.acceptance_rate(), 1.0);
         assert_eq!(stats.total(), 10);
@@ -108,6 +117,7 @@ mod tests {
         let stats = FeedbackPatternStats {
             accepted: 0,
             rejected: 10,
+            dismissed: 0,
         };
         assert_eq!(stats.acceptance_rate(), 0.0);
     }
@@ -117,6 +127,7 @@ mod tests {
         let stats = FeedbackPatternStats {
             accepted: 3,
             rejected: 7,
+            dismissed: 0,
         };
         assert!((stats.acceptance_rate() - 0.3).abs() < f32::EPSILON);
     }

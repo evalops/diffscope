@@ -25,7 +25,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 1. [ ] Add first-class comment outcome states beyond thumbs: `new`, `accepted`, `rejected`, `addressed`, `stale`, `auto_fixed`.
 2. [ ] Infer "addressed by later commit" by diffing follow-up pushes against the original commented lines.
 3. [ ] Feed addressed/not-addressed outcomes into the reinforcement store alongside thumbs.
-4. [ ] Separate false-positive rejections from "valid but won't fix" dismissals in stored feedback.
+4. [x] Separate false-positive rejections from "valid but won't fix" dismissals in stored feedback.
 5. [ ] Weight reinforcement by reviewer role or trust level when GitHub identity is available.
 6. [ ] Add rule-level reinforcement decay so old team preferences do not dominate forever.
 7. [x] Add path-scoped reinforcement buckets so teams can prefer different standards in `tests/`, `scripts/`, and production code.
@@ -50,11 +50,11 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 
 21. [ ] Build a first-class `fix until clean` loop that can run review, apply fixes, rerun review, and stop on convergence.
 22. [ ] Reuse the existing DAG runtime to model iterative review/fix loops as resumable workflow nodes.
-23. [ ] Add a max-iteration policy and loop budget controls for autonomous review convergence.
+23. [x] Add a max-iteration policy and loop budget controls for autonomous review convergence.
 24. [ ] Add "issue replay" prompts that hand unresolved findings back to a coding agent with file-local context.
 25. [ ] Add a handoff contract from reviewer findings to fix agents with rule IDs, evidence, and suggested diffs.
 26. [ ] Persist loop-level telemetry: iterations, fixes attempted, findings cleared, findings reopened.
-27. [ ] Add "challenge the finding" verification loops where a validator tries to falsify a suspected issue before keeping it.
+27. [x] Add "challenge the finding" verification loops where a validator tries to falsify a suspected issue before keeping it.
 28. [ ] Add caching between iterations so repeated codebase retrieval and verification runs are cheaper.
 29. [ ] Allow loop policies to differ by profile: conservative auditor, high-autonomy fixer, or report-only.
 30. [ ] Add eval fixtures specifically for loop convergence and reopened-issue regressions.
@@ -62,14 +62,14 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 ## 4. Code Graph and Repository Intelligence
 
 31. [ ] Turn the current symbol graph into a persisted repository graph with durable storage and reload support.
-32. [ ] Add caller/callee expansion APIs for multi-hop impact analysis from changed symbols.
+32. [x] Add caller/callee expansion APIs for multi-hop impact analysis from changed symbols.
 33. [ ] Add contract edges between interfaces, implementations, and API endpoints.
 34. [ ] Add "similar implementation" lookup so repeated patterns and divergences are explicit.
 35. [ ] Add cross-file blast-radius summaries to findings when a change affects many callers.
 36. [ ] Add graph freshness/version metadata so reviews know whether they are using stale repository intelligence.
 37. [ ] Add graph-backed ranking of related files before semantic RAG retrieval.
 38. [ ] Add graph query traces to `dag_traces` or review artifacts for explainability and debugging.
-39. [ ] Add graph-aware eval fixtures that require multi-hop code understanding to pass.
+39. [x] Add graph-aware eval fixtures that require multi-hop code understanding to pass.
 40. [ ] Split `src/core/symbol_graph.rs` into construction, persistence, traversal, and ranking modules as it grows.
 
 ## 5. External Context and Pattern Repositories
@@ -107,8 +107,8 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 65. [x] Add review completeness and mean-time-to-resolution charts.
 66. [ ] Add feedback-learning effectiveness metrics: did reranked findings get higher acceptance after rollout?
 67. [ ] Add pattern-repository utilization analytics showing when extra context actually affected findings.
-68. [ ] Add eval-vs-production dashboards comparing benchmark strength against real-world acceptance.
-69. [ ] Add drill-downs from trend charts directly into the affected reviews, findings, and rules.
+68. [x] Add eval-vs-production dashboards comparing benchmark strength against real-world acceptance.
+69. [x] Add drill-downs from trend charts directly into the affected reviews, findings, and rules.
 70. [x] Add exportable JSON/CSV reports for review quality, lifecycle, and reinforcement metrics.
 
 ## 8. APIs, Automation, and MCP-Like Surfaces
@@ -130,7 +130,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 82. [ ] Split `src/server/state.rs` into session lifecycle, persistence, progress, and GitHub coordination modules.
 83. [ ] Add queue depth and worker saturation metrics for long-running review and eval jobs.
 84. [ ] Add retention policies for review artifacts, eval artifacts, and trend histories.
-85. [ ] Add storage migrations for richer comment lifecycle and reinforcement schemas.
+85. [x] Add storage migrations for richer comment lifecycle and reinforcement schemas.
 86. [ ] Add deployment docs for self-hosted review + analytics + trend retention setups.
 87. [ ] Add secret-management guidance and validation for multi-provider enterprise installs.
 88. [ ] Add background jobs for recomputing analytics after schema or scoring changes.
@@ -180,4 +180,4 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Add path-scoped reinforcement buckets so feedback can distinguish `tests/**`, `scripts/**`, and broader code areas.
 - [x] Add review completeness metrics across summaries, PR readiness, and ReviewView surfaces.
 - [x] Add per-PR readiness timelines that preserve historical mergeability checkpoints.
-- [ ] Commit and push each validated checkpoint before moving to the next epic.
+- [x] Commit and push each validated checkpoint before moving to the next epic.

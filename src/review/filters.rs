@@ -108,6 +108,7 @@ mod tests {
                 super::super::feedback::FeedbackTypeStats {
                     accepted: 0,
                     rejected: 3,
+                    dismissed: 0,
                 },
             )]),
             ..Default::default()
@@ -144,6 +145,7 @@ mod tests {
                 super::super::feedback::FeedbackTypeStats {
                     accepted: 0,
                     rejected: 10,
+                    dismissed: 0,
                 },
             )]),
             ..Default::default()
@@ -170,6 +172,7 @@ mod tests {
                 super::super::feedback::FeedbackTypeStats {
                     accepted: 0,
                     rejected: 10,
+                    dismissed: 0,
                 },
             )]),
             ..Default::default()

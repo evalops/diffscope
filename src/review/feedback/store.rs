@@ -8,6 +8,8 @@ pub struct FeedbackTypeStats {
     pub accepted: usize,
     #[serde(default)]
     pub rejected: usize,
+    #[serde(default)]
+    pub dismissed: usize,
 }
 
 /// Tracks acceptance/rejection counts for a specific pattern (category, file extension, etc.)
@@ -17,6 +19,8 @@ pub struct FeedbackPatternStats {
     pub accepted: usize,
     #[serde(default)]
     pub rejected: usize,
+    #[serde(default)]
+    pub dismissed: usize,
 }
 
 impl FeedbackPatternStats {
@@ -39,6 +43,8 @@ pub struct FeedbackStore {
     pub suppress: HashSet<String>,
     #[serde(default)]
     pub accept: HashSet<String>,
+    #[serde(default)]
+    pub dismissed: HashSet<String>,
     #[serde(default)]
     pub by_comment_type: HashMap<String, FeedbackTypeStats>,
     /// Feedback stats keyed by category (e.g., "Bug", "Security", "Performance").
@@ -122,6 +128,43 @@ impl FeedbackStore {
             update_pattern_stats(comp_stats, accepted);
         }
     }
+
+    /// Record a dismissal event across one or more file-pattern buckets.
+    pub fn record_dismissal_patterns<S>(&mut self, category: &str, file_patterns: &[S])
+    where
+        S: AsRef<str>,
+    {
+        let cat_stats = self.by_category.entry(category.to_string()).or_default();
+        update_pattern_dismissed(cat_stats);
+
+        for pattern in collect_unique_patterns(file_patterns) {
+            let fp_stats = self.by_file_pattern.entry(pattern.clone()).or_default();
+            update_pattern_dismissed(fp_stats);
+
+            let composite = format!("{category}|{pattern}");
+            let comp_stats = self.by_category_file_pattern.entry(composite).or_default();
+            update_pattern_dismissed(comp_stats);
+        }
+    }
+
+    /// Record a dismissal event across normalized rule-id buckets.
+    pub fn record_rule_dismissal_patterns<S>(&mut self, rule_id: &str, file_patterns: &[S])
+    where
+        S: AsRef<str>,
+    {
+        let Some(rule_id) = normalize_feedback_key(rule_id) else {
+            return;
+        };
+
+        let rule_stats = self.by_rule.entry(rule_id.clone()).or_default();
+        update_pattern_dismissed(rule_stats);
+
+        for pattern in collect_unique_patterns(file_patterns) {
+            let composite = format!("{}|{}", rule_id, pattern);
+            let comp_stats = self.by_rule_file_pattern.entry(composite).or_default();
+            update_pattern_dismissed(comp_stats);
+        }
+    }
 }
 
 fn update_pattern_stats(stats: &mut FeedbackPatternStats, accepted: bool) {
@@ -130,6 +173,10 @@ fn update_pattern_stats(stats: &mut FeedbackPatternStats, accepted: bool) {
     } else {
         stats.rejected += 1;
     }
+}
+
+fn update_pattern_dismissed(stats: &mut FeedbackPatternStats) {
+    stats.dismissed += 1;
 }
 
 fn collect_unique_patterns<S>(file_patterns: &[S]) -> HashSet<String>

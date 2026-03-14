@@ -1278,14 +1278,21 @@ pub async fn update_comment_lifecycle(
 
     let mut session = load_review_session_for_update(&state, &id).await?;
 
-    let status_changed = {
+    let (status_changed, dismissed_comment) = {
         let comment = session
             .comments
             .iter_mut()
             .find(|c| c.id == request.comment_id)
             .ok_or(StatusCode::NOT_FOUND)?;
 
-        apply_comment_lifecycle_transition(comment, next_status, current_timestamp())
+        let changed = apply_comment_lifecycle_transition(comment, next_status, current_timestamp());
+        let dismissed_comment = if changed && next_status == CommentStatus::Dismissed {
+            Some(comment.clone())
+        } else {
+            None
+        };
+
+        (changed, dismissed_comment)
     };
 
     if status_changed {
@@ -1295,6 +1302,14 @@ pub async fn update_comment_lifecycle(
             previous_summary.as_ref(),
         ));
         persist_updated_review_session(&state, session).await;
+
+        if let Some(comment) = dismissed_comment {
+            let config = state.config.read().await.clone();
+            let mut feedback_store = crate::review::load_feedback_store(&config);
+            if crate::review::apply_comment_dismissal_signal(&mut feedback_store, &comment) {
+                let _ = crate::review::save_feedback_store(&config.feedback_path, &feedback_store);
+            }
+        }
     }
 
     Ok(Json(CommentLifecycleResponse { ok: true }))
