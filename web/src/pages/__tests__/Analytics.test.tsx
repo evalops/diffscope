@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { AnalyticsTrendsResponse, ReviewSession } from '../../api/types'
 import {
+  buildAnalyticsDrilldown,
   buildAnalyticsCsv,
   buildAnalyticsExportReport,
   computeAnalytics,
@@ -187,6 +188,58 @@ describe('Analytics exports', () => {
     expect(analytics.stats.meanTimeToResolutionHours).toBeCloseTo(1.5)
     expect(analytics.stats.resolvedWithTimestampCount).toBe(1)
     expect(formatDurationHours(analytics.stats.meanTimeToResolutionHours)).toBe('1.5h')
+  })
+
+  it('builds review, category, and rule drilldowns from review-backed analytics', () => {
+    const laterReview = makeReview()
+    const laterSummary = laterReview.summary!
+    laterReview.id = 'review-2'
+    laterReview.started_at = '2026-03-14T12:00:00Z'
+    laterReview.completed_at = '2026-03-14T12:03:00Z'
+    laterReview.files_reviewed = 1
+    laterReview.comments = [{
+      ...laterReview.comments[0],
+      id: 'c-3',
+    }]
+    laterReview.summary = {
+      ...laterSummary,
+      total_comments: 1,
+      by_severity: { Error: 1, Warning: 0, Info: 0, Suggestion: 0 },
+      by_category: { Security: 1 },
+      files_reviewed: 1,
+      overall_score: 7.9,
+      open_comments: 1,
+      resolved_comments: 0,
+      critical_issues: 1,
+      completeness: {
+        total_findings: 1,
+        acknowledged_findings: 0,
+        fixed_findings: 0,
+        stale_findings: 0,
+      },
+    }
+
+    const reviewDrilldown = buildAnalyticsDrilldown(
+      [makeReview(), laterReview],
+      { type: 'review', reviewId: 'review-2' },
+    )
+    expect(reviewDrilldown?.title).toBe('Review #2')
+    expect(reviewDrilldown?.reviews[0].findingCount).toBe(1)
+
+    const categoryDrilldown = buildAnalyticsDrilldown(
+      [makeReview(), laterReview],
+      { type: 'category', category: 'Security' },
+    )
+    expect(categoryDrilldown?.reviews).toHaveLength(2)
+    expect(categoryDrilldown?.comments).toHaveLength(2)
+    expect(categoryDrilldown?.relatedRules).toEqual(['sec.auth.boundary'])
+
+    const ruleDrilldown = buildAnalyticsDrilldown(
+      [makeReview(), laterReview],
+      { type: 'rule', ruleId: 'sec.auth.boundary' },
+    )
+    expect(ruleDrilldown?.title).toBe('Rule · sec.auth.boundary')
+    expect(ruleDrilldown?.comments).toHaveLength(2)
   })
 
   it('flattens the analytics report into csv rows', () => {

@@ -6,13 +6,10 @@ import type {
 } from '../api/types'
 
 export function computeAnalytics(reviews: ReviewSession[]) {
-  const reviewTimestamp = (value: ReviewSession['started_at']) => toTimestampMs(value) ?? 0
-
-  const completed = reviews
-    .filter(r => r.status === 'Complete' && r.summary)
-    .sort((a, b) => reviewTimestamp(a.started_at) - reviewTimestamp(b.started_at))
+  const completed = getCompletedReviews(reviews)
 
   const scoreOverTime = completed.map((r, i) => ({
+    reviewId: r.id,
     idx: i + 1,
     label: `#${i + 1}`,
     score: r.summary!.overall_score,
@@ -21,6 +18,7 @@ export function computeAnalytics(reviews: ReviewSession[]) {
   }))
 
   const severityOverTime = completed.map((r, i) => ({
+    reviewId: r.id,
     idx: i + 1,
     label: `#${i + 1}`,
     Error: r.summary!.by_severity.Error || 0,
@@ -78,6 +76,7 @@ export function computeAnalytics(reviews: ReviewSession[]) {
     const labeled = accepted + rejected
 
     return {
+      reviewId: r.id,
       idx: i + 1,
       label: `#${i + 1}`,
       coverage: totalComments > 0 ? labeled / totalComments : 0,
@@ -136,6 +135,7 @@ export function computeAnalytics(reviews: ReviewSession[]) {
     .slice(0, 5)
 
   const lifecycleSeries = completed.map((r, i) => ({
+    reviewId: r.id,
     idx: i + 1,
     label: `#${i + 1}`,
     open: r.summary!.open_comments,
@@ -149,6 +149,7 @@ export function computeAnalytics(reviews: ReviewSession[]) {
     const totalFindings = completeness.total_findings
 
     return {
+      reviewId: r.id,
       idx: i + 1,
       label: `#${i + 1}`,
       totalFindings,
@@ -179,6 +180,7 @@ export function computeAnalytics(reviews: ReviewSession[]) {
     const totalHours = resolutionHours.reduce((sum, hours) => sum + hours, 0)
 
     return {
+      reviewId: r.id,
       idx: i + 1,
       label: `#${i + 1}`,
       meanHours: resolutionHours.length > 0 ? totalHours / resolutionHours.length : null,
@@ -280,6 +282,129 @@ export function computeAnalytics(reviews: ReviewSession[]) {
       feedbackAcceptanceRate: labeledFeedbackTotal > 0 ? acceptedFeedbackTotal / labeledFeedbackTotal : 0,
       reviewsWithFeedback,
     },
+  }
+}
+
+export type AnalyticsDrilldownSelection =
+  | { type: 'review'; reviewId: string }
+  | { type: 'category'; category: string }
+  | { type: 'rule'; ruleId: string }
+
+export interface AnalyticsDrilldown {
+  title: string
+  description: string
+  reviews: Array<{
+    id: string
+    label: string
+    startedAt: string | number
+    overallScore?: number
+    findingCount: number
+  }>
+  comments: Array<{
+    reviewId: string
+    reviewLabel: string
+    id: string
+    filePath: string
+    lineNumber: number
+    content: string
+    category: string
+    ruleId?: string
+  }>
+  relatedRules: string[]
+}
+
+export function buildAnalyticsDrilldown(
+  reviews: ReviewSession[],
+  selection: AnalyticsDrilldownSelection,
+): AnalyticsDrilldown | null {
+  const completed = getCompletedReviews(reviews)
+  const labeledReviews = completed.map((review, index) => ({
+    review,
+    label: `#${index + 1}`,
+  }))
+
+  if (selection.type === 'review') {
+    const match = labeledReviews.find(entry => entry.review.id === selection.reviewId)
+    if (!match) {
+      return null
+    }
+
+    const relatedRules = Array.from(new Set(
+      match.review.comments
+        .map(comment => comment.rule_id?.trim())
+        .filter((ruleId): ruleId is string => Boolean(ruleId)),
+    )).sort()
+
+    return {
+      title: `Review ${match.label}`,
+      description: `${match.review.comments.length} finding${match.review.comments.length === 1 ? '' : 's'} across ${match.review.files_reviewed} reviewed file${match.review.files_reviewed === 1 ? '' : 's'}.`,
+      reviews: [{
+        id: match.review.id,
+        label: match.label,
+        startedAt: match.review.started_at,
+        overallScore: match.review.summary?.overall_score,
+        findingCount: match.review.comments.length,
+      }],
+      comments: match.review.comments.map(comment => ({
+        reviewId: match.review.id,
+        reviewLabel: match.label,
+        id: comment.id,
+        filePath: comment.file_path,
+        lineNumber: comment.line_number,
+        content: comment.content,
+        category: comment.category,
+        ruleId: comment.rule_id?.trim(),
+      })),
+      relatedRules,
+    }
+  }
+
+  const matches = labeledReviews.flatMap(({ review, label }) => review.comments
+    .filter(comment => selection.type === 'category'
+      ? comment.category === selection.category
+      : comment.rule_id?.trim() === selection.ruleId)
+    .map(comment => ({ review, label, comment })))
+
+  if (matches.length === 0) {
+    return null
+  }
+
+  const reviewMap = new Map<string, AnalyticsDrilldown['reviews'][number]>()
+  for (const { review, label } of matches) {
+    if (!reviewMap.has(review.id)) {
+      reviewMap.set(review.id, {
+        id: review.id,
+        label,
+        startedAt: review.started_at,
+        overallScore: review.summary?.overall_score,
+        findingCount: review.comments.length,
+      })
+    }
+  }
+
+  const relatedRules = Array.from(new Set(
+    matches
+      .map(({ comment }) => comment.rule_id?.trim())
+      .filter((ruleId): ruleId is string => Boolean(ruleId)),
+  )).sort()
+
+  return {
+    title: selection.type === 'category'
+      ? `Category · ${selection.category}`
+      : `Rule · ${selection.ruleId}`,
+    description: `${matches.length} finding${matches.length === 1 ? '' : 's'} across ${reviewMap.size} review${reviewMap.size === 1 ? '' : 's'}.`,
+    reviews: Array.from(reviewMap.values()),
+    comments: matches.map(({ review, label, comment }) => ({
+      reviewId: review.id,
+      reviewLabel: label,
+      id: comment.id,
+      filePath: comment.file_path,
+      lineNumber: comment.line_number,
+      content: comment.content,
+      category: comment.category,
+      ruleId: comment.rule_id?.trim(),
+    })),
+    relatedRules,
   }
 }
 
@@ -649,6 +774,14 @@ function toDate(value: string | number | undefined): Date | null {
 
 function toTimestampMs(value: string | number | undefined): number | null {
   return toDate(value)?.getTime() ?? null
+}
+
+function getCompletedReviews(reviews: ReviewSession[]) {
+  return reviews
+    .filter((review): review is ReviewSession & { summary: NonNullable<ReviewSession['summary']> } => (
+      review.status === 'Complete' && Boolean(review.summary)
+    ))
+    .sort((left, right) => (toTimestampMs(left.started_at) ?? 0) - (toTimestampMs(right.started_at) ?? 0))
 }
 
 function getCompletenessSummary(summary: NonNullable<ReviewSession['summary']>) {

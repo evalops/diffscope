@@ -1,4 +1,5 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   AreaChart, Area, BarChart, Bar,
   ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -7,6 +8,7 @@ import { useAnalyticsTrends, useReviews } from '../api/hooks'
 import { AlertTriangle, Download, Loader2 } from 'lucide-react'
 import type { FeedbackEvalTrendGap } from '../api/types'
 import {
+  buildAnalyticsDrilldown,
   buildAnalyticsExportReport,
   computeAnalytics,
   computeTrendAnalytics,
@@ -24,6 +26,10 @@ const tooltipStyle = {
 }
 const axisTick = { fontSize: 10, fill: CHART_THEME.tick }
 const gridProps = { strokeDasharray: '3 3' as const, stroke: CHART_THEME.grid }
+
+function getActivePayloadValue<T>(state: unknown): T | undefined {
+  return (state as { activePayload?: Array<{ payload?: T }> } | undefined)?.activePayload?.[0]?.payload
+}
 
 function TrendList({ items, emptyLabel }: { items: FeedbackEvalTrendGap[]; emptyLabel: string }) {
   if (items.length === 0) {
@@ -58,10 +64,12 @@ function FeedbackBreakdownList({
   items,
   mode,
   emptyLabel,
+  onSelectItem,
 }: {
   items: Array<{ name: string; accepted: number; rejected: number; total: number; acceptanceRate: number }>
   mode: 'accepted' | 'rejected'
   emptyLabel: string
+  onSelectItem?: (name: string) => void
 }) {
   if (items.length === 0) {
     return <div className="text-[11px] text-text-muted">{emptyLabel}</div>
@@ -71,9 +79,9 @@ function FeedbackBreakdownList({
     <div className="space-y-2">
       {items.map(item => {
         const count = mode === 'accepted' ? item.accepted : item.rejected
-        return (
-          <div key={`${mode}-${item.name}`} className="flex items-center justify-between gap-3 text-[11px]">
-            <div className="min-w-0">
+        const content = (
+          <>
+            <div className="min-w-0 text-left">
               <div className="truncate font-medium text-text-primary">{item.name}</div>
               <div className="text-text-muted">
                 {item.total} labeled · {formatPercent(item.acceptanceRate)} accepted
@@ -82,6 +90,25 @@ function FeedbackBreakdownList({
             <div className={`shrink-0 font-code ${mode === 'accepted' ? 'text-sev-suggestion' : 'text-sev-error'}`}>
               {count}
             </div>
+          </>
+        )
+
+        if (onSelectItem) {
+          return (
+            <button
+              key={`${mode}-${item.name}`}
+              type="button"
+              onClick={() => onSelectItem(item.name)}
+              className="flex w-full items-center justify-between gap-3 rounded px-1 py-1 text-[11px] hover:bg-surface-2"
+            >
+              {content}
+            </button>
+          )
+        }
+
+        return (
+          <div key={`${mode}-${item.name}`} className="flex items-center justify-between gap-3 text-[11px]">
+            {content}
           </div>
         )
       })}
@@ -90,17 +117,82 @@ function FeedbackBreakdownList({
 }
 
 export function Analytics() {
+  const navigate = useNavigate()
   const { data: reviews, isLoading } = useReviews()
   const { data: trends, isLoading: trendsLoading } = useAnalyticsTrends()
+  const [drilldownSelection, setDrilldownSelection] = useState<
+    { type: 'review'; reviewId: string }
+    | { type: 'category'; category: string }
+    | { type: 'rule'; ruleId: string }
+    | null
+  >(null)
 
   const analytics = useMemo(() => {
     return computeAnalytics(reviews || [])
   }, [reviews])
   const trendAnalytics = useMemo(() => computeTrendAnalytics(trends), [trends])
+  const drilldown = useMemo(
+    () => (drilldownSelection ? buildAnalyticsDrilldown(reviews || [], drilldownSelection) : null),
+    [drilldownSelection, reviews],
+  )
   const exportReport = useMemo(
     () => buildAnalyticsExportReport(reviews || [], trends),
     [reviews, trends],
   )
+
+  const selectReviewDrilldown = (reviewId?: string) => {
+    if (reviewId) {
+      setDrilldownSelection({ type: 'review', reviewId })
+    }
+  }
+
+  const selectCategoryDrilldown = (category?: string) => {
+    if (category) {
+      setDrilldownSelection({ type: 'category', category })
+    }
+  }
+
+  const selectRuleDrilldown = (ruleId?: string) => {
+    if (ruleId) {
+      setDrilldownSelection({ type: 'rule', ruleId })
+    }
+  }
+
+  const openReviewTarget = (reviewId: string, params?: Record<string, string | undefined>) => {
+    const searchParams = new URLSearchParams()
+    Object.entries(params ?? {}).forEach(([key, value]) => {
+      if (value) {
+        searchParams.set(key, value)
+      }
+    })
+
+    const search = searchParams.toString()
+    navigate(search ? `/review/${reviewId}?${search}` : `/review/${reviewId}`)
+  }
+
+  const openDrilldownReview = (reviewId: string) => {
+    if (!drilldownSelection || drilldownSelection.type === 'review') {
+      openReviewTarget(reviewId)
+      return
+    }
+
+    if (drilldownSelection.type === 'category') {
+      openReviewTarget(reviewId, { view: 'list', category: drilldownSelection.category })
+      return
+    }
+
+    openReviewTarget(reviewId, { view: 'list', rule: drilldownSelection.ruleId })
+  }
+
+  const openDrilldownComment = (comment: NonNullable<typeof drilldown>['comments'][number]) => {
+    openReviewTarget(comment.reviewId, {
+      view: 'list',
+      file: comment.filePath,
+      comment: comment.id,
+      category: comment.category,
+      rule: comment.ruleId,
+    })
+  }
 
   if (isLoading || trendsLoading) {
     return (
@@ -215,7 +307,12 @@ export function Analytics() {
               </div>
               <div className="h-32 mt-2">
                 <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
-                  <AreaChart data={scoreOverTime}>
+                  <AreaChart
+                    data={scoreOverTime}
+                    onClick={state => selectReviewDrilldown(
+                      getActivePayloadValue<{ reviewId?: string }>(state)?.reviewId,
+                    )}
+                  >
                     <defs>
                       <linearGradient id="findingsGrad" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={CHART_THEME.accent} stopOpacity={0.3} />
@@ -262,7 +359,12 @@ export function Analytics() {
               </div>
               <div className="h-32 mt-2">
                 <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
-                  <AreaChart data={scoreOverTime}>
+                  <AreaChart
+                    data={scoreOverTime}
+                    onClick={state => selectReviewDrilldown(
+                      getActivePayloadValue<{ reviewId?: string }>(state)?.reviewId,
+                    )}
+                  >
                     <defs>
                       <linearGradient id="scoreGradA" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={CHART_THEME.accent} stopOpacity={0.3} />
@@ -330,7 +432,11 @@ export function Analytics() {
               {categoryData.length > 0 ? (
                 <div className="h-44">
                   <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
-                    <BarChart data={categoryData} layout="vertical">
+                    <BarChart
+                      data={categoryData}
+                      layout="vertical"
+                      onClick={state => selectCategoryDrilldown(getActivePayloadValue<{ name?: string }>(state)?.name)}
+                    >
                       <CartesianGrid {...gridProps} horizontal={false} />
                       <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
                       <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: CHART_THEME.tooltipText }} axisLine={false} tickLine={false} width={90} />
@@ -364,7 +470,12 @@ export function Analytics() {
               </div>
               <div className="h-32 mt-2">
                 <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
-                  <AreaChart data={completenessSeries}>
+                  <AreaChart
+                    data={completenessSeries}
+                    onClick={state => selectReviewDrilldown(
+                      getActivePayloadValue<{ reviewId?: string }>(state)?.reviewId,
+                    )}
+                  >
                     <defs>
                       <linearGradient id="completenessAckGrad" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={CHART_THEME.accent} stopOpacity={0.35} />
@@ -413,7 +524,12 @@ export function Analytics() {
               {stats.resolvedWithTimestampCount > 0 ? (
                 <div className="h-32 mt-2">
                   <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
-                    <AreaChart data={meanTimeToResolutionSeries}>
+                    <AreaChart
+                      data={meanTimeToResolutionSeries}
+                      onClick={state => selectReviewDrilldown(
+                        getActivePayloadValue<{ reviewId?: string }>(state)?.reviewId,
+                      )}
+                    >
                       <defs>
                         <linearGradient id="mttrGrad" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor={SEV_COLORS.Suggestion} stopOpacity={0.35} />
@@ -467,7 +583,12 @@ export function Analytics() {
               </div>
               <div className="h-32 mt-2">
                 <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
-                  <AreaChart data={feedbackCoverageSeries}>
+                  <AreaChart
+                    data={feedbackCoverageSeries}
+                    onClick={state => selectReviewDrilldown(
+                      getActivePayloadValue<{ reviewId?: string }>(state)?.reviewId,
+                    )}
+                  >
                     <defs>
                       <linearGradient id="feedbackCoverageGrad" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={CHART_THEME.accent} stopOpacity={0.35} />
@@ -506,7 +627,12 @@ export function Analytics() {
               </div>
               <div className="h-32 mt-2">
                 <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
-                  <AreaChart data={feedbackCoverageSeries}>
+                  <AreaChart
+                    data={feedbackCoverageSeries}
+                    onClick={state => selectReviewDrilldown(
+                      getActivePayloadValue<{ reviewId?: string }>(state)?.reviewId,
+                    )}
+                  >
                     <defs>
                       <linearGradient id="feedbackAcceptanceGrad" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={SEV_COLORS.Suggestion} stopOpacity={0.35} />
@@ -547,6 +673,7 @@ export function Analytics() {
                       items={topAcceptedCategories}
                       mode="accepted"
                       emptyLabel="No accepted categories yet"
+                      onSelectItem={selectCategoryDrilldown}
                     />
                   </div>
                   <div className="pt-3 border-t border-border-subtle">
@@ -557,6 +684,7 @@ export function Analytics() {
                       items={topRejectedCategories}
                       mode="rejected"
                       emptyLabel="No rejected categories yet"
+                      onSelectItem={selectCategoryDrilldown}
                     />
                   </div>
                 </div>
@@ -581,6 +709,7 @@ export function Analytics() {
                       items={topAcceptedRules}
                       mode="accepted"
                       emptyLabel="No accepted rules yet"
+                      onSelectItem={selectRuleDrilldown}
                     />
                   </div>
                   <div className="pt-3 border-t border-border-subtle">
@@ -591,6 +720,7 @@ export function Analytics() {
                       items={topRejectedRules}
                       mode="rejected"
                       emptyLabel="No rejected rules yet"
+                      onSelectItem={selectRuleDrilldown}
                     />
                   </div>
                 </div>
@@ -601,6 +731,123 @@ export function Analytics() {
               )}
             </div>
           </div>
+
+          {drilldown && (
+            <div className="mt-8 rounded-lg border border-border bg-surface-1 p-4">
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code">
+                    ANALYTICS DRILL-DOWN
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-text-primary">{drilldown.title}</div>
+                  <div className="mt-1 text-[12px] text-text-secondary">
+                    {drilldown.description} Jump straight into the matching review or finding below.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDrilldownSelection(null)}
+                  className="rounded border border-border px-2 py-1 text-[11px] text-text-secondary hover:text-text-primary"
+                >
+                  Clear
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-3">
+                <div className="rounded border border-border-subtle bg-surface p-3">
+                  <div className="mb-2 text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code">
+                    REVIEWS
+                  </div>
+                  <div className="space-y-2">
+                    {drilldown.reviews.map(review => (
+                      <div key={review.id} className="flex items-center justify-between gap-3 rounded bg-surface-2 px-3 py-2 text-[11px]">
+                        <div className="min-w-0">
+                          <div className="font-medium text-text-primary">Review {review.label}</div>
+                          <div className="text-text-muted">
+                            {review.findingCount} finding{review.findingCount === 1 ? '' : 's'}
+                            {review.overallScore != null ? ` · score ${review.overallScore.toFixed(1)}` : ''}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openDrilldownReview(review.id)}
+                          className="shrink-0 rounded border border-border px-2 py-1 text-[10px] text-text-secondary hover:text-text-primary"
+                        >
+                          Open review
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded border border-border-subtle bg-surface p-3 xl:col-span-2">
+                  <div className="mb-2 text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code">
+                    FINDINGS
+                  </div>
+                  <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                    {drilldown.comments.map(comment => (
+                      <div key={comment.id} className="rounded bg-surface-2 px-3 py-2 text-[11px]">
+                        <div className="flex items-center justify-between gap-3">
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/review/${comment.reviewId}`)}
+                            className="font-code text-accent hover:underline"
+                          >
+                            Review {comment.reviewLabel}
+                          </button>
+                          <div className="text-text-muted">
+                            {comment.filePath}:{comment.lineNumber}
+                          </div>
+                        </div>
+                        <div className="mt-1 text-text-primary">{comment.content}</div>
+                        <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-text-muted">
+                          <span>{comment.category}</span>
+                          <button
+                            type="button"
+                            onClick={() => openDrilldownComment(comment)}
+                            className="rounded border border-border px-1.5 py-0.5 hover:text-text-primary"
+                          >
+                            Open finding
+                          </button>
+                          {comment.ruleId && (
+                            <button
+                              type="button"
+                              onClick={() => selectRuleDrilldown(comment.ruleId)}
+                              className="rounded border border-border px-1.5 py-0.5 font-code hover:text-text-primary"
+                            >
+                              {comment.ruleId}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded border border-border-subtle bg-surface p-3 xl:col-span-3">
+                  <div className="mb-2 text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code">
+                    RELATED RULES
+                  </div>
+                  {drilldown.relatedRules.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {drilldown.relatedRules.map(ruleId => (
+                        <button
+                          key={ruleId}
+                          type="button"
+                          onClick={() => selectRuleDrilldown(ruleId)}
+                          className="rounded border border-border px-2 py-1 text-[11px] font-code text-text-secondary hover:text-text-primary"
+                        >
+                          {ruleId}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-text-muted">No rule IDs are attached to this selection yet.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
 

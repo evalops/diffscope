@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { Loader2, AlertTriangle, MessageSquare, FileCode, ChevronDown, Activity, Clock, Cpu, GitBranch } from 'lucide-react'
 import { useReview, useSubmitFeedback, useUpdateCommentLifecycle } from '../api/hooks'
@@ -20,6 +20,7 @@ type ReviewCommentFilters = {
   severityFilter: Set<Severity>
   selectedFile?: string | null
   categoryFilter: string | null
+  ruleFilter: string | null
   lifecycleFilter: CommentLifecycleStatus | 'All'
   blockerOnly?: boolean
 }
@@ -200,6 +201,7 @@ function filterReviewComments(
     severityFilter,
     selectedFile = null,
     categoryFilter,
+    ruleFilter,
     lifecycleFilter,
     blockerOnly = false,
   }: ReviewCommentFilters,
@@ -207,6 +209,7 @@ function filterReviewComments(
   return comments.filter((comment) => {
     if (selectedFile && normalizeCommentFilePath(comment.file_path) !== selectedFile) return false
     if (categoryFilter && comment.category !== categoryFilter) return false
+    if (ruleFilter && comment.rule_id?.trim() !== ruleFilter) return false
 
     if (blockerOnly) {
       return isBlockingComment(comment)
@@ -218,8 +221,19 @@ function filterReviewComments(
   })
 }
 
+function parseViewModeParam(value: string | null): ViewMode | null {
+  return value === 'diff' || value === 'list' ? value : null
+}
+
+function parseLifecycleFilterParam(value: string | null): CommentLifecycleStatus | 'All' | null {
+  return value === 'Open' || value === 'Resolved' || value === 'Dismissed' || value === 'All'
+    ? value
+    : null
+}
+
 export function ReviewView() {
   const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
   const { data: review, isLoading } = useReview(id)
   const feedback = useSubmitFeedback(id || '')
   const lifecycle = useUpdateCommentLifecycle(id || '')
@@ -227,6 +241,7 @@ export function ReviewView() {
   const [viewMode, setViewMode] = useState<ViewMode>('diff')
   const [severityFilter, setSeverityFilter] = useState<Set<Severity>>(new Set(['Error', 'Warning', 'Info', 'Suggestion']))
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
+  const [ruleFilter, setRuleFilter] = useState<string | null>(null)
   const [lifecycleFilter, setLifecycleFilter] = useState<CommentLifecycleStatus | 'All'>('All')
   const [showOnlyBlockers, setShowOnlyBlockers] = useState(false)
   const [showEvent, setShowEvent] = useState(false)
@@ -255,9 +270,10 @@ export function ReviewView() {
   const blockerFilteredComments = useMemo(() => filterReviewComments(comments, {
     severityFilter,
     categoryFilter,
+    ruleFilter,
     lifecycleFilter,
     blockerOnly: showOnlyBlockers,
-  }), [comments, severityFilter, categoryFilter, lifecycleFilter, showOnlyBlockers])
+  }), [comments, severityFilter, categoryFilter, ruleFilter, lifecycleFilter, showOnlyBlockers])
 
   const filteredDiffFiles = useMemo(() => {
     if (!showOnlyBlockers) return diffFiles
@@ -277,9 +293,10 @@ export function ReviewView() {
     severityFilter,
     selectedFile: activeSelectedFile,
     categoryFilter,
+    ruleFilter,
     lifecycleFilter,
     blockerOnly: showOnlyBlockers,
-  }), [comments, severityFilter, activeSelectedFile, categoryFilter, lifecycleFilter, showOnlyBlockers])
+  }), [comments, severityFilter, activeSelectedFile, categoryFilter, ruleFilter, lifecycleFilter, showOnlyBlockers])
 
   const commentSections = useMemo(
     () => buildReviewCommentSections(filteredComments, review?.summary?.merge_readiness),
@@ -388,6 +405,36 @@ export function ReviewView() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [focusNextVisibleComment, runKeyboardAction])
 
+  useEffect(() => {
+    if (!review) return
+
+    const commentId = searchParams.get('comment')
+    const comment = commentId ? review.comments.find((entry) => entry.id === commentId) : undefined
+    const nextViewMode = parseViewModeParam(searchParams.get('view'))
+    const nextCategoryFilter = searchParams.get('category') || null
+    const nextRuleFilter = searchParams.get('rule') || null
+    const nextLifecycleFilter = parseLifecycleFilterParam(searchParams.get('lifecycle')) ?? 'All'
+    const fileParam = searchParams.get('file')
+    const nextSelectedFile = fileParam
+      ? normalizeCommentFilePath(fileParam)
+      : comment
+        ? normalizeCommentFilePath(comment.file_path)
+        : null
+
+    setViewMode(nextViewMode ?? (comment ? 'list' : 'diff'))
+    setSelectedFile(nextSelectedFile)
+    setCategoryFilter(nextCategoryFilter)
+    setRuleFilter(nextRuleFilter)
+    setLifecycleFilter(nextLifecycleFilter)
+    setShowOnlyBlockers(searchParams.get('blockers') === '1')
+    setActiveCommentId(comment?.id ?? null)
+  }, [review, searchParams])
+
+  useEffect(() => {
+    if (!activeVisibleCommentId) return
+    focusCommentSoon(activeVisibleCommentId)
+  }, [activeVisibleCommentId, focusCommentSoon])
+
   // All hooks MUST be above this line — no hooks after early returns
 
   if (isLoading || !review) {
@@ -462,6 +509,11 @@ export function ReviewView() {
   }
 
   const categories = [...new Set(comments.map(c => c.category))]
+  const rules = [...new Set(
+    comments
+      .map((comment) => comment.rule_id?.trim())
+      .filter((ruleId): ruleId is string => Boolean(ruleId)),
+  )]
 
   const readinessStyles: Record<MergeReadiness, string> = {
     Ready: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
@@ -710,6 +762,22 @@ export function ReviewView() {
             </select>
             <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
           </div>
+
+          {rules.length > 0 && (
+            <div className="relative">
+              <select
+                value={ruleFilter || ''}
+                onChange={e => setRuleFilter(e.target.value || null)}
+                className="max-w-[14rem] text-[11px] bg-surface-2 border border-border rounded px-2 py-1 text-text-secondary appearance-none pr-6 cursor-pointer"
+              >
+                <option value="">All rules</option>
+                {rules.map(ruleId => (
+                  <option key={ruleId} value={ruleId}>{ruleId}</option>
+                ))}
+              </select>
+              <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+            </div>
+          )}
 
           <div className="relative">
             <select
