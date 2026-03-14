@@ -556,8 +556,10 @@ index 83db48f..0000000\n\
         assert_eq!(diffs.len(), 1);
         assert!(diffs[0].is_deleted);
         assert!(!diffs[0].is_new);
-        assert_eq!(diffs[0].hunks[0].old_lines, 1);
-        assert_eq!(diffs[0].hunks[0].new_lines, 0);
+        // Regression (PR37): @@ -1,1 +0,0 @@ must preserve old_lines=1, new_lines=0
+        let hunk = &diffs[0].hunks[0];
+        assert_eq!(hunk.old_lines, 1, "deleted-file hunk must have old_lines=1");
+        assert_eq!(hunk.new_lines, 0, "deleted-file hunk must have new_lines=0");
     }
 
     #[test]
@@ -575,8 +577,33 @@ index 0000000..f735c20\n\
         assert_eq!(diffs.len(), 1);
         assert!(diffs[0].is_new);
         assert!(!diffs[0].is_deleted);
-        assert_eq!(diffs[0].hunks[0].old_lines, 0);
-        assert_eq!(diffs[0].hunks[0].new_lines, 1);
+        // Regression (PR37): @@ -0,0 +1,1 @@ must preserve old_lines=0, new_lines=1
+        let hunk = &diffs[0].hunks[0];
+        assert_eq!(hunk.old_lines, 0, "new-file hunk must have old_lines=0");
+        assert_eq!(hunk.new_lines, 1, "new-file hunk must have new_lines=1");
+    }
+
+    #[test]
+    fn test_parse_new_file_multi_line_zero_old_lines() {
+        // TDD: @@ -0,0 +1,5 @@ must yield old_lines=0, new_lines=5
+        let diff_text = "\
+diff --git a/new.txt b/new.txt\n\
+new file mode 100644\n\
+index 0000000..abc1234\n\
+--- /dev/null\n\
++++ b/new.txt\n\
+@@ -0,0 +1,5 @@\n\
++line1\n\
++line2\n\
++line3\n\
++line4\n\
++line5\n";
+        let diffs = DiffParser::parse_unified_diff(diff_text).unwrap();
+        assert_eq!(diffs.len(), 1);
+        let hunk = &diffs[0].hunks[0];
+        assert_eq!(hunk.old_lines, 0, "zero old_lines must be preserved");
+        assert_eq!(hunk.new_lines, 5, "new_lines=5 must be preserved");
+        assert_eq!(hunk.changes.len(), 5, "all 5 added lines must be parsed");
     }
 
     #[test]
