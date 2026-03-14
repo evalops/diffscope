@@ -1,0 +1,65 @@
+# Manual workflow: create and push a release tag from main.
+# Prerequisites: Cargo.toml and charts/diffscope/Chart.yaml appVersion must already
+# be bumped and merged to main. Then run this workflow with the same version.
+# This pushes the tag and triggers the Release workflow (builds, release notes, assets).
+name: Prepare release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 0.5.28)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  tag-and-push:
+    name: Tag and push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Normalize version input
+        id: version
+        run: |
+          v="${{ inputs.version }}"
+          v="${v#v}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Cargo.toml version matches
+        run: python3 .github/scripts/check_version_sync.py --tag "v${{ steps.version.outputs.version }}"
+
+      - name: Verify Chart appVersion matches
+        run: |
+          chart_version=$(python3 -c "
+          import re
+          from pathlib import Path
+          c = Path('charts/diffscope/Chart.yaml').read_text()
+          m = re.search(r\"\"\"appVersion:\s*['\"]?(.*?)['\"]?\s*$\"\"\", c, re.MULTILINE)
+          print(m.group(1).strip()) if m else exit(1)
+          ")
+          expected="${{ steps.version.outputs.version }}"
+          if [ "$chart_version" != "$expected" ]; then
+            echo "Chart appVersion ($chart_version) does not match input ($expected). Bump charts/diffscope/Chart.yaml and merge to main first."
+            exit 1
+          fi
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          tag="${{ steps.version.outputs.tag }}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "Tag $tag already exists."
+            exit 1
+          fi
+          git tag -a "$tag" -m "Release $tag"
+          git push origin "$tag"

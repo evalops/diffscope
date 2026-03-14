@@ -1002,7 +1002,7 @@ The summary includes:
 
 Contributions are welcome! Please open an issue first to discuss what you would like to change. Enhancement backlog and triage: see [docs/ROADMAP.md](docs/ROADMAP.md) and `gh issue list --label "priority: high"`.
 
-**PR workflow:** Open a PR → ensure CI is green (version, lint, security, test, mutation, review) → merge when ready. Use a short test plan in the PR description. Small, focused PRs are preferred.
+**PR workflow:** Open a PR → ensure CI is green (version, lint, security, test, mutation, review) → merge when ready. Use a short test plan in the PR description. Small, focused PRs are preferred. Use the PR template (Summary, Test plan, **Closes #N**). **Release process:** [docs/release-process.md](docs/release-process.md) (version bump, RELEASE_NOTES, Prepare release workflow).
 
 ### Local Development Checks
 

@@ -29,6 +29,15 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
 
+      - name: Extract release notes from RELEASE_NOTES.md
+        id: release_notes
+        run: |
+          v="${GITHUB_REF#refs/tags/v}"
+          python3 .github/scripts/extract_release_notes.py "$v" > release_notes_section.txt || true
+          echo "body<<RELEASE_NOTES_EOF" >> "$GITHUB_OUTPUT"
+          cat release_notes_section.txt >> "$GITHUB_OUTPUT" || true
+          echo "RELEASE_NOTES_EOF" >> "$GITHUB_OUTPUT"
+
       - name: Verify release metadata matches tag
         env:
           TAG_NAME: ${{ steps.get_version.outputs.VERSION }}
@@ -55,7 +64,7 @@ jobs:
           body: |
             # DiffScope ${{ steps.get_version.outputs.VERSION }}
             
-            See [CHANGELOG.md](https://github.com/evalops/diffscope/blob/main/CHANGELOG.md) for details.
+            ${{ steps.release_notes.outputs.body }}
             
             ## 🚀 Installation
             
