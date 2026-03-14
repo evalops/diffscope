@@ -24,12 +24,105 @@ type ReviewCommentFilters = {
   blockerOnly?: boolean
 }
 
+type ReviewCommentSectionKey = 'stale' | 'unresolved' | 'informational' | 'fixed'
+
+type ReviewCommentSection = {
+  key: ReviewCommentSectionKey
+  title: string
+  description: string
+  badgeClassName: string
+  files: Array<{
+    path: string
+    comments: Comment[]
+  }>
+}
+
+const REVIEW_COMMENT_SECTION_ORDER: ReviewCommentSectionKey[] = ['stale', 'unresolved', 'informational', 'fixed']
+
+const REVIEW_COMMENT_SECTION_META: Record<ReviewCommentSectionKey, Omit<ReviewCommentSection, 'files'>> = {
+  stale: {
+    key: 'stale',
+    title: 'Stale',
+    description: 'Open findings from a review that predates newer commits.',
+    badgeClassName: 'bg-accent/10 text-accent border border-accent/20',
+  },
+  unresolved: {
+    key: 'unresolved',
+    title: 'Unresolved',
+    description: 'Open blocking findings that still need action.',
+    badgeClassName: 'bg-sev-warning/10 text-sev-warning border border-sev-warning/20',
+  },
+  informational: {
+    key: 'informational',
+    title: 'Informational',
+    description: 'Open non-blocking findings worth keeping in view.',
+    badgeClassName: 'bg-surface-2 text-text-muted border border-border',
+  },
+  fixed: {
+    key: 'fixed',
+    title: 'Fixed',
+    description: 'Resolved and dismissed findings retained for audit history.',
+    badgeClassName: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
+  },
+}
+
 function normalizeCommentFilePath(filePath: string): string {
   return filePath.replace(/^\.\//, '')
 }
 
 function isBlockingComment(comment: Pick<Comment, 'severity' | 'status'>): boolean {
   return (comment.status ?? 'Open') === 'Open' && BLOCKING_SEVERITIES.has(comment.severity)
+}
+
+function classifyReviewCommentSection(
+  comment: Comment,
+  mergeReadiness?: MergeReadiness,
+): ReviewCommentSectionKey {
+  const status = comment.status ?? 'Open'
+  if (status === 'Resolved' || status === 'Dismissed') {
+    return 'fixed'
+  }
+
+  if (mergeReadiness === 'NeedsReReview') {
+    return 'stale'
+  }
+
+  return BLOCKING_SEVERITIES.has(comment.severity) ? 'unresolved' : 'informational'
+}
+
+function buildReviewCommentSections(
+  comments: Comment[],
+  mergeReadiness?: MergeReadiness,
+): ReviewCommentSection[] {
+  const groupedSections = new Map<ReviewCommentSectionKey, Map<string, Comment[]>>()
+
+  for (const comment of comments) {
+    const sectionKey = classifyReviewCommentSection(comment, mergeReadiness)
+    if (!groupedSections.has(sectionKey)) {
+      groupedSections.set(sectionKey, new Map())
+    }
+
+    const sectionFiles = groupedSections.get(sectionKey)!
+    if (!sectionFiles.has(comment.file_path)) {
+      sectionFiles.set(comment.file_path, [])
+    }
+    sectionFiles.get(comment.file_path)!.push(comment)
+  }
+
+  return REVIEW_COMMENT_SECTION_ORDER.flatMap((sectionKey) => {
+    const sectionFiles = groupedSections.get(sectionKey)
+    if (!sectionFiles || sectionFiles.size === 0) {
+      return []
+    }
+
+    return [{
+      ...REVIEW_COMMENT_SECTION_META[sectionKey],
+      files: [...sectionFiles.entries()].map(([path, sectionComments]) => ({
+        path,
+        comments: sectionComments,
+      })),
+    }]
+  })
 }
 
 function filterReviewComments(
@@ -104,6 +197,11 @@ export function ReviewView() {
     lifecycleFilter,
     blockerOnly: showOnlyBlockers,
   }), [comments, severityFilter, activeSelectedFile, categoryFilter, lifecycleFilter, showOnlyBlockers])
+
+  const commentSections = useMemo(
+    () => buildReviewCommentSections(filteredComments, review?.summary?.merge_readiness),
+    [filteredComments, review?.summary?.merge_readiness],
+  )
 
   // All hooks MUST be above this line — no hooks after early returns
 
@@ -186,14 +284,6 @@ export function ReviewView() {
 
   const handleLifecycleChange = (commentId: string, status: 'open' | 'resolved' | 'dismissed') => {
     lifecycle.mutate({ commentId, status })
-  }
-
-  // Group comments by file for list view (no useMemo — filteredComments changes every render)
-  const groupedByFile = new Map<string, typeof filteredComments>()
-  for (const c of filteredComments) {
-    const key = c.file_path
-    if (!groupedByFile.has(key)) groupedByFile.set(key, [])
-    groupedByFile.get(key)!.push(c)
   }
 
   const visibleDiffFiles = activeSelectedFile
@@ -491,26 +581,44 @@ export function ReviewView() {
           ) : (
             /* List view / fallback when no diff content */
             <div className="space-y-4 max-w-3xl">
-              {[...groupedByFile.entries()].map(([file, fileComments]) => (
-                <div key={file}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <FileCode size={13} className="text-text-muted" />
-                    <span className="font-code text-[12px] text-text-muted">{file.split('/').slice(0, -1).join('/')}/</span>
-                    <span className="font-code text-[12px] text-text-primary font-medium">{file.split('/').pop()}</span>
+              {commentSections.map((section) => (
+                <section key={section.key} className="border border-border rounded-lg overflow-hidden bg-surface-1/60">
+                  <div className="px-4 py-3 border-b border-border bg-surface-2/70 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-[12px] font-semibold text-text-primary">{section.title}</h2>
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-code ${section.badgeClassName}`}>
+                          {section.files.reduce((total, file) => total + file.comments.length, 0)}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-text-muted">{section.description}</p>
+                    </div>
                   </div>
-                  <div className="space-y-2 ml-5">
-                    {fileComments.map(comment => (
-                      <div key={comment.id}>
-                        <span className="text-[10px] text-text-muted font-code">L{comment.line_number}</span>
-                        <CommentCard
-                          comment={comment}
-                          onFeedback={action => handleFeedback(comment.id, action)}
-                          onLifecycleChange={status => handleLifecycleChange(comment.id, status)}
-                        />
+
+                  <div className="p-4 space-y-4">
+                    {section.files.map(({ path, comments: fileComments }) => (
+                      <div key={`${section.key}-${path}`}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <FileCode size={13} className="text-text-muted" />
+                          <span className="font-code text-[12px] text-text-muted">{path.split('/').slice(0, -1).join('/')}/</span>
+                          <span className="font-code text-[12px] text-text-primary font-medium">{path.split('/').pop()}</span>
+                        </div>
+                        <div className="space-y-2 ml-5">
+                          {fileComments.map(comment => (
+                            <div key={comment.id}>
+                              <span className="text-[10px] text-text-muted font-code">L{comment.line_number}</span>
+                              <CommentCard
+                                comment={comment}
+                                onFeedback={action => handleFeedback(comment.id, action)}
+                                onLifecycleChange={status => handleLifecycleChange(comment.id, status)}
+                              />
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     ))}
                   </div>
-                </div>
+                </section>
               ))}
 
               {filteredComments.length === 0 && (

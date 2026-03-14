@@ -88,7 +88,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 ## 6. Review UX and Workflow Integration
 
 51. [x] Add visible accepted/rejected/dismissed badges to comments throughout the UI, not just icon state.
-52. [ ] Add comment grouping by unresolved, fixed, stale, and informational sections in `ReviewView`.
+52. [x] Add comment grouping by unresolved, fixed, stale, and informational sections in `ReviewView`.
 53. [x] Add a "show only blockers" mode for large reviews.
 54. [ ] Add keyboard actions for thumbs, resolve, and jump-to-next-finding workflows.
 55. [x] Add file-level readiness summaries in the diff sidebar.
@@ -175,4 +175,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Add learned-rules, attention-gap, and rejected-pattern analytics API endpoints for automation consumers.
 - [x] Add a PR re-review API that reuses stored review metadata and posting policy.
 - [x] Add pattern repository resolution coverage for repo-local directories, Git sources, and broken-source skips.
+- [x] Group ReviewView list-mode findings into unresolved, fixed, stale, and informational sections.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.

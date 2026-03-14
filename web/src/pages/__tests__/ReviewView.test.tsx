@@ -176,6 +176,42 @@ describe('ReviewView blocker mode', () => {
     expect(screen.getByText('No open blockers remain in this review.')).toBeInTheDocument()
   })
 
+  it('groups list view comments into unresolved, informational, and fixed sections', async () => {
+    const user = userEvent.setup()
+    useReviewMock.mockReturnValue({ data: makeReview(), isLoading: false })
+
+    render(<ReviewView />)
+
+    await user.click(screen.getByRole('button', { name: 'List' }))
+
+    expect(screen.getByRole('heading', { name: 'Unresolved' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Informational' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Fixed' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Stale' })).not.toBeInTheDocument()
+  })
+
+  it('groups open comments into a stale section when the review needs re-review', async () => {
+    const user = userEvent.setup()
+    useReviewMock.mockReturnValue({
+      data: makeReview({
+        summary: makeSummary({
+          merge_readiness: 'NeedsReReview',
+          readiness_reasons: ['New commits landed after the latest completed review.'],
+        }),
+      }),
+      isLoading: false,
+    })
+
+    render(<ReviewView />)
+
+    await user.click(screen.getByRole('button', { name: 'List' }))
+
+    expect(screen.getByRole('heading', { name: 'Stale' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Unresolved' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Informational' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Fixed' })).toBeInTheDocument()
+  })
+
   it('shows a train-the-reviewer callout when thumbs coverage is low', () => {
     useReviewMock.mockReturnValue({ data: makeReview(), isLoading: false })
 
