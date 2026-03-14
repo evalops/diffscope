@@ -8,9 +8,51 @@ import { ScoreGauge } from '../components/ScoreGauge'
 import { SeverityBadge } from '../components/SeverityBadge'
 import { CommentCard } from '../components/CommentCard'
 import { parseDiff } from '../lib/parseDiff'
-import type { CommentLifecycleStatus, MergeReadiness, Severity, ReviewEvent } from '../api/types'
+import type { Comment, CommentLifecycleStatus, MergeReadiness, Severity, ReviewEvent } from '../api/types'
 
 type ViewMode = 'diff' | 'list'
+
+const BLOCKING_SEVERITIES = new Set<Severity>(['Error', 'Warning'])
+
+type ReviewCommentFilters = {
+  severityFilter: Set<Severity>
+  selectedFile?: string | null
+  categoryFilter: string | null
+  lifecycleFilter: CommentLifecycleStatus | 'All'
+  blockerOnly?: boolean
+}
+
+function normalizeCommentFilePath(filePath: string): string {
+  return filePath.replace(/^\.\//, '')
+}
+
+function isBlockingComment(comment: Pick<Comment, 'severity' | 'status'>): boolean {
+  return (comment.status ?? 'Open') === 'Open' && BLOCKING_SEVERITIES.has(comment.severity)
+}
+
+function filterReviewComments(
+  comments: Comment[],
+  {
+    severityFilter,
+    selectedFile = null,
+    categoryFilter,
+    lifecycleFilter,
+    blockerOnly = false,
+  }: ReviewCommentFilters,
+): Comment[] {
+  return comments.filter((comment) => {
+    if (selectedFile && normalizeCommentFilePath(comment.file_path) !== selectedFile) return false
+    if (categoryFilter && comment.category !== categoryFilter) return false
+
+    if (blockerOnly) {
+      return isBlockingComment(comment)
+    }
+
+    if (!severityFilter.has(comment.severity)) return false
+    if (lifecycleFilter !== 'All' && (comment.status ?? 'Open') !== lifecycleFilter) return false
+    return true
+  })
+}
 
 export function ReviewView() {
   const { id } = useParams<{ id: string }>()
@@ -22,13 +64,44 @@ export function ReviewView() {
   const [severityFilter, setSeverityFilter] = useState<Set<Severity>>(new Set(['Error', 'Warning', 'Info', 'Suggestion']))
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
   const [lifecycleFilter, setLifecycleFilter] = useState<CommentLifecycleStatus | 'All'>('All')
+  const [showOnlyBlockers, setShowOnlyBlockers] = useState(false)
   const [showEvent, setShowEvent] = useState(false)
   const diffContent = review?.diff_content
+  const comments = useMemo(() => review?.comments ?? [], [review?.comments])
 
   const diffFiles = useMemo(() => {
     if (!diffContent) return []
     return parseDiff(diffContent)
   }, [diffContent])
+
+  const blockerCount = useMemo(() => (
+    review?.summary?.open_blocking_comments ?? comments.filter(isBlockingComment).length
+  ), [comments, review?.summary?.open_blocking_comments])
+
+  const blockerFilteredComments = useMemo(() => filterReviewComments(comments, {
+    severityFilter,
+    categoryFilter,
+    lifecycleFilter,
+    blockerOnly: showOnlyBlockers,
+  }), [comments, severityFilter, categoryFilter, lifecycleFilter, showOnlyBlockers])
+
+  const filteredDiffFiles = useMemo(() => {
+    if (!showOnlyBlockers) return diffFiles
+    const blockerFiles = new Set(blockerFilteredComments.map((comment) => normalizeCommentFilePath(comment.file_path)))
+    return diffFiles.filter((file) => blockerFiles.has(file.path))
+  }, [diffFiles, blockerFilteredComments, showOnlyBlockers])
+
+  const activeSelectedFile = selectedFile && filteredDiffFiles.some((file) => file.path === selectedFile)
+    ? selectedFile
+    : null
+
+  const filteredComments = useMemo(() => filterReviewComments(comments, {
+    severityFilter,
+    selectedFile: activeSelectedFile,
+    categoryFilter,
+    lifecycleFilter,
+    blockerOnly: showOnlyBlockers,
+  }), [comments, severityFilter, activeSelectedFile, categoryFilter, lifecycleFilter, showOnlyBlockers])
 
   // All hooks MUST be above this line — no hooks after early returns
 
@@ -103,15 +176,7 @@ export function ReviewView() {
     setSeverityFilter(next)
   }
 
-  const filteredComments = review.comments.filter((c) => {
-    if (!severityFilter.has(c.severity)) return false
-    if (selectedFile && c.file_path.replace(/^\.\//, '') !== selectedFile) return false
-    if (categoryFilter && c.category !== categoryFilter) return false
-    if (lifecycleFilter !== 'All' && (c.status ?? 'Open') !== lifecycleFilter) return false
-    return true
-  })
-
-  const categories = [...new Set(review.comments.map(c => c.category))]
+  const categories = [...new Set(comments.map(c => c.category))]
 
   const handleFeedback = (commentId: string, action: 'accept' | 'reject') => {
     feedback.mutate({ commentId, action })
@@ -129,9 +194,9 @@ export function ReviewView() {
     groupedByFile.get(key)!.push(c)
   }
 
-  const visibleDiffFiles = selectedFile
-    ? diffFiles.filter(f => f.path === selectedFile)
-    : diffFiles
+  const visibleDiffFiles = activeSelectedFile
+    ? filteredDiffFiles.filter(f => f.path === activeSelectedFile)
+    : filteredDiffFiles
 
   const readinessStyles: Record<MergeReadiness, string> = {
     Ready: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
@@ -151,11 +216,11 @@ export function ReviewView() {
   return (
     <div className="flex h-full">
       {/* File sidebar */}
-      {diffFiles.length > 0 && (
+      {filteredDiffFiles.length > 0 && (
         <FileSidebar
-          files={diffFiles}
-          comments={review.comments}
-          selectedFile={selectedFile}
+          files={filteredDiffFiles}
+          comments={showOnlyBlockers ? blockerFilteredComments : review.comments}
+          selectedFile={activeSelectedFile}
           onSelectFile={setSelectedFile}
         />
       )}
@@ -316,8 +381,11 @@ export function ReviewView() {
             <button
               key={sev}
               onClick={() => toggleSeverity(sev)}
+              disabled={showOnlyBlockers}
               className={`text-[11px] px-2 py-0.5 rounded transition-colors ${
-                severityFilter.has(sev)
+                showOnlyBlockers
+                  ? 'text-text-muted/40 cursor-not-allowed'
+                  : severityFilter.has(sev)
                   ? 'bg-surface-3 text-text-primary'
                   : 'text-text-muted/40 hover:text-text-muted'
               }`}
@@ -347,7 +415,8 @@ export function ReviewView() {
             <select
               value={lifecycleFilter}
               onChange={e => setLifecycleFilter(e.target.value as CommentLifecycleStatus | 'All')}
-              className="text-[11px] bg-surface-2 border border-border rounded px-2 py-1 text-text-secondary appearance-none pr-6 cursor-pointer"
+              disabled={showOnlyBlockers}
+              className={`text-[11px] bg-surface-2 border border-border rounded px-2 py-1 text-text-secondary appearance-none pr-6 ${showOnlyBlockers ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
             >
               <option value="All">All statuses</option>
               <option value="Open">Open</option>
@@ -357,6 +426,23 @@ export function ReviewView() {
             <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
           </div>
 
+          <button
+            onClick={() => setShowOnlyBlockers(value => !value)}
+            className={`text-[11px] px-2 py-1 rounded border transition-colors ${
+              showOnlyBlockers
+                ? 'bg-sev-warning/10 text-sev-warning border-sev-warning/20'
+                : 'bg-surface-2 text-text-muted border-border hover:text-text-primary'
+            }`}
+            title="Show only open Error and Warning findings"
+          >
+            Blockers only
+            <span className="ml-1 font-code">{blockerCount}</span>
+          </button>
+
+          {showOnlyBlockers && (
+            <span className="text-[10px] text-sev-warning font-code">Open Error + Warning</span>
+          )}
+
           <span className="ml-auto text-[11px] text-text-muted">
             {filteredComments.length}/{review.comments.length}
           </span>
@@ -364,7 +450,7 @@ export function ReviewView() {
 
         {/* Main content */}
         <div className="flex-1 overflow-auto p-4">
-          {viewMode === 'diff' && diffFiles.length > 0 ? (
+          {viewMode === 'diff' && visibleDiffFiles.length > 0 ? (
             <DiffViewer
               files={visibleDiffFiles}
               comments={filteredComments}
@@ -398,9 +484,13 @@ export function ReviewView() {
 
               {filteredComments.length === 0 && (
                 <div className="text-center py-16 text-text-muted">
-                  {review.comments.length === 0
-                    ? 'No findings. Code looks good!'
-                    : 'No findings match the current filters.'}
+                  {showOnlyBlockers
+                    ? blockerCount === 0
+                      ? 'No open blockers remain in this review.'
+                      : 'No blockers match the current filters.'
+                    : review.comments.length === 0
+                      ? 'No findings. Code looks good!'
+                      : 'No findings match the current filters.'}
                 </div>
               )}
             </div>

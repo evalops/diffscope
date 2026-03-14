@@ -89,7 +89,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 
 51. [ ] Add visible accepted/rejected/dismissed badges to comments throughout the UI, not just icon state.
 52. [ ] Add comment grouping by unresolved, fixed, stale, and informational sections in `ReviewView`.
-53. [ ] Add a "show only blockers" mode for large reviews.
+53. [x] Add a "show only blockers" mode for large reviews.
 54. [ ] Add keyboard actions for thumbs, resolve, and jump-to-next-finding workflows.
 55. [ ] Add file-level readiness summaries in the diff sidebar.
 56. [x] Add lifecycle-aware PR summaries that explain what still blocks merge.
@@ -162,4 +162,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Add PR readiness query surfaces in the CLI and HTTP API for non-UI workflows.
 - [x] Surface lifecycle-aware PR readiness summaries in the GitHub PR detail workflow.
 - [x] Surface unresolved blocker counts in repo and PR GitHub discovery views.
+- [x] Add a blocker-only review mode that narrows large reviews to open Error and Warning findings.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.
