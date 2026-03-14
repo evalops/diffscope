@@ -80,7 +80,16 @@ mod tests {
 
         assert!(store.accept.contains(&comment.id));
         assert_eq!(store.by_category["Security"].accepted, 1);
+        assert_eq!(store.by_file_pattern["src/**"].accepted, 1);
+        assert_eq!(
+            store.by_category_file_pattern["Security|src/**"].accepted,
+            1
+        );
         assert_eq!(store.by_rule["sec.sql.injection"].accepted, 1);
+        assert_eq!(
+            store.by_rule_file_pattern["sec.sql.injection|src/**"].accepted,
+            1
+        );
         assert_eq!(
             store.by_rule_file_pattern["sec.sql.injection|*.rs"].accepted,
             1

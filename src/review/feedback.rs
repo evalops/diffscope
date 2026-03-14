@@ -43,9 +43,18 @@ mod tests {
     }
 
     #[test]
-    fn derive_file_patterns_prefers_specific_suffixes() {
+    fn derive_file_patterns_adds_path_scopes_before_suffixes() {
         let patterns = derive_file_patterns(Path::new("web/src/Settings.test.ts"));
-        assert_eq!(patterns, vec!["*.test.ts", "*.ts"]);
+        assert_eq!(
+            patterns,
+            vec!["web/src/**", "web/**", "src/**", "*.test.ts", "*.ts"]
+        );
+    }
+
+    #[test]
+    fn derive_file_patterns_supports_extensionless_path_scopes() {
+        let patterns = derive_file_patterns(Path::new("scripts/release"));
+        assert_eq!(patterns, vec!["scripts/**"]);
     }
 
     #[test]

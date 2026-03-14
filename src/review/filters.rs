@@ -463,6 +463,30 @@ mod tests {
     }
 
     #[test]
+    fn feedback_confidence_prefers_path_scoped_buckets() {
+        let mut feedback = FeedbackStore::default();
+        for _ in 0..10 {
+            feedback.record_feedback("Bug", None, true);
+            feedback.record_feedback_patterns("Bug", &["tests/**"], false);
+        }
+
+        let mut comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Error,
+            0.8,
+        );
+        comment.file_path = PathBuf::from("tests/unit/parser.rs");
+
+        let result = apply_feedback_confidence_adjustment(vec![comment], &feedback, 5);
+        assert!(
+            (result[0].confidence - 0.6).abs() < 0.01,
+            "Expected path-scoped rejection history to win, got {}",
+            result[0].confidence
+        );
+    }
+
+    #[test]
     fn feedback_confidence_clamped_to_one() {
         let mut feedback = FeedbackStore::default();
         for _ in 0..10 {
