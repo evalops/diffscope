@@ -9,15 +9,16 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::pr_readiness::{
-    apply_dynamic_review_state, get_pr_readiness_snapshot, latest_review_head_by_source,
-    load_review_inventory, PrReadinessSnapshot,
+    apply_dynamic_review_state, build_pr_readiness_snapshot, build_repo_blocker_rollups,
+    get_pr_readiness_snapshot, latest_review_head_by_source, load_review_inventory,
+    PrReadinessSnapshot,
 };
 use super::state::{
     build_progress_callback, count_diff_files, count_reviewed_files, current_timestamp,
     emit_wide_event, AppState, FileMetricEvent, HotspotDetail, ReviewEventBuilder, ReviewListItem,
     ReviewSession, ReviewStatus, MAX_DIFF_SIZE,
 };
-use crate::core::comment::CommentSynthesizer;
+use crate::core::comment::{CommentSynthesizer, MergeReadiness};
 use crate::core::convention_learner::ConventionStore;
 use tracing::{info, warn};
 
@@ -1580,6 +1581,10 @@ pub struct GhRepo {
     pub language: Option<String>,
     pub updated_at: String,
     pub open_prs: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_blockers: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocking_prs: Option<usize>,
     pub default_branch: String,
     pub stargazers_count: u32,
     pub private: bool,
@@ -1649,6 +1654,9 @@ pub async fn get_gh_repos(
             .cloned()
             .unwrap_or_default();
 
+        let inventory = load_review_inventory(&state).await;
+        let blocker_rollups = build_repo_blocker_rollups(&inventory);
+
         let repos: Vec<GhRepo> = items
             .into_iter()
             .map(|item| GhRepo {
@@ -1671,6 +1679,16 @@ pub async fn get_gh_repos(
                     .unwrap_or("")
                     .to_string(),
                 open_prs: 0,
+                open_blockers: item
+                    .get("full_name")
+                    .and_then(|v| v.as_str())
+                    .and_then(|repo| blocker_rollups.get(repo))
+                    .map(|rollup| rollup.open_blockers),
+                blocking_prs: item
+                    .get("full_name")
+                    .and_then(|v| v.as_str())
+                    .and_then(|repo| blocker_rollups.get(repo))
+                    .map(|rollup| rollup.blocking_prs),
                 default_branch: item
                     .get("default_branch")
                     .and_then(|v| v.as_str())
@@ -1714,6 +1732,9 @@ pub async fn get_gh_repos(
             )
         })?;
 
+        let inventory = load_review_inventory(&state).await;
+        let blocker_rollups = build_repo_blocker_rollups(&inventory);
+
         let repos: Vec<GhRepo> = items
             .into_iter()
             .map(|item| GhRepo {
@@ -1736,6 +1757,16 @@ pub async fn get_gh_repos(
                     .unwrap_or("")
                     .to_string(),
                 open_prs: 0,
+                open_blockers: item
+                    .get("full_name")
+                    .and_then(|v| v.as_str())
+                    .and_then(|repo| blocker_rollups.get(repo))
+                    .map(|rollup| rollup.open_blockers),
+                blocking_prs: item
+                    .get("full_name")
+                    .and_then(|v| v.as_str())
+                    .and_then(|repo| blocker_rollups.get(repo))
+                    .map(|rollup| rollup.blocking_prs),
                 default_branch: item
                     .get("default_branch")
                     .and_then(|v| v.as_str())
@@ -1821,6 +1852,10 @@ pub struct GhPullRequest {
     pub base_branch: String,
     pub labels: Vec<String>,
     pub draft: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_blockers: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_readiness: Option<MergeReadiness>,
 }
 
 /// Regex for validating repo names: owner/repo
@@ -1896,6 +1931,8 @@ pub async fn get_gh_prs(
         )
     })?;
 
+    let inventory = load_review_inventory(&state).await;
+
     let prs: Vec<GhPullRequest> = items
         .into_iter()
         .filter(|item| {
@@ -1930,8 +1967,20 @@ pub async fn get_gh_prs(
                     .to_string()
             };
 
+            let pr_number = item.get("number").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let current_head_sha = item
+                .get("head")
+                .and_then(|v| v.get("sha"))
+                .and_then(|v| v.as_str());
+            let readiness_snapshot =
+                build_pr_readiness_snapshot(&inventory, &params.repo, pr_number, current_head_sha);
+            let latest_summary = readiness_snapshot
+                .latest_review
+                .as_ref()
+                .and_then(|review| review.summary.as_ref());
+
             GhPullRequest {
-                number: item.get("number").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                number: pr_number,
                 title: item
                     .get("title")
                     .and_then(|v| v.as_str())
@@ -1971,6 +2020,8 @@ pub async fn get_gh_prs(
                     .to_string(),
                 labels,
                 draft: item.get("draft").and_then(|v| v.as_bool()).unwrap_or(false),
+                open_blockers: latest_summary.map(|summary| summary.open_blockers),
+                merge_readiness: latest_summary.map(|summary| summary.merge_readiness),
             }
         })
         .collect();
@@ -3092,6 +3143,8 @@ mod tests {
             language: Some("Rust".to_string()),
             updated_at: "2024-01-01T00:00:00Z".to_string(),
             open_prs: 5,
+            open_blockers: Some(3),
+            blocking_prs: Some(2),
             default_branch: "main".to_string(),
             stargazers_count: 42,
             private: false,
@@ -3100,6 +3153,8 @@ mod tests {
         assert_eq!(json["full_name"], "owner/repo");
         assert_eq!(json["language"], "Rust");
         assert_eq!(json["open_prs"], 5);
+        assert_eq!(json["open_blockers"], 3);
+        assert_eq!(json["blocking_prs"], 2);
         assert_eq!(json["stargazers_count"], 42);
         assert_eq!(json["private"], false);
     }
@@ -3120,12 +3175,16 @@ mod tests {
             base_branch: "main".to_string(),
             labels: vec!["bugfix".to_string()],
             draft: false,
+            open_blockers: Some(2),
+            merge_readiness: Some(MergeReadiness::NeedsAttention),
         };
         let json = serde_json::to_value(&pr).unwrap();
         assert_eq!(json["number"], 42);
         assert_eq!(json["title"], "Fix bug");
         assert_eq!(json["author"], "dev");
         assert_eq!(json["draft"], false);
+        assert_eq!(json["open_blockers"], 2);
+        assert_eq!(json["merge_readiness"], "NeedsAttention");
         assert_eq!(json["labels"].as_array().unwrap().len(), 1);
     }
 

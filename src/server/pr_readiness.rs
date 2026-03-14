@@ -41,6 +41,12 @@ pub struct PrReadinessReview {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RepoBlockerRollup {
+    pub open_blockers: usize,
+    pub blocking_prs: usize,
+}
+
 impl PrReadinessReview {
     fn from_session(session: &ReviewSession) -> Self {
         Self {
@@ -59,6 +65,12 @@ impl PrReadinessReview {
 
 pub(crate) fn pr_diff_source(repo: &str, pr_number: u32) -> String {
     format!("pr:{repo}#{pr_number}")
+}
+
+pub(crate) fn parse_pr_diff_source(diff_source: &str) -> Option<(String, u32)> {
+    let rest = diff_source.strip_prefix("pr:")?;
+    let (repo, pr_number) = rest.rsplit_once('#')?;
+    Some((repo.to_string(), pr_number.parse().ok()?))
 }
 
 pub(crate) async fn load_review_inventory(state: &Arc<AppState>) -> Vec<ReviewSession> {
@@ -130,6 +142,47 @@ pub(crate) fn apply_dynamic_review_state(
     }
 
     session
+}
+
+fn latest_summarized_reviews_by_source(
+    reviews: &[ReviewSession],
+) -> HashMap<String, ReviewSession> {
+    let mut latest: HashMap<String, ReviewSession> = HashMap::new();
+    for review in reviews {
+        if review.summary.is_none() || !review.diff_source.starts_with("pr:") {
+            continue;
+        }
+        match latest.get(&review.diff_source) {
+            Some(current) if current.started_at >= review.started_at => {}
+            _ => {
+                latest.insert(review.diff_source.clone(), review.clone());
+            }
+        }
+    }
+    latest
+}
+
+pub(crate) fn build_repo_blocker_rollups(
+    reviews: &[ReviewSession],
+) -> HashMap<String, RepoBlockerRollup> {
+    let mut rollups = HashMap::new();
+    for review in latest_summarized_reviews_by_source(reviews).into_values() {
+        let Some(summary) = review.summary.as_ref() else {
+            continue;
+        };
+        let Some((repo, _)) = parse_pr_diff_source(&review.diff_source) else {
+            continue;
+        };
+
+        let rollup = rollups
+            .entry(repo)
+            .or_insert_with(RepoBlockerRollup::default);
+        rollup.open_blockers += summary.open_blockers;
+        if summary.open_blockers > 0 {
+            rollup.blocking_prs += 1;
+        }
+    }
+    rollups
 }
 
 pub(crate) fn build_pr_readiness_snapshot(
@@ -306,6 +359,89 @@ mod tests {
         assert_eq!(
             latest_review.summary.expect("summary").merge_readiness,
             crate::core::comment::MergeReadiness::NeedsReReview
+        );
+    }
+
+    #[test]
+    fn repo_blocker_rollups_use_latest_review_per_pr() {
+        let older_pr = make_pr_review_session(
+            "r1",
+            10,
+            "sha-a",
+            vec![make_comment("c1", Severity::Warning, CommentStatus::Open)],
+        );
+        let newer_same_pr = ReviewSession {
+            id: "r2".to_string(),
+            status: ReviewStatus::Complete,
+            diff_source: "pr:owner/repo#42".to_string(),
+            github_head_sha: Some("sha-b".to_string()),
+            started_at: 20,
+            completed_at: Some(21),
+            summary: Some(CommentSynthesizer::generate_summary(&[])),
+            files_reviewed: 1,
+            comments: Vec::new(),
+            error: None,
+            pr_summary_text: None,
+            diff_content: None,
+            event: None,
+            progress: None,
+        };
+        let other_pr = ReviewSession {
+            id: "r3".to_string(),
+            status: ReviewStatus::Complete,
+            diff_source: "pr:owner/repo#43".to_string(),
+            github_head_sha: Some("sha-c".to_string()),
+            started_at: 15,
+            completed_at: Some(16),
+            summary: Some(CommentSynthesizer::generate_summary(&vec![make_comment(
+                "c2",
+                Severity::Error,
+                CommentStatus::Open,
+            )])),
+            files_reviewed: 1,
+            comments: vec![make_comment("c2", Severity::Error, CommentStatus::Open)],
+            error: None,
+            pr_summary_text: None,
+            diff_content: None,
+            event: None,
+            progress: None,
+        };
+        let other_repo = ReviewSession {
+            id: "r4".to_string(),
+            status: ReviewStatus::Complete,
+            diff_source: "pr:other/repo#7".to_string(),
+            github_head_sha: Some("sha-d".to_string()),
+            started_at: 12,
+            completed_at: Some(13),
+            summary: Some(CommentSynthesizer::generate_summary(&vec![make_comment(
+                "c3",
+                Severity::Warning,
+                CommentStatus::Open,
+            )])),
+            files_reviewed: 1,
+            comments: vec![make_comment("c3", Severity::Warning, CommentStatus::Open)],
+            error: None,
+            pr_summary_text: None,
+            diff_content: None,
+            event: None,
+            progress: None,
+        };
+
+        let rollups = build_repo_blocker_rollups(&[older_pr, newer_same_pr, other_pr, other_repo]);
+
+        assert_eq!(
+            rollups.get("owner/repo"),
+            Some(&RepoBlockerRollup {
+                open_blockers: 1,
+                blocking_prs: 1,
+            })
+        );
+        assert_eq!(
+            rollups.get("other/repo"),
+            Some(&RepoBlockerRollup {
+                open_blockers: 1,
+                blocking_prs: 1,
+            })
         );
     }
 }

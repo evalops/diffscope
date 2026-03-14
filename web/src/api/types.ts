@@ -356,6 +356,8 @@ export interface GhRepo {
   language: string | null
   updated_at: string
   open_prs: number
+  open_blockers?: number
+  blocking_prs?: number
   default_branch: string
   stargazers_count: number
   private: boolean
@@ -375,6 +377,8 @@ export interface GhPullRequest {
   base_branch: string
   labels: string[]
   draft: boolean
+  open_blockers?: number
+  merge_readiness?: MergeReadiness
 }
 
 export interface PrReadinessReview {

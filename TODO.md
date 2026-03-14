@@ -103,7 +103,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 61. [x] Add feedback coverage metrics: percent of findings with thumbs or explicit disposition.
 62. [x] Add acceptance/rejection trend lines over time for recent reviews.
 63. [x] Add top accepted categories/rules and top rejected categories/rules to Analytics.
-64. [ ] Add unresolved blocker counts per repository and per PR.
+64. [x] Add unresolved blocker counts per repository and per PR.
 65. [ ] Add review completeness and mean-time-to-resolution charts.
 66. [ ] Add feedback-learning effectiveness metrics: did reranked findings get higher acceptance after rollout?
 67. [ ] Add pattern-repository utilization analytics showing when extra context actually affected findings.
@@ -161,4 +161,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Split open findings into blocking vs informational buckets and surface critical blocker cards in review detail.
 - [x] Add PR readiness query surfaces in the CLI and HTTP API for non-UI workflows.
 - [x] Surface lifecycle-aware PR readiness summaries in the GitHub PR detail workflow.
+- [x] Surface unresolved blocker counts in repo and PR GitHub discovery views.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.
