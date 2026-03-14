@@ -94,7 +94,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 55. [x] Add file-level readiness summaries in the diff sidebar.
 56. [x] Add lifecycle-aware PR summaries that explain what still blocks merge.
 57. [x] Add a "train the reviewer" callout when thumbs coverage on a review is low.
-58. [ ] Add review-change comparisons so users can diff one review run against the next on the same PR.
+58. [x] Add review-change comparisons so users can diff one review run against the next on the same PR.
 59. [x] Add better surfacing for incremental PR reviews so users know when only the delta was reviewed.
 60. [ ] Add discussion workflows that can convert repeated human comments into candidate rules or context snippets.
 

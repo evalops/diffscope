@@ -3,14 +3,16 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ReviewView } from '../ReviewView'
-import type { Comment, ReviewSession, ReviewSummary } from '../../api/types'
+import type { Comment, PrReadinessReview, PrReadinessSnapshot, ReviewSession, ReviewSummary } from '../../api/types'
 
+let currentRouteReviewId = 'review-1'
 const useReviewMock = vi.fn()
+const useGhPrReadinessMock = vi.fn()
 const feedbackMutate = vi.fn()
 const lifecycleMutate = vi.fn()
 
 vi.mock('react-router-dom', () => ({
-  useParams: () => ({ id: 'review-1' }),
+  useParams: () => ({ id: currentRouteReviewId }),
   useSearchParams: () => [
     { get: () => null },
     () => {},
@@ -19,6 +21,7 @@ vi.mock('react-router-dom', () => ({
 
 vi.mock('../../api/hooks', () => ({
   useReview: (id: string | undefined) => useReviewMock(id),
+  useGhPrReadiness: (repo: string | undefined, prNumber: number | undefined) => useGhPrReadinessMock(repo, prNumber),
   useSubmitFeedback: () => ({ mutate: feedbackMutate }),
   useUpdateCommentLifecycle: () => ({ mutate: lifecycleMutate }),
 }))
@@ -116,11 +119,37 @@ function makeReview(overrides: Partial<ReviewSession> = {}): ReviewSession {
   }
 }
 
+function makePrReadinessReview(review: ReviewSession, overrides: Partial<PrReadinessReview> = {}): PrReadinessReview {
+  return {
+    id: review.id,
+    status: review.status,
+    started_at: review.started_at,
+    completed_at: review.completed_at,
+    summary: review.summary,
+    files_reviewed: review.files_reviewed,
+    comment_count: review.comments.length,
+    error: review.error,
+    ...overrides,
+  }
+}
+
+function makePrReadinessSnapshot(overrides: Partial<PrReadinessSnapshot> = {}): PrReadinessSnapshot {
+  return {
+    repo: 'owner/repo',
+    pr_number: 42,
+    diff_source: 'pr:owner/repo#42',
+    ...overrides,
+  }
+}
+
 describe('ReviewView blocker mode', () => {
   beforeEach(() => {
+    currentRouteReviewId = 'review-1'
     useReviewMock.mockReset()
+    useGhPrReadinessMock.mockReset()
     feedbackMutate.mockReset()
     lifecycleMutate.mockReset()
+    useGhPrReadinessMock.mockReturnValue({ data: undefined, isLoading: false })
   })
 
   it.skip('shows only open blockers and hides non-blocking files when enabled', async () => {
@@ -298,5 +327,225 @@ describe('ReviewView blocker mode', () => {
     render(<ReviewView />)
 
     expect(screen.queryByText('Train the reviewer')).not.toBeInTheDocument()
+  })
+
+  it('shows review-change comparisons for the previous PR run', () => {
+    currentRouteReviewId = 'review-2'
+
+    const previousReview = makeReview({
+      id: 'review-1',
+      diff_source: 'pr:owner/repo#42',
+      started_at: 10,
+      completed_at: 11,
+      comments: [
+        makeComment({ id: 'shared-1', content: 'Persistent blocker', severity: 'Error' }),
+        makeComment({ id: 'old-1', file_path: 'src/old.ts', line_number: 12, content: 'Old blocker', severity: 'Warning' }),
+      ],
+      summary: makeSummary({
+        total_comments: 2,
+        by_severity: { Error: 1, Warning: 1 },
+        by_category: { Bug: 2 },
+        critical_issues: 1,
+        overall_score: 6.5,
+        open_comments: 2,
+        open_by_severity: { Error: 1, Warning: 1 },
+        open_blocking_comments: 2,
+        open_informational_comments: 0,
+        resolved_comments: 0,
+        dismissed_comments: 0,
+        open_blockers: 2,
+        completeness: {
+          total_findings: 2,
+          acknowledged_findings: 0,
+          fixed_findings: 0,
+          stale_findings: 0,
+        },
+        readiness_reasons: ['2 blocking findings remain open.'],
+      }),
+    })
+
+    const currentReview = makeReview({
+      id: 'review-2',
+      diff_source: 'pr:owner/repo#42',
+      started_at: 20,
+      completed_at: 21,
+      comments: [
+        makeComment({ id: 'shared-1', content: 'Persistent blocker', severity: 'Error' }),
+        makeComment({ id: 'new-1', file_path: 'src/new.ts', line_number: 18, content: 'New regression', severity: 'Warning' }),
+      ],
+      summary: makeSummary({
+        total_comments: 2,
+        by_severity: { Error: 1, Warning: 1 },
+        by_category: { Bug: 2 },
+        critical_issues: 1,
+        overall_score: 7.5,
+        open_comments: 2,
+        open_by_severity: { Error: 1, Warning: 1 },
+        open_blocking_comments: 2,
+        open_informational_comments: 0,
+        resolved_comments: 0,
+        dismissed_comments: 0,
+        open_blockers: 2,
+        completeness: {
+          total_findings: 2,
+          acknowledged_findings: 1,
+          fixed_findings: 0,
+          stale_findings: 0,
+        },
+        readiness_reasons: ['2 blocking findings remain open.'],
+      }),
+    })
+
+    useReviewMock.mockImplementation((reviewId: string | undefined) => ({
+      data: reviewId === 'review-2'
+        ? currentReview
+        : reviewId === 'review-1'
+          ? previousReview
+          : undefined,
+      isLoading: false,
+      error: undefined,
+    }))
+    useGhPrReadinessMock.mockReturnValue({
+      data: makePrReadinessSnapshot({
+        timeline: [
+          makePrReadinessReview(previousReview),
+          makePrReadinessReview(currentReview),
+        ],
+      }),
+      isLoading: false,
+    })
+
+    render(<ReviewView />)
+
+    const comparison = screen.getByRole('region', { name: 'Changes since previous run' })
+    expect(comparison).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Compare previous/i })).toBeInTheDocument()
+    expect(comparison).toHaveTextContent('Compared with review review-1')
+    expect(comparison).toHaveTextContent('Score 6.5 → 7.5 (+1.0)')
+    expect(comparison).toHaveTextContent('New regression')
+    expect(comparison).toHaveTextContent('Old blocker')
+  })
+
+  it('compares historical PR reviews against the immediately previous run', () => {
+    currentRouteReviewId = 'review-2'
+
+    const firstReview = makeReview({
+      id: 'review-1',
+      diff_source: 'pr:owner/repo#42',
+      started_at: 10,
+      completed_at: 11,
+      comments: [
+        makeComment({ id: 'first-1', content: 'First pass blocker', severity: 'Error' }),
+      ],
+      summary: makeSummary({
+        total_comments: 1,
+        by_severity: { Error: 1 },
+        by_category: { Bug: 1 },
+        critical_issues: 1,
+        overall_score: 6.0,
+        open_comments: 1,
+        open_by_severity: { Error: 1 },
+        open_blocking_comments: 1,
+        open_informational_comments: 0,
+        resolved_comments: 0,
+        dismissed_comments: 0,
+        open_blockers: 1,
+        completeness: {
+          total_findings: 1,
+          acknowledged_findings: 0,
+          fixed_findings: 0,
+          stale_findings: 0,
+        },
+      }),
+    })
+
+    const middleReview = makeReview({
+      id: 'review-2',
+      diff_source: 'pr:owner/repo#42',
+      started_at: 20,
+      completed_at: 21,
+      comments: [
+        makeComment({ id: 'middle-1', content: 'Middle run blocker', severity: 'Warning' }),
+      ],
+      summary: makeSummary({
+        total_comments: 1,
+        by_severity: { Warning: 1 },
+        by_category: { Bug: 1 },
+        critical_issues: 0,
+        overall_score: 7.0,
+        open_comments: 1,
+        open_by_severity: { Warning: 1 },
+        open_blocking_comments: 1,
+        open_informational_comments: 0,
+        resolved_comments: 0,
+        dismissed_comments: 0,
+        open_blockers: 1,
+        completeness: {
+          total_findings: 1,
+          acknowledged_findings: 0,
+          fixed_findings: 0,
+          stale_findings: 0,
+        },
+      }),
+    })
+
+    const latestReview = makeReview({
+      id: 'review-3',
+      diff_source: 'pr:owner/repo#42',
+      started_at: 30,
+      completed_at: 31,
+      comments: [
+        makeComment({ id: 'latest-1', content: 'Latest run blocker', severity: 'Info', category: 'Style' }),
+      ],
+      summary: makeSummary({
+        total_comments: 1,
+        by_severity: { Info: 1 },
+        by_category: { Style: 1 },
+        critical_issues: 0,
+        overall_score: 8.5,
+        open_comments: 1,
+        open_by_severity: { Info: 1 },
+        open_blocking_comments: 0,
+        open_informational_comments: 1,
+        resolved_comments: 0,
+        dismissed_comments: 0,
+        open_blockers: 0,
+        completeness: {
+          total_findings: 1,
+          acknowledged_findings: 0,
+          fixed_findings: 0,
+          stale_findings: 0,
+        },
+      }),
+    })
+
+    useReviewMock.mockImplementation((reviewId: string | undefined) => ({
+      data: reviewId === 'review-2'
+        ? middleReview
+        : reviewId === 'review-1'
+          ? firstReview
+          : reviewId === 'review-3'
+            ? latestReview
+            : undefined,
+      isLoading: false,
+      error: undefined,
+    }))
+    useGhPrReadinessMock.mockReturnValue({
+      data: makePrReadinessSnapshot({
+        timeline: [
+          makePrReadinessReview(firstReview),
+          makePrReadinessReview(middleReview),
+          makePrReadinessReview(latestReview),
+        ],
+      }),
+      isLoading: false,
+    })
+
+    render(<ReviewView />)
+
+    const comparison = screen.getByRole('region', { name: 'Changes since previous run' })
+    expect(comparison).toHaveTextContent('Compared with review review-1')
+    expect(comparison).toHaveTextContent('First pass blocker')
+    expect(comparison).not.toHaveTextContent('Latest run blocker')
   })
 })

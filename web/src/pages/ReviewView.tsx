@@ -1,20 +1,49 @@
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { Loader2, AlertTriangle, MessageSquare, FileCode, ChevronDown, Activity, Clock, Cpu, GitBranch } from 'lucide-react'
-import { useReview, useSubmitFeedback, useUpdateCommentLifecycle } from '../api/hooks'
+import { useGhPrReadiness, useReview, useSubmitFeedback, useUpdateCommentLifecycle } from '../api/hooks'
 import { DiffViewer } from '../components/DiffViewer'
 import { FileSidebar } from '../components/FileSidebar'
 import { ScoreGauge } from '../components/ScoreGauge'
 import { SeverityBadge } from '../components/SeverityBadge'
 import { CommentCard } from '../components/CommentCard'
 import { parseDiff } from '../lib/parseDiff'
-import type { Comment, CommentLifecycleStatus, DiffFile, MergeReadiness, Severity, ReviewEvent } from '../api/types'
+import type {
+  Comment,
+  CommentLifecycleStatus,
+  DiffFile,
+  MergeReadiness,
+  PrReadinessReview,
+  ReviewEvent,
+  ReviewSession,
+  Severity,
+} from '../api/types'
 
 type ViewMode = 'diff' | 'list'
 
 const BLOCKING_SEVERITIES = new Set<Severity>(['Error', 'Warning'])
 const LOW_FEEDBACK_COVERAGE_THRESHOLD = 0.5
 const MIN_FEEDBACK_COVERAGE_FINDINGS = 3
+const COMPARISON_FINDINGS_PREVIEW_LIMIT = 3
+
+const READINESS_STYLES: Record<MergeReadiness, string> = {
+  Ready: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
+  NeedsAttention: 'bg-sev-warning/10 text-sev-warning border border-sev-warning/20',
+  NeedsReReview: 'bg-accent/10 text-accent border border-accent/20',
+}
+
+const READINESS_LABELS: Record<MergeReadiness, string> = {
+  Ready: 'Merge Ready',
+  NeedsAttention: 'Needs Attention',
+  NeedsReReview: 'Needs Re-review',
+}
+
+const SEVERITY_SORT_ORDER: Record<Severity, number> = {
+  Error: 0,
+  Warning: 1,
+  Info: 2,
+  Suggestion: 3,
+}
 
 type ReviewCommentFilters = {
   severityFilter: Set<Severity>
@@ -36,6 +65,20 @@ type ReviewCommentSection = {
     path: string
     comments: Comment[]
   }>
+}
+
+type ParsedPrDiffSource = {
+  repo: string
+  prNumber: number
+}
+
+type ReviewChangeComparison = {
+  newComments: Comment[]
+  clearedComments: Comment[]
+  persistentComments: Comment[]
+  newBlockingCount: number
+  clearedBlockingCount: number
+  persistentBlockingCount: number
 }
 
 const REVIEW_COMMENT_SECTION_ORDER: ReviewCommentSectionKey[] = ['stale', 'unresolved', 'informational', 'fixed']
@@ -231,10 +274,120 @@ function parseLifecycleFilterParam(value: string | null): CommentLifecycleStatus
     : null
 }
 
+function parsePrDiffSource(diffSource?: string | null): ParsedPrDiffSource | null {
+  if (!diffSource?.startsWith('pr:')) return null
+
+  const rest = diffSource.slice(3)
+  const separatorIndex = rest.lastIndexOf('#')
+  if (separatorIndex <= 0) return null
+
+  const repo = rest.slice(0, separatorIndex)
+  const prNumber = Number.parseInt(rest.slice(separatorIndex + 1), 10)
+  if (!repo || Number.isNaN(prNumber) || prNumber <= 0) return null
+
+  return { repo, prNumber }
+}
+
+function toDate(value: string | number): Date | null {
+  const date = typeof value === 'number'
+    ? new Date(value * 1000)
+    : new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function reviewTimestamp(value?: string | number): number {
+  if (value == null) return 0
+  const date = toDate(value)
+  return date ? date.getTime() : 0
+}
+
+function selectPreviousPrReview(
+  timeline: PrReadinessReview[] | undefined,
+  currentReviewId: string | undefined,
+): PrReadinessReview | null {
+  if (!timeline?.length || !currentReviewId) return null
+
+  const orderedTimeline = [...timeline].sort((left, right) =>
+    reviewTimestamp(left.completed_at ?? left.started_at) - reviewTimestamp(right.completed_at ?? right.started_at),
+  )
+  const currentIndex = orderedTimeline.findIndex((review) => review.id === currentReviewId)
+  if (currentIndex <= 0) return null
+
+  return orderedTimeline[currentIndex - 1]
+}
+
+function sortCommentsForComparison(left: Comment, right: Comment): number {
+  return SEVERITY_SORT_ORDER[left.severity] - SEVERITY_SORT_ORDER[right.severity]
+    || left.file_path.localeCompare(right.file_path)
+    || left.line_number - right.line_number
+    || left.content.localeCompare(right.content)
+}
+
+function buildReviewChangeComparison(
+  currentComments: Comment[],
+  previousComments: Comment[],
+): ReviewChangeComparison {
+  const currentById = new Map(currentComments.map((comment) => [comment.id, comment]))
+  const previousById = new Map(previousComments.map((comment) => [comment.id, comment]))
+
+  const newComments = currentComments
+    .filter((comment) => !previousById.has(comment.id))
+    .sort(sortCommentsForComparison)
+  const clearedComments = previousComments
+    .filter((comment) => !currentById.has(comment.id))
+    .sort(sortCommentsForComparison)
+  const persistentComments = currentComments
+    .filter((comment) => previousById.has(comment.id))
+    .sort(sortCommentsForComparison)
+
+  return {
+    newComments,
+    clearedComments,
+    persistentComments,
+    newBlockingCount: newComments.filter(isBlockingComment).length,
+    clearedBlockingCount: clearedComments.filter(isBlockingComment).length,
+    persistentBlockingCount: persistentComments.filter(isBlockingComment).length,
+  }
+}
+
+function formatReviewTimestamp(value?: string | number): string {
+  if (value == null) return 'Unknown time'
+
+  const date = toDate(value)
+  return date
+    ? date.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    })
+    : 'Unknown time'
+}
+
+function formatSignedDelta(value: number, fractionDigits = 0): string {
+  const formatted = fractionDigits > 0 ? value.toFixed(fractionDigits) : value.toString()
+  return value > 0 ? `+${formatted}` : formatted
+}
+
+function shortReviewId(reviewId: string): string {
+  return reviewId.slice(0, 8)
+}
+
 export function ReviewView() {
   const { id } = useParams<{ id: string }>()
   const [searchParams] = useSearchParams()
   const { data: review, isLoading } = useReview(id)
+  const prTarget = useMemo(() => parsePrDiffSource(review?.diff_source), [review?.diff_source])
+  const { data: prReadiness } = useGhPrReadiness(prTarget?.repo, prTarget?.prNumber)
+  const previousPrReview = useMemo(
+    () => selectPreviousPrReview(prReadiness?.timeline, review?.id),
+    [prReadiness?.timeline, review?.id],
+  )
+  const {
+    data: previousReviewDetails,
+    isLoading: isLoadingPreviousReview,
+    error: previousReviewError,
+  } = useReview(previousPrReview?.id)
   const feedback = useSubmitFeedback(id || '')
   const lifecycle = useUpdateCommentLifecycle(id || '')
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
@@ -245,6 +398,7 @@ export function ReviewView() {
   const [lifecycleFilter, setLifecycleFilter] = useState<CommentLifecycleStatus | 'All'>('All')
   const [showOnlyBlockers, setShowOnlyBlockers] = useState(false)
   const [showEvent, setShowEvent] = useState(false)
+  const [collapsedComparisonReviewId, setCollapsedComparisonReviewId] = useState<string | null>(null)
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null)
   const reviewRootRef = useRef<HTMLDivElement | null>(null)
   const diffContent = review?.diff_content
@@ -311,6 +465,7 @@ export function ReviewView() {
   const activeVisibleCommentId = activeCommentId && visibleCommentIds.includes(activeCommentId)
     ? activeCommentId
     : null
+  const showComparison = Boolean(previousPrReview?.id) && collapsedComparisonReviewId !== previousPrReview?.id
 
   const focusComment = useCallback((commentId: string) => {
     if (!reviewRootRef.current) return
@@ -518,12 +673,6 @@ export function ReviewView() {
       .filter((ruleId): ruleId is string => Boolean(ruleId)),
   )]
 
-  const readinessStyles: Record<MergeReadiness, string> = {
-    Ready: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
-    NeedsAttention: 'bg-sev-warning/10 text-sev-warning border border-sev-warning/20',
-    NeedsReReview: 'bg-accent/10 text-accent border border-accent/20',
-  }
-
   const verificationStyles: Record<NonNullable<typeof review.summary>['verification']['state'], string> = {
     NotApplicable: 'text-text-muted',
     Verified: 'text-sev-suggestion',
@@ -603,17 +752,26 @@ export function ReviewView() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <span className={`text-[10px] px-2 py-0.5 rounded font-code ${readinessStyles[review.summary.merge_readiness]}`}>
-                {review.summary.merge_readiness === 'Ready'
-                  ? 'Merge Ready'
-                  : review.summary.merge_readiness === 'NeedsAttention'
-                    ? 'Needs Attention'
-                    : 'Needs Re-review'}
+              <span className={`text-[10px] px-2 py-0.5 rounded font-code ${READINESS_STYLES[review.summary.merge_readiness]}`}>
+                {READINESS_LABELS[review.summary.merge_readiness]}
               </span>
               <span className="text-[10px] text-text-muted font-code">
                 {review.summary.completeness.fixed_findings} fixed · {review.summary.completeness.stale_findings} stale
               </span>
             </div>
+            {review.summary && previousPrReview?.summary && (
+              <button
+                onClick={() => setCollapsedComparisonReviewId((current) =>
+                  current === previousPrReview.id ? null : previousPrReview.id,
+                )}
+                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-text-muted hover:text-text-primary hover:bg-surface-2 transition-colors"
+                title="Toggle comparison with the previous PR review"
+              >
+                <GitBranch size={12} />
+                <span>Compare previous</span>
+                <ChevronDown size={10} className={`transition-transform ${showComparison ? 'rotate-180' : ''}`} />
+              </button>
+            )}
             {review.event && (
               <button
                 onClick={() => setShowEvent(v => !v)}
@@ -630,6 +788,16 @@ export function ReviewView() {
 
         {/* Wide event panel */}
         {showEvent && review.event && <EventPanel event={review.event} />}
+
+        {showComparison && review.summary && previousPrReview?.summary && (
+          <ReviewChangePanel
+            currentReview={review}
+            previousReview={previousPrReview}
+            previousReviewDetails={previousReviewDetails}
+            isLoadingPreviousReview={isLoadingPreviousReview}
+            previousReviewError={previousReviewError}
+          />
+        )}
 
         {review.summary && (
           <div className="px-3 py-2 border-b border-border bg-surface flex items-center gap-4 text-[11px]">
@@ -924,13 +1092,14 @@ function SummaryCard(
     label: string
     value: number
     hint: string
-    tone: 'error' | 'warning' | 'accent' | 'muted'
+    tone: 'error' | 'warning' | 'accent' | 'muted' | 'success'
   },
 ) {
   const toneStyles = {
     error: 'border-sev-error/20 bg-sev-error/5 text-sev-error',
     warning: 'border-sev-warning/20 bg-sev-warning/5 text-sev-warning',
     accent: 'border-accent/20 bg-accent/5 text-accent',
+    success: 'border-sev-suggestion/20 bg-sev-suggestion/5 text-sev-suggestion',
     muted: 'border-border bg-surface-1 text-text-muted',
   }
 
@@ -939,6 +1108,187 @@ function SummaryCard(
       <div className="text-[10px] font-code uppercase tracking-[0.08em]">{label}</div>
       <div className="mt-1 text-lg font-semibold text-text-primary">{value}</div>
       <div className="text-[11px]">{hint}</div>
+    </div>
+  )
+}
+
+function ReviewChangePanel({
+  currentReview,
+  previousReview,
+  previousReviewDetails,
+  isLoadingPreviousReview,
+  previousReviewError,
+}: {
+  currentReview: ReviewSession
+  previousReview: PrReadinessReview
+  previousReviewDetails?: ReviewSession
+  isLoadingPreviousReview: boolean
+  previousReviewError: unknown
+}) {
+  const comparison = useMemo(
+    () => previousReviewDetails
+      ? buildReviewChangeComparison(currentReview.comments, previousReviewDetails.comments)
+      : null,
+    [currentReview.comments, previousReviewDetails],
+  )
+
+  const currentSummary = currentReview.summary
+  const previousSummary = previousReview.summary
+  if (!currentSummary || !previousSummary) return null
+
+  const scoreDelta = currentSummary.overall_score - previousSummary.overall_score
+  const findingsDelta = currentSummary.total_comments - previousSummary.total_comments
+  const blockerDelta = currentSummary.open_blockers - previousSummary.open_blockers
+
+  return (
+    <section
+      aria-labelledby="review-change-comparison-heading"
+      className="px-3 py-3 border-b border-border bg-surface-1/80"
+    >
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="min-w-0 flex-1">
+          <h2 id="review-change-comparison-heading" className="text-[12px] font-semibold text-text-primary">
+            Changes since previous run
+          </h2>
+          <p className="mt-1 text-[11px] text-text-muted">
+            Compared with review <span className="font-code text-text-primary">{shortReviewId(previousReview.id)}</span>{' '}
+            from {formatReviewTimestamp(previousReview.completed_at ?? previousReview.started_at)}.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-[10px] font-code text-text-muted">
+            <span>
+              Score {previousSummary.overall_score.toFixed(1)} → {currentSummary.overall_score.toFixed(1)} ({formatSignedDelta(scoreDelta, 1)})
+            </span>
+            <span>
+              Findings {previousSummary.total_comments} → {currentSummary.total_comments} ({formatSignedDelta(findingsDelta)})
+            </span>
+            <span>
+              Blockers {previousSummary.open_blockers} → {currentSummary.open_blockers} ({formatSignedDelta(blockerDelta)})
+            </span>
+          </div>
+        </div>
+
+        <div className="shrink-0 flex items-center gap-2 text-[10px] font-code">
+          <span className={`px-2 py-0.5 rounded ${READINESS_STYLES[previousSummary.merge_readiness]}`}>
+            {READINESS_LABELS[previousSummary.merge_readiness]}
+          </span>
+          <span className="text-text-muted">→</span>
+          <span className={`px-2 py-0.5 rounded ${READINESS_STYLES[currentSummary.merge_readiness]}`}>
+            {READINESS_LABELS[currentSummary.merge_readiness]}
+          </span>
+        </div>
+      </div>
+
+      {previousReviewError ? (
+        <div className="mt-3 rounded border border-sev-warning/20 bg-sev-warning/5 px-3 py-2 text-[11px] text-sev-warning">
+          Couldn’t load previous review details. Showing summary deltas only.
+        </div>
+      ) : isLoadingPreviousReview || !comparison ? (
+        <div className="mt-3 rounded border border-border bg-surface px-3 py-2 text-[11px] text-text-muted flex items-center gap-2">
+          <Loader2 size={12} className="animate-spin" />
+          Loading previous review details…
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 grid grid-cols-2 lg:grid-cols-4 gap-2">
+            <SummaryCard
+              label="New findings"
+              value={comparison.newComments.length}
+              hint={`${comparison.newBlockingCount} blocker${comparison.newBlockingCount === 1 ? '' : 's'}`}
+              tone={comparison.newComments.length > 0 ? 'warning' : 'muted'}
+            />
+            <SummaryCard
+              label="Cleared findings"
+              value={comparison.clearedComments.length}
+              hint={`${comparison.clearedBlockingCount} blocker${comparison.clearedBlockingCount === 1 ? '' : 's'} removed`}
+              tone={comparison.clearedComments.length > 0 ? 'success' : 'muted'}
+            />
+            <SummaryCard
+              label="Still present"
+              value={comparison.persistentComments.length}
+              hint={`${comparison.persistentBlockingCount} blocker${comparison.persistentBlockingCount === 1 ? '' : 's'} still open`}
+              tone={comparison.persistentComments.length > 0 ? 'accent' : 'muted'}
+            />
+            <SummaryCard
+              label="Open blockers"
+              value={currentSummary.open_blockers}
+              hint={`was ${previousSummary.open_blockers} (${formatSignedDelta(blockerDelta)})`}
+              tone={currentSummary.open_blockers > 0 ? 'warning' : 'success'}
+            />
+          </div>
+
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <ComparisonFindingList
+              title="New findings"
+              comments={comparison.newComments}
+              emptyText="No new findings in this run."
+              tone="warning"
+            />
+            <ComparisonFindingList
+              title="Cleared findings"
+              comments={comparison.clearedComments}
+              emptyText="No findings were cleared since the last run."
+              tone="success"
+            />
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
+function ComparisonFindingList({
+  title,
+  comments,
+  emptyText,
+  tone,
+}: {
+  title: string
+  comments: Comment[]
+  emptyText: string
+  tone: 'warning' | 'success'
+}) {
+  const containerClassName = tone === 'warning'
+    ? 'border-sev-warning/20 bg-sev-warning/5'
+    : 'border-sev-suggestion/20 bg-sev-suggestion/5'
+  const badgeClassName = tone === 'warning'
+    ? 'bg-sev-warning/10 text-sev-warning border border-sev-warning/20'
+    : 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20'
+  const visibleComments = comments.slice(0, COMPARISON_FINDINGS_PREVIEW_LIMIT)
+
+  return (
+    <div className={`rounded-lg border ${containerClassName}`}>
+      <div className="px-3 py-2 border-b border-border-subtle flex items-center justify-between gap-2">
+        <div className="text-[11px] font-medium text-text-primary">{title}</div>
+        <span className={`text-[10px] px-2 py-0.5 rounded font-code ${badgeClassName}`}>
+          {comments.length}
+        </span>
+      </div>
+
+      {comments.length === 0 ? (
+        <div className="px-3 py-3 text-[11px] text-text-muted">{emptyText}</div>
+      ) : (
+        <ul className="divide-y divide-border-subtle">
+          {visibleComments.map((comment) => (
+            <li key={comment.id} className="px-3 py-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <SeverityBadge severity={comment.severity} />
+                <span className="text-[10px] font-code text-text-muted">
+                  {comment.file_path}:{comment.line_number}
+                </span>
+              </div>
+              <p className="mt-1 text-[12px] text-text-primary" title={comment.content}>
+                {comment.content}
+              </p>
+            </li>
+          ))}
+
+          {comments.length > visibleComments.length && (
+            <li className="px-3 py-2 text-[10px] font-code text-text-muted">
+              +{comments.length - visibleComments.length} more
+            </li>
+          )}
+        </ul>
+      )}
     </div>
   )
 }
