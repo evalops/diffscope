@@ -232,4 +232,120 @@ expect:
             Some("sec.infra.k8s-privileged")
         );
     }
+
+    #[test]
+    fn test_checked_in_supply_chain_pack_loads_expected_fixtures() {
+        let pack_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/deep_review_suite/review_depth_supply_chain.json");
+
+        let fixtures = load_eval_fixtures_from_path(&pack_path).unwrap();
+
+        assert_eq!(fixtures.len(), 7);
+        let typosquat = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-supply-chain/npm-typosquat-package")
+            })
+            .unwrap();
+        assert_eq!(
+            typosquat.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("sec.supply-chain.new-dependency")
+        );
+
+        let unpinned = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-supply-chain/python-unpinned-dependency")
+            })
+            .unwrap();
+        assert_eq!(
+            unpinned.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("sec.supply-chain.unpinned-version")
+        );
+
+        let downgraded = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-supply-chain/rust-yanked-crate-version")
+            })
+            .unwrap();
+        assert_eq!(
+            downgraded.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("sec.supply-chain.version-downgrade")
+        );
+
+        let replace_directive = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-supply-chain/go-replace-directive-remote")
+            })
+            .unwrap();
+        assert_eq!(
+            replace_directive.fixture.expect.must_find[0]
+                .rule_id
+                .as_deref(),
+            Some("sec.supply-chain.override-directive")
+        );
+    }
+
+    #[test]
+    fn test_checked_in_async_pack_loads_expected_fixtures() {
+        let pack_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/deep_review_suite/review_depth_async.json");
+
+        let fixtures = load_eval_fixtures_from_path(&pack_path).unwrap();
+
+        assert_eq!(fixtures.len(), 6);
+        let foreach = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-async/typescript-async-foreach-not-awaited")
+            })
+            .unwrap();
+        assert_eq!(
+            foreach.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.async.foreach-no-await")
+        );
+
+        let blocking = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-async/rust-blocking-in-async-runtime")
+            })
+            .unwrap();
+        assert_eq!(
+            blocking.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.async.blocking-runtime-call")
+        );
+
+        let nested_loop = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-async/python-asyncio-run-in-running-loop")
+            })
+            .unwrap();
+        assert_eq!(
+            nested_loop.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.async.nested-event-loop")
+        );
+
+        let cancel_order = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-async/go-context-cancel-defer-order")
+            })
+            .unwrap();
+        assert_eq!(
+            cancel_order.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.async.context-cancel-order")
+        );
+    }
 }

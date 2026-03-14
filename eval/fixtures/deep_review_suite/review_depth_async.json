@@ -5,7 +5,9 @@
   "description": "Async-correctness benchmark pack for deeper live review runs.",
   "languages": [
     "rust",
-    "typescript"
+    "typescript",
+    "python",
+    "go"
   ],
   "categories": [
     "bug",
@@ -142,7 +144,8 @@
           ],
           "tags_any": [
             "async"
-          ]
+          ],
+          "rule_id": "bug.async.foreach-no-await"
         }
       ],
       "negative_findings": [
@@ -154,6 +157,108 @@
       "min_total": 1,
       "max_total": 8,
       "description": "Notification fan-out should keep awaiting all spawned async work.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "rust-blocking-in-async-runtime",
+      "category": "bug",
+      "language": "rust",
+      "difficulty": "Hard",
+      "diff_content": "diff --git a/src/cache.rs b/src/cache.rs\nindex 1111111..2222222 100644\n--- a/src/cache.rs\n+++ b/src/cache.rs\n@@ -1,5 +1,7 @@\n pub async fn warm_cache(path: &str) -> anyhow::Result<String> {\n-    tokio::fs::read_to_string(path).await.map_err(Into::into)\n+    tokio::spawn(async move {\n+        std::fs::read_to_string(path).unwrap()\n+    }).await.unwrap();\n+    Ok(String::new())\n }\n",
+      "expected_findings": [
+        {
+          "description": "Blocking filesystem I/O is performed inside async runtime work instead of using Tokio's async APIs or spawn_blocking.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "src/cache.rs",
+          "line_hint": 3,
+          "contains_any": [
+            "blocking call in async context",
+            "std::fs::read_to_string",
+            "blocks the async runtime",
+            "use spawn_blocking",
+            "use tokio::fs"
+          ],
+          "rule_id": "bug.async.blocking-runtime-call"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Async Rust code should avoid blocking std::fs work on runtime threads.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "python-asyncio-run-in-running-loop",
+      "category": "bug",
+      "language": "python",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/app/tasks.py b/app/tasks.py\nindex 1111111..2222222 100644\n--- a/app/tasks.py\n+++ b/app/tasks.py\n@@ -1,5 +1,5 @@\n async def refresh_reports():\n-    await sync_reports()\n+    asyncio.run(sync_reports())\n     return {\"ok\": True}\n",
+      "expected_findings": [
+        {
+          "description": "asyncio.run is called from inside an async function where an event loop is already running.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "app/tasks.py",
+          "line_hint": 2,
+          "contains_any": [
+            "asyncio.run",
+            "already running event loop",
+            "nested event loop",
+            "runtimeerror",
+            "should await the coroutine directly"
+          ],
+          "rule_id": "bug.async.nested-event-loop"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Python async functions should not start a fresh event loop with asyncio.run.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "go-context-cancel-defer-order",
+      "category": "bug",
+      "language": "go",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/service/worker.go b/service/worker.go\nindex 1111111..2222222 100644\n--- a/service/worker.go\n+++ b/service/worker.go\n@@ -1,7 +1,8 @@\n func StartWorker(parent context.Context) error {\n     ctx, cancel := context.WithTimeout(parent, time.Second)\n     go runWorker(ctx)\n-    defer cancel()\n+    cancel()\n+    defer cancel()\n     return nil\n }\n",
+      "expected_findings": [
+        {
+          "description": "Context is canceled immediately after spawning the goroutine, so the worker may observe a canceled context before it starts useful work.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "service/worker.go",
+          "line_hint": 4,
+          "contains_any": [
+            "context canceled too early",
+            "goroutine may start with a canceled context",
+            "premature cancel",
+            "cancel is invoked immediately",
+            "defer cancel"
+          ],
+          "rule_id": "bug.async.context-cancel-order"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Go concurrency code should not cancel shared contexts before spawned work has a chance to run.",
       "source": "deep-review-suite"
     }
   ]

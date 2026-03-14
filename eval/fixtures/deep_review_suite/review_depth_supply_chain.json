@@ -4,6 +4,10 @@
   "version": "1.0.0",
   "description": "Supply-chain and dependency trust benchmark pack for deeper live review runs.",
   "languages": [
+    "typescript",
+    "python",
+    "rust",
+    "go",
     "yaml",
     "docker"
   ],
@@ -162,6 +166,145 @@
       "min_total": 1,
       "max_total": 8,
       "description": "CI workflows should not combine pull_request_target with attacker-controlled shell input.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "npm-typosquat-package",
+      "category": "security",
+      "language": "typescript",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/package.json b/package.json\nindex 1111111..2222222 100644\n--- a/package.json\n+++ b/package.json\n@@ -5,5 +5,6 @@\n   \"dependencies\": {\n     \"express\": \"^4.19.2\",\n-    \"lodash\": \"^4.17.21\"\n+    \"lodash\": \"^4.17.21\",\n+    \"lodahs\": \"^4.17.21\"\n   }\n }\n",
+      "expected_findings": [
+        {
+          "description": "New dependency name looks like a typosquat of lodash.",
+          "severity": "Warning",
+          "category": "Security",
+          "file_pattern": "package.json",
+          "line_hint": 7,
+          "contains_any": [
+            "typosquat",
+            "typosquatting",
+            "suspicious package name",
+            "lodahs",
+            "looks like lodash"
+          ],
+          "tags_any": [
+            "typosquatting",
+            "supply-chain"
+          ],
+          "rule_id": "sec.supply-chain.new-dependency"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Review newly added dependencies for typo-squatting and other supply-chain red flags.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "python-unpinned-dependency",
+      "category": "security",
+      "language": "python",
+      "difficulty": "Easy",
+      "diff_content": "diff --git a/requirements.txt b/requirements.txt\nindex 1111111..2222222 100644\n--- a/requirements.txt\n+++ b/requirements.txt\n@@ -1,2 +1,3 @@\n flask==3.0.3\n sqlalchemy==2.0.36\n+requests\n",
+      "expected_findings": [
+        {
+          "description": "Dependency is added without a pinned version.",
+          "severity": "Info",
+          "category": "Security",
+          "file_pattern": "requirements.txt",
+          "line_hint": 3,
+          "contains_any": [
+            "unpinned dependency",
+            "pin to a specific version",
+            "requests without version",
+            "loosely pinned dependency"
+          ],
+          "rule_id": "sec.supply-chain.unpinned-version"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Requirements files should pin newly introduced packages to exact or tightly controlled versions.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "rust-yanked-crate-version",
+      "category": "security",
+      "language": "rust",
+      "difficulty": "Hard",
+      "diff_content": "diff --git a/Cargo.toml b/Cargo.toml\nindex 1111111..2222222 100644\n--- a/Cargo.toml\n+++ b/Cargo.toml\n@@ -8,5 +8,5 @@ edition = \"2021\"\n [dependencies]\n anyhow = \"1\"\n-time = \"0.3.36\"\n+time = \"=0.1.43\" # downgrade to an old yanked release from a previous incident postmortem\n tokio = { version = \"1\", features = [\"full\"] }\n",
+      "expected_findings": [
+        {
+          "description": "Dependency is downgraded to an old yanked or known-bad crate version.",
+          "severity": "Warning",
+          "category": "Security",
+          "file_pattern": "Cargo.toml",
+          "line_hint": 4,
+          "contains_any": [
+            "old yanked version",
+            "downgrade to an older version",
+            "known bad version",
+            "version downgrade",
+            "time = \"=0.1.43\""
+          ],
+          "rule_id": "sec.supply-chain.version-downgrade"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Dependency downgrades to suspiciously old or yanked releases should be treated as supply-chain risk.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "go-replace-directive-remote",
+      "category": "security",
+      "language": "go",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/go.mod b/go.mod\nindex 1111111..2222222 100644\n--- a/go.mod\n+++ b/go.mod\n@@ -3,3 +3,4 @@ module example.com/payments\n go 1.22\n require github.com/gorilla/mux v1.8.1\n+replace github.com/gorilla/mux => corp.example.com/forks/mux v1.8.1\n",
+      "expected_findings": [
+        {
+          "description": "go.mod replace directive redirects module resolution to a non-standard remote source.",
+          "severity": "Warning",
+          "category": "Security",
+          "file_pattern": "go.mod",
+          "line_hint": 4,
+          "contains_any": [
+            "replace directive",
+            "redirects module resolution",
+            "non-standard remote module path",
+            "suspicious go.mod replace",
+            "override dependency source"
+          ],
+          "rule_id": "sec.supply-chain.override-directive"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Module replacement directives should be scrutinized because they bypass the normal upstream source of a dependency.",
       "source": "deep-review-suite"
     }
   ]
