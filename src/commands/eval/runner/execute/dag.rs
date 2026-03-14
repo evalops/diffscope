@@ -197,7 +197,7 @@ fn stage_hints(stage: EvalFixtureStage) -> DagNodeExecutionHints {
             subgraph: None,
         },
         EvalFixtureStage::ReproductionValidation => DagNodeExecutionHints {
-            parallelizable: false,
+            parallelizable: true,
             retryable: true,
             side_effects: false,
             subgraph: None,
@@ -689,6 +689,17 @@ mod tests {
 
         assert!(!reproduction.enabled);
         assert_eq!(artifact.dependencies, vec!["benchmark_metrics"]);
+    }
+
+    #[test]
+    fn build_stage_specs_marks_reproduction_parallelizable() {
+        let specs = build_stage_specs(true);
+        let reproduction = specs
+            .iter()
+            .find(|spec| spec.id == EvalFixtureStage::ReproductionValidation)
+            .unwrap();
+
+        assert!(reproduction.hints.parallelizable);
     }
 
     #[test]

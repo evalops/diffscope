@@ -236,7 +236,7 @@ where
         for index in ready_indices.iter().copied() {
             let spec = specs[index].clone();
             if !spec.enabled || !spec.hints.parallelizable {
-                break;
+                continue;
             }
             let sequence = launch_sequence;
             launch_sequence += 1;
@@ -662,5 +662,89 @@ mod tests {
             vec!["root", "branch", "leaf"]
         );
         assert_eq!(applied, vec!["root", "branch"]);
+    }
+
+    #[tokio::test]
+    async fn execute_dag_with_parallelism_skips_non_parallel_ready_nodes_when_batching() {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        enum MixedNode {
+            Root,
+            FastA,
+            Slow,
+            FastB,
+        }
+
+        impl DagNode for MixedNode {
+            fn name(&self) -> &'static str {
+                match self {
+                    Self::Root => "root",
+                    Self::FastA => "fast_a",
+                    Self::Slow => "slow",
+                    Self::FastB => "fast_b",
+                }
+            }
+        }
+
+        let specs = vec![
+            DagNodeSpec {
+                id: MixedNode::Root,
+                dependencies: vec![],
+                hints: hints(false),
+                enabled: true,
+            },
+            DagNodeSpec {
+                id: MixedNode::FastA,
+                dependencies: vec![MixedNode::Root],
+                hints: hints(true),
+                enabled: true,
+            },
+            DagNodeSpec {
+                id: MixedNode::Slow,
+                dependencies: vec![MixedNode::Root],
+                hints: hints(false),
+                enabled: true,
+            },
+            DagNodeSpec {
+                id: MixedNode::FastB,
+                dependencies: vec![MixedNode::Root],
+                hints: hints(true),
+                enabled: true,
+            },
+        ];
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+
+        let records = execute_dag_with_parallelism(
+            &specs,
+            |node| {
+                let active = Arc::clone(&active);
+                let max_active = Arc::clone(&max_active);
+                Ok(async move {
+                    if matches!(node, MixedNode::FastA | MixedNode::FastB) {
+                        let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        let observed_max = max_active.load(Ordering::SeqCst);
+                        if current > observed_max {
+                            max_active.store(current, Ordering::SeqCst);
+                        }
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                        active.fetch_sub(1, Ordering::SeqCst);
+                    }
+                    Ok(node.name().to_string())
+                }
+                .boxed())
+            },
+            |_, _| Ok(()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["root", "fast_a", "fast_b", "slow"]
+        );
+        assert!(max_active.load(Ordering::SeqCst) >= 2);
     }
 }
