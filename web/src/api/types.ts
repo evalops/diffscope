@@ -377,6 +377,26 @@ export interface GhPullRequest {
   draft: boolean
 }
 
+export interface PrReadinessReview {
+  id: string
+  status: ReviewStatus
+  started_at: string | number
+  completed_at?: string | number
+  reviewed_head_sha?: string
+  summary?: ReviewSummary
+  files_reviewed: number
+  comment_count: number
+  error?: string
+}
+
+export interface PrReadinessSnapshot {
+  repo: string
+  pr_number: number
+  diff_source: string
+  current_head_sha?: string
+  latest_review?: PrReadinessReview
+}
+
 export interface StartPrReviewRequest {
   repo: string
   pr_number: number

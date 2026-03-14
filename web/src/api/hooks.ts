@@ -118,6 +118,14 @@ export function useGhPrs(repo: string | undefined, state?: string) {
   })
 }
 
+export function useGhPrReadiness(repo: string | undefined, prNumber: number | undefined) {
+  return useQuery({
+    queryKey: ['gh-pr-readiness', repo, prNumber],
+    queryFn: () => api.getGhPrReadiness(repo!, prNumber!),
+    enabled: !!repo && !!prNumber,
+  })
+}
+
 export function useEvents(params?: {
   source?: string; model?: string; status?: string;
   time_from?: string; time_to?: string;

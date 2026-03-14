@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Search, Lock, Star, GitPullRequest, Loader2, ChevronRight, RefreshCw, X, ExternalLink, Copy, Check, Webhook, Eye, EyeOff } from 'lucide-react'
-import { useGhStatus, useGhRepos, useGhPrs, useStartPrReview, useUpdateConfig, useConfig } from '../api/hooks'
+import { useGhStatus, useGhRepos, useGhPrReadiness, useGhPrs, useStartPrReview, useUpdateConfig, useConfig } from '../api/hooks'
 import { api } from '../api/client'
 import type { GhRepo, GhPullRequest, DeviceFlowResponse } from '../api/types'
+import { PrReadinessSummary } from '../components/PrReadinessSummary'
 
 const LANG_COLORS: Record<string, string> = {
   TypeScript: '#3178c6',
@@ -84,6 +85,11 @@ export function Repos() {
     selectedRepo?.full_name,
     prFilter,
   )
+  const {
+    data: prReadiness,
+    isLoading: prReadinessLoading,
+    error: prReadinessError,
+  } = useGhPrReadiness(selectedRepo?.full_name, selectedPr?.number)
   const startPrReview = useStartPrReview()
 
   // Debounce search
@@ -374,6 +380,13 @@ export function Repos() {
           )}
 
           <div className="border-t border-border-subtle pt-4">
+            <PrReadinessSummary
+              readiness={prReadiness}
+              isLoading={prReadinessLoading}
+              error={prReadinessError}
+              onOpenReview={(reviewId) => navigate(`/review/${reviewId}`)}
+            />
+
             <div className="flex items-center justify-between mb-4">
               <div>
                 <div className="text-[13px] text-text-primary">Post results to GitHub</div>

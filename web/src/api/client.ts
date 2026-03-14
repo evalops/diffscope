@@ -91,6 +91,11 @@ export const api = {
     return request<import('./types').GhPullRequest[]>(`/gh/prs?${qs}`)
   },
 
+  getGhPrReadiness: (repo: string, prNumber: number) => {
+    const qs = new URLSearchParams({ repo, pr_number: String(prNumber) })
+    return request<import('./types').PrReadinessSnapshot>(`/gh/pr-readiness?${qs}`)
+  },
+
   startPrReview: (body: import('./types').StartPrReviewRequest) =>
     request<{ id: string; status: string }>('/gh/review', {
       method: 'POST',

@@ -92,7 +92,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 53. [ ] Add a "show only blockers" mode for large reviews.
 54. [ ] Add keyboard actions for thumbs, resolve, and jump-to-next-finding workflows.
 55. [ ] Add file-level readiness summaries in the diff sidebar.
-56. [ ] Add lifecycle-aware PR summaries that explain what still blocks merge.
+56. [x] Add lifecycle-aware PR summaries that explain what still blocks merge.
 57. [ ] Add a "train the reviewer" callout when thumbs coverage on a review is low.
 58. [ ] Add review-change comparisons so users can diff one review run against the next on the same PR.
 59. [ ] Add better surfacing for incremental PR reviews so users know when only the delta was reviewed.
@@ -160,4 +160,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Make stale-review detection compare PR head SHAs so same-head reruns do not look stale.
 - [x] Split open findings into blocking vs informational buckets and surface critical blocker cards in review detail.
 - [x] Add PR readiness query surfaces in the CLI and HTTP API for non-UI workflows.
+- [x] Surface lifecycle-aware PR readiness summaries in the GitHub PR detail workflow.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.
