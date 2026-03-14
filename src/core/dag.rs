@@ -183,47 +183,11 @@ where
     let mut launch_sequence = 0usize;
 
     while completed.len() < specs.len() {
-        let mut progressed = false;
-        loop {
-            let Some(spec) = specs
-                .iter()
-                .find(|candidate| {
-                    !candidate.enabled
-                        && !completed.contains(&candidate.id)
-                        && !in_flight.contains(&candidate.id)
-                        && candidate
-                            .dependencies
-                            .iter()
-                            .all(|dependency| completed.contains(dependency))
-                })
-                .cloned()
-            else {
-                break;
-            };
-
-            recorded.push((
-                launch_sequence,
-                DagExecutionRecord {
-                    name: spec.id.name().to_string(),
-                    enabled: false,
-                    duration_ms: 0,
-                },
-            ));
-            launch_sequence += 1;
-            completed.insert(spec.id);
-            progressed = true;
-        }
-
-        if completed.len() == specs.len() {
-            break;
-        }
-
         let ready_indices = specs
             .iter()
             .enumerate()
             .filter(|(_, candidate)| {
-                candidate.enabled
-                    && !completed.contains(&candidate.id)
+                !completed.contains(&candidate.id)
                     && !in_flight.contains(&candidate.id)
                     && candidate
                         .dependencies
@@ -234,12 +198,24 @@ where
             .collect::<Vec<_>>();
 
         if join_set.is_empty() {
-            if let Some(index) = ready_indices
-                .iter()
-                .copied()
-                .find(|index| !specs[*index].hints.parallelizable)
-            {
-                let spec = specs[index].clone();
+            let Some(index) = ready_indices.first().copied() else {
+                anyhow::bail!("DAG has unresolved or cyclic dependencies");
+            };
+            let spec = specs[index].clone();
+            if !spec.enabled {
+                recorded.push((
+                    launch_sequence,
+                    DagExecutionRecord {
+                        name: spec.id.name().to_string(),
+                        enabled: false,
+                        duration_ms: 0,
+                    },
+                ));
+                launch_sequence += 1;
+                completed.insert(spec.id);
+                continue;
+            }
+            if !spec.hints.parallelizable {
                 let started = Instant::now();
                 let output = spawn(spec.id.clone())?.await?;
                 apply(spec.id.clone(), output)?;
@@ -255,38 +231,23 @@ where
                 completed.insert(spec.id);
                 continue;
             }
+        }
 
-            for index in ready_indices.iter().copied() {
-                let spec = specs[index].clone();
-                let sequence = launch_sequence;
-                launch_sequence += 1;
-                let id = spec.id.clone();
-                let future = spawn(id.clone())?;
-                let started = Instant::now();
-                in_flight.insert(id.clone());
-                join_set.spawn(async move {
-                    let output = future.await;
-                    (sequence, id, started.elapsed().as_millis() as u64, output)
-                });
+        for index in ready_indices.iter().copied() {
+            let spec = specs[index].clone();
+            if !spec.enabled || !spec.hints.parallelizable {
+                break;
             }
-        } else {
-            for index in ready_indices
-                .iter()
-                .copied()
-                .filter(|index| specs[*index].hints.parallelizable)
-            {
-                let spec = specs[index].clone();
-                let sequence = launch_sequence;
-                launch_sequence += 1;
-                let id = spec.id.clone();
-                let future = spawn(id.clone())?;
-                let started = Instant::now();
-                in_flight.insert(id.clone());
-                join_set.spawn(async move {
-                    let output = future.await;
-                    (sequence, id, started.elapsed().as_millis() as u64, output)
-                });
-            }
+            let sequence = launch_sequence;
+            launch_sequence += 1;
+            let id = spec.id.clone();
+            let future = spawn(id.clone())?;
+            let started = Instant::now();
+            in_flight.insert(id.clone());
+            join_set.spawn(async move {
+                let output = future.await;
+                (sequence, id, started.elapsed().as_millis() as u64, output)
+            });
         }
 
         if !join_set.is_empty() {
@@ -310,9 +271,7 @@ where
             continue;
         }
 
-        if !progressed {
-            anyhow::bail!("DAG has unresolved or cyclic dependencies");
-        }
+        anyhow::bail!("DAG has unresolved or cyclic dependencies");
     }
 
     recorded.sort_by_key(|(sequence, _)| *sequence);
@@ -658,5 +617,49 @@ mod tests {
         assert!(max_active.load(Ordering::SeqCst) >= 2);
         assert!(applied.contains(&"branch".to_string()));
         assert!(applied.contains(&"leaf".to_string()));
+    }
+
+    #[tokio::test]
+    async fn execute_dag_with_parallelism_preserves_ready_spec_order_for_disabled_nodes() {
+        let specs = vec![
+            DagNodeSpec {
+                id: TestNode::Root,
+                dependencies: vec![],
+                hints: hints(false),
+                enabled: true,
+            },
+            DagNodeSpec {
+                id: TestNode::Branch,
+                dependencies: vec![TestNode::Root],
+                hints: hints(true),
+                enabled: true,
+            },
+            DagNodeSpec {
+                id: TestNode::Leaf,
+                dependencies: vec![TestNode::Root],
+                hints: hints(true),
+                enabled: false,
+            },
+        ];
+        let mut applied = Vec::new();
+
+        let records = execute_dag_with_parallelism(
+            &specs,
+            |node| {
+                Ok(async move { Ok(node.name().to_string()) }.boxed())
+            },
+            |_, output| {
+                applied.push(output);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            records.iter().map(|record| record.name.as_str()).collect::<Vec<_>>(),
+            vec!["root", "branch", "leaf"]
+        );
+        assert_eq!(applied, vec!["root", "branch"]);
     }
 }
