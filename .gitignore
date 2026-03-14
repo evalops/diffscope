@@ -3,9 +3,10 @@
 **/*.rs.bk
 *.pdb
 
-# IDE
+# IDE / editor
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~

@@ -32,8 +32,8 @@ These mutants are either equivalent (same behavior) or accepted by design. CI do
 After adding targeted tests (refresh_summary, get_event_stats exact aggregates/single-event/by_repo, prune boundary), many previously missed mutants are now killed. Any remaining misses in these areas are documented here after a run:
 
 - **refresh_summary**: Condition `summary.is_some() \|\| !comments.is_empty()` — tests now assert synthesized summary when comments exist and no summary.
-- **get_event_stats**: Percentile index, avg formulas, by_model/by_repo — tests assert exact values (e.g. p50/p95/p99, avg_score).
-- **prune**: Boundary `now - started_at > max_age_secs` — test asserts review exactly at boundary is not pruned; max_count test asserts oldest removed.
+- **get_event_stats**: Percentile index (line 244), model/repo count (253, 279), avg_duration (264) — tests assert exact p50/p95, by_repo count 2, prune one-over. Some mutants (e.g. `-`→`+` in index, `+=`→`-=`, `/`→`*`) may remain missed if test selection or equivalent behavior; add stronger exact assertions if baseline is raised.
+- **prune**: `now_secs - r.started_at > max_age_secs` (422) and `reviews.len() > max_count` (441). Boundary test keeps review exactly at max_age; max_count tests assert 1 removed when 4 reviews and max_count=3. The `> max_count` vs `>= max_count` mutant at 441 is equivalent when len > max_count (same to_remove); when len == max_count, both yield 0 removed.
 
 If new mutants appear in these regions, add assertions that would fail on the wrong operator/formula, or add them to this table with a one-line rationale.
 

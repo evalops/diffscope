@@ -1431,6 +1431,81 @@ mod tests {
         assert_eq!(stats.by_model[0].avg_duration_ms, 200.0);
     }
 
+    /// Percentile index formula: (p/100)*(len-1).round(). With 5 durations [10,20,30,40,50], p50 index=2 → 30, p95 index=4 → 50.
+    #[tokio::test]
+    async fn test_get_event_stats_percentile_index_formula() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+        let now = now_ts();
+        for (i, &dur) in [10_u64, 20, 30, 40, 50].iter().enumerate() {
+            let s = make_session_with_event(
+                &format!("r{}", i),
+                now + i as i64,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "head",
+                dur,
+            );
+            backend.save_review(&s).await.unwrap();
+        }
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+        assert_eq!(stats.p50_latency_ms, 30, "p50 index (0.5*4).round()=2 → 30");
+        assert_eq!(
+            stats.p95_latency_ms, 50,
+            "p95 index (0.95*4).round()=4 → 50"
+        );
+    }
+
+    /// By-repo count: entry.0 += 1 per event. Two events same repo → count 2.
+    #[tokio::test]
+    async fn test_get_event_stats_by_repo_count_two_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+        let now = now_ts();
+        for i in 0..2 {
+            let mut s = make_session_with_event(
+                &format!("r{}", i),
+                now + i as i64,
+                ReviewStatus::Complete,
+                "review.completed",
+                "gpt-4o",
+                "head",
+                100,
+            );
+            if let Some(ref mut e) = s.event {
+                e.github_repo = Some("org/repo".to_string());
+            }
+            backend.save_review(&s).await.unwrap();
+        }
+        let stats = backend
+            .get_event_stats(&EventFilters::default())
+            .await
+            .unwrap();
+        assert_eq!(stats.by_repo.len(), 1);
+        assert_eq!(stats.by_repo[0].repo, "org/repo");
+        assert_eq!(stats.by_repo[0].count, 2);
+    }
+
+    /// Prune max_count: exactly one over limit (4 reviews, max_count=3) → remove 1, keep 3.
+    #[tokio::test]
+    async fn test_prune_max_count_exactly_one_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = JsonStorageBackend::new(&dir.path().join("reviews.json"));
+        let base = now_ts() - 10_000;
+        for i in 0..4 {
+            let s = make_session(&format!("r{}", i), base + i as i64, ReviewStatus::Complete);
+            backend.save_review(&s).await.unwrap();
+        }
+        let removed = backend.prune_at(1_000_000, 3, base + 10).await.unwrap();
+        assert_eq!(removed, 1, "4 - 3 = 1 removed");
+        let list = backend.list_reviews(10, 0).await.unwrap();
+        assert_eq!(list.len(), 3);
+    }
+
     /// refresh_summary: get_review with comments but no summary produces synthesized summary.
     #[tokio::test]
     async fn test_get_review_refreshes_summary_when_comments_no_summary() {
