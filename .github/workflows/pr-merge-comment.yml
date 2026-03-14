@@ -1,0 +1,48 @@
+# When a PR is merged, comment on linked issues (Closes #N, Fixes #N, etc.).
+name: PR merge — comment on linked issues
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  comment-linked-issues:
+    name: Comment on linked issues
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Extract linked issue numbers
+        id: issues
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+        run: |
+          ISSUES=$(echo "$PR_BODY" | grep -ioE '(closes?|fixes?|resolves?)\s+#[0-9]+' | grep -oE '#[0-9]+' | tr -d '#' | sort -nu)
+          {
+            if [ -z "$ISSUES" ]; then
+              echo "ids="
+            else
+              echo "ids<<EOF"
+              echo "$ISSUES"
+              echo "EOF"
+            fi
+            echo "pr_num=$PR_NUM"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment on each linked issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ steps.issues.outputs.pr_num }}
+          ISSUE_IDS: ${{ steps.issues.outputs.ids }}
+        run: |
+          if [ -z "$ISSUE_IDS" ]; then
+            echo "No linked issues to comment on."
+            exit 0
+          fi
+          for id in $ISSUE_IDS; do
+            echo "Commenting on issue #$id..."
+            gh issue comment "$id" --body "Shipped in PR #${PR_NUM} (merged to main)."
+          done

@@ -1,7 +1,29 @@
 # cargo-deny: https://embarkstudios.github.io/cargo-deny/
-# CI runs: cargo deny check advisories (licenses optional; expand allow list to enable).
+# CI runs: cargo deny check advisories licenses
 
 [advisories]
 version = 2
 unmaintained = "workspace"
 yanked = "warn"
+
+[licenses]
+version = 2
+allow = [
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Zlib",
+]
+# Compound expressions: allow via exceptions for specific crates.
+[[licenses.exceptions]]
+allow = ["Apache-2.0", "ISC"]
+crate = "ring"
+
+[[licenses.exceptions]]
+allow = ["MIT", "Apache-2.0", "Unicode-3.0"]
+crate = "unicode-ident"
