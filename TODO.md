@@ -40,8 +40,8 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 13. [x] Compute merge-readiness summaries for GitHub PR reviews using severity, unresolved count, and verification state.
 14. [x] Add stale-review detection when new commits land after the latest completed review.
 15. [x] Show "needs re-review" state in review detail and history pages for incremental PR workflows.
-16. [ ] Distinguish informational findings from blocking findings in lifecycle and readiness calculations.
-17. [ ] Add "critical blockers" summary cards for unresolved `Error` and `Warning` comments.
+16. [x] Distinguish informational findings from blocking findings in lifecycle and readiness calculations.
+17. [x] Add "critical blockers" summary cards for unresolved `Error` and `Warning` comments.
 18. [ ] Add per-PR readiness timelines showing when a review became mergeable.
 19. [ ] Store resolution timestamps for findings so mean-time-to-fix can be measured.
 20. [ ] Add CLI and API surfaces to query PR readiness without opening the web UI.
@@ -158,4 +158,5 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 - [x] Ship first-pass finding lifecycle state and lightweight merge readiness through the backend, API, CLI summaries, and review UI.
 - [x] Make merge readiness verification-aware and surface stale PR reviews as needs re-review in history/detail views.
 - [x] Make stale-review detection compare PR head SHAs so same-head reruns do not look stale.
+- [x] Split open findings into blocking vs informational buckets and surface critical blocker cards in review detail.
 - [ ] Commit and push each validated checkpoint before moving to the next epic.

@@ -145,6 +145,9 @@ export function ReviewView() {
     Inconclusive: 'text-accent',
   }
 
+  const openErrorCount = review.summary?.open_by_severity.Error ?? 0
+  const openWarningCount = review.summary?.open_by_severity.Warning ?? 0
+
   return (
     <div className="flex h-full">
       {/* File sidebar */}
@@ -184,10 +187,16 @@ export function ReviewView() {
                   open
                 </span>
                 <span className="flex items-center gap-1">
-                  <span className={review.summary.open_blockers > 0 ? 'text-sev-warning' : 'text-sev-suggestion'}>
-                    {review.summary.open_blockers}
+                  <span className={review.summary.open_blocking_comments > 0 ? 'text-sev-warning' : 'text-sev-suggestion'}>
+                    {review.summary.open_blocking_comments}
                   </span>
-                  blocker{review.summary.open_blockers === 1 ? '' : 's'}
+                  blocking
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className={review.summary.open_informational_comments > 0 ? 'text-accent' : 'text-text-muted'}>
+                    {review.summary.open_informational_comments}
+                  </span>
+                  informational
                 </span>
                 <span className="flex items-center gap-1">
                   <FileCode size={11} />
@@ -246,6 +255,35 @@ export function ReviewView() {
                 {review.summary.readiness_reasons.join(' | ')}
               </span>
             )}
+          </div>
+        )}
+
+        {review.summary && (
+          <div className="px-3 py-3 border-b border-border bg-surface grid grid-cols-2 lg:grid-cols-4 gap-2">
+            <SummaryCard
+              label="Error Blockers"
+              value={openErrorCount}
+              hint="Open Error findings"
+              tone={openErrorCount > 0 ? 'error' : 'muted'}
+            />
+            <SummaryCard
+              label="Warning Blockers"
+              value={openWarningCount}
+              hint="Open Warning findings"
+              tone={openWarningCount > 0 ? 'warning' : 'muted'}
+            />
+            <SummaryCard
+              label="Blocking Open"
+              value={review.summary.open_blocking_comments}
+              hint="Error + Warning"
+              tone={review.summary.open_blocking_comments > 0 ? 'warning' : 'muted'}
+            />
+            <SummaryCard
+              label="Informational Open"
+              value={review.summary.open_informational_comments}
+              hint="Info + Suggestion"
+              tone={review.summary.open_informational_comments > 0 ? 'accent' : 'muted'}
+            />
           </div>
         )}
 
@@ -369,6 +407,35 @@ export function ReviewView() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function SummaryCard(
+  {
+    label,
+    value,
+    hint,
+    tone,
+  }: {
+    label: string
+    value: number
+    hint: string
+    tone: 'error' | 'warning' | 'accent' | 'muted'
+  },
+) {
+  const toneStyles = {
+    error: 'border-sev-error/20 bg-sev-error/5 text-sev-error',
+    warning: 'border-sev-warning/20 bg-sev-warning/5 text-sev-warning',
+    accent: 'border-accent/20 bg-accent/5 text-accent',
+    muted: 'border-border bg-surface-1 text-text-muted',
+  }
+
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${toneStyles[tone]}`}>
+      <div className="text-[10px] font-code uppercase tracking-[0.08em]">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-text-primary">{value}</div>
+      <div className="text-[11px]">{hint}</div>
     </div>
   )
 }

@@ -44,6 +44,12 @@ pub struct ReviewSummary {
     #[serde(default)]
     pub open_comments: usize,
     #[serde(default)]
+    pub open_by_severity: HashMap<String, usize>,
+    #[serde(default)]
+    pub open_blocking_comments: usize,
+    #[serde(default)]
+    pub open_informational_comments: usize,
+    #[serde(default)]
     pub resolved_comments: usize,
     #[serde(default)]
     pub dismissed_comments: usize,
@@ -166,6 +172,14 @@ impl Severity {
             Severity::Info => "info",
             Severity::Suggestion => "suggestion",
         }
+    }
+
+    pub fn is_blocking(&self) -> bool {
+        matches!(self, Severity::Error | Severity::Warning)
+    }
+
+    pub fn is_informational(&self) -> bool {
+        matches!(self, Severity::Info | Severity::Suggestion)
     }
 }
 

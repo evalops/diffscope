@@ -8,9 +8,12 @@ use super::{
 pub(super) fn generate_summary(comments: &[Comment]) -> ReviewSummary {
     let mut by_severity = HashMap::new();
     let mut by_category = HashMap::new();
+    let mut open_by_severity = HashMap::new();
     let mut files = HashSet::new();
     let mut critical_issues = 0;
     let mut open_comments = 0;
+    let mut open_blocking_comments = 0;
+    let mut open_informational_comments = 0;
     let mut resolved_comments = 0;
     let mut dismissed_comments = 0;
     let mut open_blockers = 0;
@@ -31,8 +34,15 @@ pub(super) fn generate_summary(comments: &[Comment]) -> ReviewSummary {
         match comment.status {
             CommentStatus::Open => {
                 open_comments += 1;
-                if matches!(comment.severity, Severity::Error | Severity::Warning) {
+                *open_by_severity
+                    .entry(comment.severity.to_string())
+                    .or_insert(0) += 1;
+                if comment.severity.is_blocking() {
+                    open_blocking_comments += 1;
                     open_blockers += 1;
+                }
+                if comment.severity.is_informational() {
+                    open_informational_comments += 1;
                 }
             }
             CommentStatus::Resolved => resolved_comments += 1,
@@ -49,6 +59,9 @@ pub(super) fn generate_summary(comments: &[Comment]) -> ReviewSummary {
         overall_score: calculate_overall_score(comments),
         recommendations: generate_recommendations(comments),
         open_comments,
+        open_by_severity,
+        open_blocking_comments,
+        open_informational_comments,
         resolved_comments,
         dismissed_comments,
         open_blockers,
@@ -220,9 +233,12 @@ mod tests {
         let summary = generate_summary(&comments);
         assert_eq!(summary.total_comments, 3);
         assert_eq!(summary.open_comments, 1);
+        assert_eq!(summary.open_blocking_comments, 1);
+        assert_eq!(summary.open_informational_comments, 0);
         assert_eq!(summary.resolved_comments, 1);
         assert_eq!(summary.dismissed_comments, 1);
         assert_eq!(summary.open_blockers, 1);
+        assert_eq!(summary.open_by_severity.get("Error"), Some(&1));
         assert_eq!(summary.merge_readiness, MergeReadiness::NeedsAttention);
         assert_eq!(
             summary.recommendations,
@@ -249,8 +265,42 @@ mod tests {
 
         let summary = generate_summary(&comments);
         assert_eq!(summary.open_blockers, 0);
+        assert_eq!(summary.open_blocking_comments, 0);
+        assert_eq!(summary.open_informational_comments, 0);
         assert_eq!(summary.merge_readiness, MergeReadiness::Ready);
         assert!(summary.recommendations.is_empty());
+    }
+
+    #[test]
+    fn summary_distinguishes_blocking_and_informational_open_findings() {
+        let comments = vec![
+            make_comment(
+                "open-warning",
+                Severity::Warning,
+                Category::Bug,
+                CommentStatus::Open,
+            ),
+            make_comment(
+                "open-info",
+                Severity::Info,
+                Category::Documentation,
+                CommentStatus::Open,
+            ),
+            make_comment(
+                "open-suggestion",
+                Severity::Suggestion,
+                Category::Style,
+                CommentStatus::Open,
+            ),
+        ];
+
+        let summary = generate_summary(&comments);
+        assert_eq!(summary.open_comments, 3);
+        assert_eq!(summary.open_blocking_comments, 1);
+        assert_eq!(summary.open_informational_comments, 2);
+        assert_eq!(summary.open_by_severity.get("Warning"), Some(&1));
+        assert_eq!(summary.open_by_severity.get("Info"), Some(&1));
+        assert_eq!(summary.open_by_severity.get("Suggestion"), Some(&1));
     }
 
     #[test]

@@ -41,6 +41,9 @@ export interface ReviewSummary {
   overall_score: number
   recommendations: string[]
   open_comments: number
+  open_by_severity: Record<string, number>
+  open_blocking_comments: number
+  open_informational_comments: number
   resolved_comments: number
   dismissed_comments: number
   open_blockers: number

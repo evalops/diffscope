@@ -92,6 +92,10 @@ pub fn format_as_markdown(comments: &[core::Comment], rule_priority: &[String]) 
         summary.open_blockers
     ));
     output.push_str(&format!(
+        "🚧 **Blocking Open:** {} | 💡 **Informational Open:** {}\n\n",
+        summary.open_blocking_comments, summary.open_informational_comments
+    ));
+    output.push_str(&format!(
         "🧪 **Verification:** {}",
         summary.verification.state
     ));
@@ -306,6 +310,10 @@ pub fn format_smart_review_output(
     output.push_str(&format!(
         "⛔ **Open Blockers:** {}\n\n",
         summary.open_blockers
+    ));
+    output.push_str(&format!(
+        "🚧 **Blocking Open:** {} | 💡 **Informational Open:** {}\n\n",
+        summary.open_blocking_comments, summary.open_informational_comments
     ));
     output.push_str(&format!(
         "🧪 **Verification:** {}",
@@ -899,6 +907,12 @@ mod tests {
             by_category: std::collections::HashMap::from([("Bug".to_string(), 2)]),
             recommendations: vec!["Fix bugs".to_string()],
             open_comments: 2,
+            open_by_severity: std::collections::HashMap::from([
+                ("Error".to_string(), 1),
+                ("Warning".to_string(), 1),
+            ]),
+            open_blocking_comments: 2,
+            open_informational_comments: 0,
             resolved_comments: 0,
             dismissed_comments: 0,
             open_blockers: 2,

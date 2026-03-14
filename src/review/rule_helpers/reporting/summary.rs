@@ -23,6 +23,10 @@ pub fn build_pr_summary_comment_body(
         summary.open_comments, summary.resolved_comments, summary.dismissed_comments
     ));
     body.push_str(&format!("- Open blockers: {}\n", summary.open_blockers));
+    body.push_str(&format!(
+        "- Blocking open: {} | Informational open: {}\n",
+        summary.open_blocking_comments, summary.open_informational_comments
+    ));
     body.push_str(&format!("- Verification: {}", summary.verification.state));
     if summary.verification.judge_count > 0 {
         body.push_str(&format!(
