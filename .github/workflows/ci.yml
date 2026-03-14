@@ -66,3 +66,27 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Test
         run: cargo test
+
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked
+      - name: Mutation test (storage_json)
+        run: |
+          timeout 900 cargo mutants -f '*storage_json*' 2>&1 | tee mutation.log || true
+          MISSED=$(grep -E '[0-9]+ missed' mutation.log | tail -1 | grep -oE '[0-9]+' | head -1 || echo "0")
+          echo "missed=$MISSED" >> "$GITHUB_OUTPUT"
+        id: mutation
+      - name: Check mutation baseline
+        run: |
+          MISSED="${{ steps.mutation.outputs.missed }}"
+          BASELINE=15
+          if [ -n "$MISSED" ] && [ "$MISSED" -gt "$BASELINE" ]; then
+            echo "Mutation missed count $MISSED exceeds baseline $BASELINE. Update docs/mutation-testing.md and this baseline if intentional."
+            exit 1
+          fi
+        if: always() && steps.mutation.outputs.missed != ''

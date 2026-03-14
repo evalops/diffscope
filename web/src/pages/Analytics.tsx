@@ -4,7 +4,7 @@ import {
   AreaChart, Area, BarChart, Bar,
   ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
-import { useAnalyticsTrends, useReviews } from '../api/hooks'
+import { useAnalyticsTrends, useEventStats, useReviews } from '../api/hooks'
 import { AlertTriangle, Download, Loader2 } from 'lucide-react'
 import type { FeedbackEvalTrendGap } from '../api/types'
 import {
@@ -17,6 +17,7 @@ import {
   formatDurationHours,
   formatPercent,
 } from '../lib/analytics'
+import { formatCost } from '../lib/cost'
 import { scoreColorClass } from '../lib/scores'
 import { SEV_COLORS, CHART_THEME } from '../lib/constants'
 
@@ -120,6 +121,7 @@ export function Analytics() {
   const navigate = useNavigate()
   const { data: reviews, isLoading } = useReviews()
   const { data: trends, isLoading: trendsLoading } = useAnalyticsTrends()
+  const { data: eventStats } = useEventStats()
   const [drilldownSelection, setDrilldownSelection] = useState<
     { type: 'review'; reviewId: string }
     | { type: 'category'; category: string }
@@ -290,8 +292,15 @@ export function Analytics() {
 
       {hasReviewAnalytics && (
         <>
-          <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
-            REVIEW ANALYTICS
+          <div className="flex items-center gap-4 mb-3">
+            <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code">
+              REVIEW ANALYTICS
+            </div>
+            {eventStats != null && (
+              <div className="text-[11px] text-text-muted font-code">
+                Est. cost (reviews): <span className="text-text-primary font-medium">{formatCost(eventStats.total_cost_estimate)}</span>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3 mb-6">

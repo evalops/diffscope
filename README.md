@@ -1017,7 +1017,7 @@ bash scripts/install-hooks.sh
 - When `web/` is staged: `npm run lint`, `tsc -b`, and `npm run test` in `web/`
 - When `scripts/` or `.githooks/` change: `shellcheck` (if installed)
 
-**Pre-push** runs the full gate: workflow check, version sync (`Cargo.toml` vs git tags), `cargo fmt`, `cargo clippy`, `cargo audit` (if installed), `npm ci && npm run build && npm run test` in `web/`, and `cargo test`. The first push after clone may take longer due to `npm ci`.
+**Pre-push** runs the full gate: workflow check, version sync (`Cargo.toml` vs git tags), `cargo fmt`, `cargo clippy`, `cargo audit` (if installed), `npm ci && npm run build && npm run test` in `web/`, and `cargo test`. The first push after clone may take longer due to `npm ci`. Mutation testing runs in CI only (see `docs/mutation-testing.md`), not on pre-push, to keep pushes fast. For a quick push without full checks use `git push --no-verify` (use sparingly).
 
 ## Supported Platforms
 
