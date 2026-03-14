@@ -79,6 +79,10 @@ pub struct ReviewEvent {
     pub tokens_completion: Option<usize>,
     pub tokens_total: Option<usize>,
 
+    // --- cost (server-side estimate for stats / log pipelines) ---
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_estimate_usd: Option<f64>,
+
     // --- per-file breakdown ---
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_metrics: Option<Vec<FileMetricEvent>>,
@@ -546,6 +550,7 @@ impl ReviewEventBuilder {
                 tokens_prompt: None,
                 tokens_completion: None,
                 tokens_total: None,
+                cost_estimate_usd: None,
                 file_metrics: None,
                 hotspot_details: None,
                 convention_suppressed: None,
@@ -640,6 +645,8 @@ impl ReviewEventBuilder {
         self.event.tokens_prompt = Some(prompt);
         self.event.tokens_completion = Some(completion);
         self.event.tokens_total = Some(total);
+        self.event.cost_estimate_usd =
+            Some(super::cost::estimate_cost_usd(&self.event.model, total));
         self
     }
 
@@ -721,7 +728,17 @@ pub fn emit_wide_event(event: &ReviewEvent) {
         error = ?event.error,
         "review.event"
     );
-    if let Ok(json) = serde_json::to_string(event) {
+    // One JSON line per event for log pipelines / OTEL: include @timestamp and event.name for filtering.
+    let timestamp = event
+        .created_at
+        .map(|t| t.to_rfc3339())
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    let payload = serde_json::json!({
+        "@timestamp": timestamp,
+        "event": { "name": "review.event", "kind": "event" },
+        "review": event
+    });
+    if let Ok(json) = serde_json::to_string(&payload) {
         info!(target: "review.event.json", "{}", json);
     }
 }

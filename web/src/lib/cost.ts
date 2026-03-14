@@ -21,8 +21,9 @@ const priceLookup: [string[], number][] = MODEL_PRESETS.map(p => {
   return [fragments, parsePricePerMillion(p.price)]
 })
 
-/** Estimate cost in USD for a review event based on total tokens and model pricing. */
+/** Estimate cost in USD for a review event. Prefer server-side cost_estimate_usd when present. */
 export function estimateCost(event: ReviewEvent): number {
+  if (event.cost_estimate_usd != null && event.cost_estimate_usd >= 0) return event.cost_estimate_usd
   const tokens = event.tokens_total ?? 0
   if (tokens === 0) return 0
 

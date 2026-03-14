@@ -301,7 +301,7 @@ impl StorageBackend for PgStorageBackend {
                 diff_bytes, diff_files_total, diff_files_reviewed, diff_files_skipped,
                 comments_total, comments_by_severity, comments_by_category, overall_score,
                 hotspots_detected, high_risk_files,
-                tokens_prompt, tokens_completion, tokens_total,
+                tokens_prompt, tokens_completion, tokens_total, cost_estimate_usd,
                 file_metrics, hotspot_details, convention_suppressed, comments_by_pass,
                 github_posted, github_repo, github_pr, error
             )
@@ -311,9 +311,9 @@ impl StorageBackend for PgStorageBackend {
                 $11, $12, $13, $14,
                 $15, $16, $17, $18,
                 $19, $20,
-                $21, $22, $23,
-                $24, $25, $26, $27,
-                $28, $29, $30, $31
+                $21, $22, $23, $24,
+                $25, $26, $27, $28,
+                $29, $30, $31, $32
             )
             ON CONFLICT (review_id) DO UPDATE SET
                 event_type = EXCLUDED.event_type,
@@ -323,6 +323,7 @@ impl StorageBackend for PgStorageBackend {
                 comments_by_category = EXCLUDED.comments_by_category,
                 overall_score = EXCLUDED.overall_score,
                 tokens_total = EXCLUDED.tokens_total,
+                cost_estimate_usd = EXCLUDED.cost_estimate_usd,
                 github_posted = EXCLUDED.github_posted,
                 error = EXCLUDED.error
             "#,
@@ -350,6 +351,7 @@ impl StorageBackend for PgStorageBackend {
         .bind(event.tokens_prompt.map(|v| v as i32))
         .bind(event.tokens_completion.map(|v| v as i32))
         .bind(event.tokens_total.map(|v| v as i32))
+        .bind(event.cost_estimate_usd)
         .bind(&file_metrics)
         .bind(&hotspot_details)
         .bind(event.convention_suppressed.map(|v| v as i32))
@@ -411,7 +413,7 @@ impl StorageBackend for PgStorageBackend {
              diff_bytes, diff_files_total, diff_files_reviewed, diff_files_skipped, \
              comments_total, comments_by_severity, comments_by_category, overall_score, \
              hotspots_detected, high_risk_files, \
-             tokens_prompt, tokens_completion, tokens_total, \
+             tokens_prompt, tokens_completion, tokens_total, cost_estimate_usd, \
              file_metrics, hotspot_details, convention_suppressed, comments_by_pass, \
              github_posted, github_repo, github_pr, error, created_at \
              FROM review_events {where_clause} ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
@@ -446,21 +448,23 @@ impl StorageBackend for PgStorageBackend {
     async fn get_event_stats(&self, filters: &EventFilters) -> anyhow::Result<EventStats> {
         let where_clause = self.build_time_where(filters);
 
-        // Aggregate stats
-        let agg = sqlx::query_as::<_, (i64, i64, i64, i64, f64, Option<f64>)>(&format!(
+        // Aggregate stats (including cost)
+        let agg = sqlx::query_as::<_, (i64, i64, i64, i64, f64, Option<f64>, f64)>(&format!(
             "SELECT \
                  COUNT(*), \
                  COUNT(*) FILTER (WHERE event_type = 'review.completed'), \
                  COUNT(*) FILTER (WHERE event_type = 'review.failed'), \
                  COALESCE(SUM(COALESCE(tokens_total, 0)), 0), \
                  COALESCE(AVG(duration_ms)::FLOAT8, 0), \
-                 (AVG(overall_score) FILTER (WHERE overall_score IS NOT NULL))::FLOAT8 \
+                 (AVG(overall_score) FILTER (WHERE overall_score IS NOT NULL))::FLOAT8, \
+                 COALESCE(SUM(cost_estimate_usd), 0)::FLOAT8 \
                  FROM review_events {where_clause}"
         ))
         .fetch_one(&self.pool)
         .await?;
 
         let total = agg.0;
+        let total_cost_estimate = agg.6;
         let completed = agg.1;
         let failed = agg.2;
         let error_rate = if total > 0 {
@@ -579,7 +583,7 @@ impl StorageBackend for PgStorageBackend {
             severity_totals,
             category_totals,
             daily_counts,
-            total_cost_estimate: 0.0, // Computed client-side using model pricing
+            total_cost_estimate,
         })
     }
 
@@ -727,6 +731,7 @@ struct EventRow {
     tokens_prompt: Option<i32>,
     tokens_completion: Option<i32>,
     tokens_total: Option<i32>,
+    cost_estimate_usd: Option<f64>,
     file_metrics: Option<serde_json::Value>,
     hotspot_details: Option<serde_json::Value>,
     convention_suppressed: Option<i32>,
@@ -771,6 +776,7 @@ impl EventRow {
             tokens_prompt: self.tokens_prompt.map(|v| v as usize),
             tokens_completion: self.tokens_completion.map(|v| v as usize),
             tokens_total: self.tokens_total.map(|v| v as usize),
+            cost_estimate_usd: self.cost_estimate_usd,
             file_metrics: self
                 .file_metrics
                 .and_then(|v| serde_json::from_value(v).ok()),

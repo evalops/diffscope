@@ -326,6 +326,31 @@ impl StorageBackend for JsonStorageBackend {
             }
         }
 
+        // Daily counts (group by created_at date)
+        let mut daily_map: HashMap<String, (i64, i64)> = HashMap::new();
+        for e in &events {
+            if let Some(created) = e.created_at {
+                let date_str = created.format("%Y-%m-%d").to_string();
+                let entry = daily_map.entry(date_str).or_insert((0, 0));
+                if e.event_type == "review.completed" {
+                    entry.0 += 1;
+                } else if e.event_type == "review.failed" {
+                    entry.1 += 1;
+                }
+            }
+        }
+        let mut daily_counts: Vec<super::storage::DailyCount> = daily_map
+            .into_iter()
+            .map(|(date, (completed, failed))| super::storage::DailyCount {
+                date,
+                completed,
+                failed,
+            })
+            .collect();
+        daily_counts.sort_by(|a, b| a.date.cmp(&b.date));
+
+        let total_cost_estimate: f64 = events.iter().filter_map(|e| e.cost_estimate_usd).sum();
+
         Ok(EventStats {
             total_reviews: total,
             completed_count: completed,
@@ -342,8 +367,8 @@ impl StorageBackend for JsonStorageBackend {
             by_repo,
             severity_totals,
             category_totals,
-            daily_counts: Vec::new(), // No date grouping for JSON backend
-            total_cost_estimate: 0.0,
+            daily_counts,
+            total_cost_estimate,
         })
     }
 

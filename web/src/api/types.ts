@@ -105,6 +105,7 @@ export interface ReviewEvent {
   tokens_prompt?: number
   tokens_completion?: number
   tokens_total?: number
+  cost_estimate_usd?: number
   file_metrics?: FileMetricEvent[]
   hotspot_details?: HotspotDetail[]
   convention_suppressed?: number
