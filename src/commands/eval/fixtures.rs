@@ -348,4 +348,128 @@ expect:
             Some("bug.async.context-cancel-order")
         );
     }
+
+    #[test]
+    fn test_checked_in_error_handling_pack_loads_expected_fixtures() {
+        let pack_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/deep_review_suite/review_depth_error_handling.json");
+
+        let fixtures = load_eval_fixtures_from_path(&pack_path).unwrap();
+
+        assert_eq!(fixtures.len(), 4);
+        let unwrap_request = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-error-handling/rust-unwrap-in-request-handler")
+            })
+            .unwrap();
+        assert_eq!(
+            unwrap_request.fixture.expect.must_find[0]
+                .rule_id
+                .as_deref(),
+            Some("bug.error-handling.unwrap-request")
+        );
+
+        let ignored_error = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-error-handling/go-ignored-error-return")
+            })
+            .unwrap();
+        assert_eq!(
+            ignored_error.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.error-handling.ignored-error")
+        );
+
+        let bare_except = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-error-handling/python-bare-except-silences-error")
+            })
+            .unwrap();
+        assert_eq!(
+            bare_except.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.error-handling.bare-except")
+        );
+
+        let unhandled_promise = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-error-handling/ts-unhandled-promise-rejection")
+            })
+            .unwrap();
+        assert_eq!(
+            unhandled_promise.fixture.expect.must_find[0]
+                .rule_id
+                .as_deref(),
+            Some("bug.error-handling.unhandled-promise")
+        );
+    }
+
+    #[test]
+    fn test_checked_in_language_footguns_pack_loads_expected_fixtures() {
+        let pack_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/deep_review_suite/review_depth_language_footguns.json");
+
+        let fixtures = load_eval_fixtures_from_path(&pack_path).unwrap();
+
+        assert_eq!(fixtures.len(), 4);
+        let nil_interface = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-language-footguns/go-nil-interface-comparison")
+            })
+            .unwrap();
+        assert_eq!(
+            nil_interface.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.lang.nil-interface")
+        );
+
+        let mutable_default = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-language-footguns/python-mutable-default-arg")
+            })
+            .unwrap();
+        assert_eq!(
+            mutable_default.fixture.expect.must_find[0]
+                .rule_id
+                .as_deref(),
+            Some("bug.lang.mutable-default")
+        );
+
+        let dangling_reference = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-language-footguns/rust-lifetime-dangling-ref")
+            })
+            .unwrap();
+        assert_eq!(
+            dangling_reference.fixture.expect.must_find[0]
+                .rule_id
+                .as_deref(),
+            Some("bug.lang.dangling-reference")
+        );
+
+        let loose_equality = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-language-footguns/ts-equality-coercion-trap")
+            })
+            .unwrap();
+        assert_eq!(
+            loose_equality.fixture.expect.must_find[0]
+                .rule_id
+                .as_deref(),
+            Some("bug.lang.loose-equality")
+        );
+    }
 }

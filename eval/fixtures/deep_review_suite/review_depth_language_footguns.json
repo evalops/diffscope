@@ -1,0 +1,164 @@
+{
+  "name": "review-depth-language-footguns",
+  "author": "diffscope",
+  "version": "1.0.0",
+  "description": "Language-specific semantic footgun benchmark pack for deeper live review runs.",
+  "languages": [
+    "go",
+    "python",
+    "rust",
+    "typescript"
+  ],
+  "categories": [
+    "bug"
+  ],
+  "thresholds": {
+    "min_precision": 0.45,
+    "min_recall": 0.35,
+    "min_f1": 0.4,
+    "max_false_positive_rate": 0.45,
+    "min_weighted_score": 0.45
+  },
+  "metadata": {
+    "purpose": "live-regression-eval",
+    "family": "review-depth"
+  },
+  "fixtures": [
+    {
+      "name": "go-nil-interface-comparison",
+      "category": "bug",
+      "language": "go",
+      "difficulty": "Hard",
+      "diff_content": "diff --git a/internal/validate/error.go b/internal/validate/error.go\nindex 1111111..2222222 100644\n--- a/internal/validate/error.go\n+++ b/internal/validate/error.go\n@@ -1,4 +1,5 @@\n func ValidateConfig(raw []byte) error {\n-    return nil\n+    var err *ConfigError = nil\n+    return err\n }\n",
+      "expected_findings": [
+        {
+          "description": "Typed nil pointer is returned as an error interface, so callers can observe a non-nil error even though the concrete pointer is nil.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "internal/validate/error.go",
+          "line_hint": 3,
+          "contains_any": [
+            "typed nil error",
+            "non-nil interface",
+            "nil interface gotcha",
+            "returning *ConfigError as error",
+            "if err != nil can misfire"
+          ],
+          "rule_id": "bug.lang.nil-interface"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Go reviewers should catch typed-nil values that become non-nil when stored in interfaces.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "python-mutable-default-arg",
+      "category": "bug",
+      "language": "python",
+      "difficulty": "Easy",
+      "diff_content": "diff --git a/app/collector.py b/app/collector.py\nindex 1111111..2222222 100644\n--- a/app/collector.py\n+++ b/app/collector.py\n@@ -1,4 +1,3 @@\n-def record_event(event, seen=None):\n-    seen = seen or []\n+def record_event(event, seen=[]):\n     seen.append(event)\n     return seen\n",
+      "expected_findings": [
+        {
+          "description": "Mutable default list is shared across calls and will accumulate state between invocations.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "app/collector.py",
+          "line_hint": 1,
+          "contains_any": [
+            "mutable default argument",
+            "shared list across calls",
+            "default [] is reused",
+            "state leaks between invocations",
+            "use None and initialize inside"
+          ],
+          "rule_id": "bug.lang.mutable-default"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Python reviewers should catch mutable default arguments that silently share state.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "rust-lifetime-dangling-ref",
+      "category": "bug",
+      "language": "rust",
+      "difficulty": "Hard",
+      "diff_content": "diff --git a/src/labels.rs b/src/labels.rs\nindex 1111111..2222222 100644\n--- a/src/labels.rs\n+++ b/src/labels.rs\n@@ -1,3 +1,4 @@\n pub fn default_label() -> &'static str {\n-    \"worker\"\n+    let label = String::from(\"worker\");\n+    unsafe { std::mem::transmute::<&str, &'static str>(label.as_str()) }\n }\n",
+      "expected_findings": [
+        {
+          "description": "Unsafe transmute extends the lifetime of a reference to a local String, creating a dangling reference and undefined behavior.",
+          "severity": "Error",
+          "category": "Bug",
+          "file_pattern": "src/labels.rs",
+          "line_hint": 3,
+          "contains_any": [
+            "dangling reference",
+            "unsafe transmute",
+            "reference to local string escapes",
+            "undefined behavior",
+            "invalid lifetime extension"
+          ],
+          "rule_id": "bug.lang.dangling-reference"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Rust reviewers should detect unsafe lifetime extension that returns references to freed stack data.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "ts-equality-coercion-trap",
+      "category": "bug",
+      "language": "typescript",
+      "difficulty": "Easy",
+      "diff_content": "diff --git a/src/filter.ts b/src/filter.ts\nindex 1111111..2222222 100644\n--- a/src/filter.ts\n+++ b/src/filter.ts\n@@ -1,3 +1,3 @@\n export function isZeroish(value: string | number | boolean) {\n-  return value === 0;\n+  return value == 0;\n }\n",
+      "expected_findings": [
+        {
+          "description": "Loose equality allows coercion so values like empty strings or false can compare equal to 0 unexpectedly.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "src/filter.ts",
+          "line_hint": 2,
+          "contains_any": [
+            "loose equality",
+            "type coercion",
+            "== 0 can match \"\" or false",
+            "use strict equality",
+            "=== instead of =="
+          ],
+          "rule_id": "bug.lang.loose-equality"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "TypeScript reviewers should flag loose equality checks that rely on coercive semantics.",
+      "source": "deep-review-suite"
+    }
+  ]
+}

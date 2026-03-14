@@ -1,0 +1,164 @@
+{
+  "name": "review-depth-error-handling",
+  "author": "diffscope",
+  "version": "1.0.0",
+  "description": "Error-handling and panic-safety benchmark pack for deeper live review runs.",
+  "languages": [
+    "rust",
+    "go",
+    "python",
+    "typescript"
+  ],
+  "categories": [
+    "bug"
+  ],
+  "thresholds": {
+    "min_precision": 0.45,
+    "min_recall": 0.35,
+    "min_f1": 0.4,
+    "max_false_positive_rate": 0.45,
+    "min_weighted_score": 0.45
+  },
+  "metadata": {
+    "purpose": "live-regression-eval",
+    "family": "review-depth"
+  },
+  "fixtures": [
+    {
+      "name": "rust-unwrap-in-request-handler",
+      "category": "bug",
+      "language": "rust",
+      "difficulty": "Easy",
+      "diff_content": "diff --git a/src/http.rs b/src/http.rs\nindex 1111111..2222222 100644\n--- a/src/http.rs\n+++ b/src/http.rs\n@@ -1,5 +1,5 @@\n async fn get_user(Query(params): Query<HashMap<String, String>>) -> Result<Json<User>, StatusCode> {\n-    let user_id = params.get(\"user_id\").and_then(|value| value.parse::<u64>().ok()).ok_or(StatusCode::BAD_REQUEST)?;\n+    let user_id = params[\"user_id\"].parse::<u64>().unwrap();\n     Ok(Json(load_user(user_id).await?))\n }\n",
+      "expected_findings": [
+        {
+          "description": "Request handler unwraps user-controlled input and can panic instead of returning a bad-request error.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "src/http.rs",
+          "line_hint": 2,
+          "contains_any": [
+            "unwrap on user input",
+            "panic in request handler",
+            "bad request should be handled gracefully",
+            "parse::<u64>().unwrap",
+            "user-controlled input can panic"
+          ],
+          "rule_id": "bug.error-handling.unwrap-request"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Request paths should return validation failures instead of panicking on malformed user input.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "go-ignored-error-return",
+      "category": "bug",
+      "language": "go",
+      "difficulty": "Easy",
+      "diff_content": "diff --git a/internal/store/users.go b/internal/store/users.go\nindex 1111111..2222222 100644\n--- a/internal/store/users.go\n+++ b/internal/store/users.go\n@@ -1,6 +1,4 @@\n func DeleteUser(ctx context.Context, db *sql.DB, id int64) error {\n-    if _, err := db.ExecContext(ctx, \"DELETE FROM users WHERE id = ?\", id); err != nil {\n-        return err\n-    }\n+    _, _ = db.ExecContext(ctx, \"DELETE FROM users WHERE id = ?\", id)\n     return nil\n }\n",
+      "expected_findings": [
+        {
+          "description": "Database error is explicitly ignored, so delete failures are silently dropped.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "internal/store/users.go",
+          "line_hint": 2,
+          "contains_any": [
+            "ignored error",
+            "discarded error return",
+            "db.ExecContext error is dropped",
+            "silent failure",
+            "_, _ = db.ExecContext"
+          ],
+          "rule_id": "bug.error-handling.ignored-error"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Go code should not discard important error returns from database operations.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "python-bare-except-silences-error",
+      "category": "bug",
+      "language": "python",
+      "difficulty": "Easy",
+      "diff_content": "diff --git a/app/profile.py b/app/profile.py\nindex 1111111..2222222 100644\n--- a/app/profile.py\n+++ b/app/profile.py\n@@ -1,6 +1,7 @@\n def load_profile(path: str) -> dict:\n     try:\n         return json.loads(Path(path).read_text())\n-    except json.JSONDecodeError:\n-        return {}\n+    except:\n+        pass\n+    return {}\n",
+      "expected_findings": [
+        {
+          "description": "Bare except swallows every exception, including interrupts and unrelated runtime failures.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "app/profile.py",
+          "line_hint": 4,
+          "contains_any": [
+            "bare except",
+            "swallows all exceptions",
+            "except: catches KeyboardInterrupt",
+            "silences unrelated runtime errors",
+            "should catch a specific exception"
+          ],
+          "rule_id": "bug.error-handling.bare-except"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Python exception handlers should avoid bare except blocks that hide real failures.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "ts-unhandled-promise-rejection",
+      "category": "bug",
+      "language": "typescript",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/src/jobs.ts b/src/jobs.ts\nindex 1111111..2222222 100644\n--- a/src/jobs.ts\n+++ b/src/jobs.ts\n@@ -1,5 +1,5 @@\n export async function handleJob(job: Job) {\n-  await sendWebhook(job);\n+  sendWebhook(job);\n   job.status = \"done\";\n }\n",
+      "expected_findings": [
+        {
+          "description": "Async call is started without await or catch, so rejections can become unhandled and the job is marked done too early.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "src/jobs.ts",
+          "line_hint": 2,
+          "contains_any": [
+            "unhandled promise rejection",
+            "missing await",
+            "promise is neither awaited nor caught",
+            "job may be marked done before sendWebhook finishes",
+            "should await sendWebhook"
+          ],
+          "rule_id": "bug.error-handling.unhandled-promise"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Promise-returning work should be awaited or handled so failures are observable.",
+      "source": "deep-review-suite"
+    }
+  ]
+}
