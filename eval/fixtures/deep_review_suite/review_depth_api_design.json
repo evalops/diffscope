@@ -1,0 +1,164 @@
+{
+  "name": "review-depth-api-design",
+  "author": "diffscope",
+  "version": "1.0.0",
+  "description": "API design, contract validation, and breaking-change benchmark pack for deeper live review runs.",
+  "languages": [
+    "typescript",
+    "python",
+    "go",
+    "rust"
+  ],
+  "categories": [
+    "bug"
+  ],
+  "thresholds": {
+    "min_precision": 0.45,
+    "min_recall": 0.35,
+    "min_f1": 0.4,
+    "max_false_positive_rate": 0.45,
+    "min_weighted_score": 0.45
+  },
+  "metadata": {
+    "purpose": "live-regression-eval",
+    "family": "review-depth"
+  },
+  "fixtures": [
+    {
+      "name": "ts-breaking-api-field-rename",
+      "category": "bug",
+      "language": "typescript",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/src/api/users.ts b/src/api/users.ts\nindex 1111111..2222222 100644\n--- a/src/api/users.ts\n+++ b/src/api/users.ts\n@@ -2,7 +2,7 @@ export function serializeUser(user: User) {\n   return {\n     id: user.id,\n-    user_id: user.id,\n+    userId: user.id,\n     email: user.email,\n   };\n }\n",
+      "expected_findings": [
+        {
+          "description": "Renaming a response field from user_id to userId is a backwards-incompatible API contract change for existing clients.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "src/api/users.ts",
+          "line_hint": 4,
+          "contains_any": [
+            "breaking api change",
+            "renames response field",
+            "user_id to userId",
+            "backward incompatible",
+            "version or deprecate the old field"
+          ],
+          "rule_id": "design.api.field-rename"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Public API responses should not silently rename fields without a compatibility strategy.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "python-missing-input-validation",
+      "category": "bug",
+      "language": "python",
+      "difficulty": "Easy",
+      "diff_content": "diff --git a/app/api/orders.py b/app/api/orders.py\nindex 1111111..2222222 100644\n--- a/app/api/orders.py\n+++ b/app/api/orders.py\n@@ -1,6 +1,4 @@\n @router.get(\"/orders/{order_id}\")\n def get_order(order_id: int):\n-    if order_id < 1:\n-        raise HTTPException(status_code=400, detail=\"order_id must be positive\")\n     return repo.fetch_order(order_id)\n",
+      "expected_findings": [
+        {
+          "description": "Endpoint no longer validates that order_id is positive, so negative identifiers are accepted by the public API.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "app/api/orders.py",
+          "line_hint": 3,
+          "contains_any": [
+            "missing input validation",
+            "negative ids should be rejected",
+            "order_id must be positive",
+            "public endpoint accepts invalid negative values",
+            "validate the path parameter range"
+          ],
+          "rule_id": "design.api.input-validation"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Public endpoints should preserve basic input validation and reject invalid identifier ranges.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "go-removed-required-field",
+      "category": "bug",
+      "language": "go",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/api/orders.proto b/api/orders.proto\nindex 1111111..2222222 100644\n--- a/api/orders.proto\n+++ b/api/orders.proto\n@@ -1,6 +1,5 @@\n syntax = \"proto2\";\n message CreateOrderRequest {\n     required string customer_id = 1;\n-    required string region = 2;\n     optional string note = 3;\n }\n",
+      "expected_findings": [
+        {
+          "description": "Removing a required protobuf field is a breaking schema change for downstream consumers that still send or expect region.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "api/orders.proto",
+          "line_hint": 4,
+          "contains_any": [
+            "breaking schema change",
+            "removed required field",
+            "backward incompatible protobuf change",
+            "region field was part of the contract",
+            "requires versioning or staged deprecation"
+          ],
+          "rule_id": "design.api.required-field-removal"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Schema definitions should not remove required fields from published contracts without a compatibility plan.",
+      "source": "deep-review-suite"
+    },
+    {
+      "name": "rust-public-api-error-type-change",
+      "category": "bug",
+      "language": "rust",
+      "difficulty": "Medium",
+      "diff_content": "diff --git a/src/lib.rs b/src/lib.rs\nindex 1111111..2222222 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n-pub fn publish(event: Event) -> anyhow::Result<Receipt> {\n+pub fn publish(event: Event) -> Result<Receipt, PublishError> {\n     send(event)\n }\n",
+      "expected_findings": [
+        {
+          "description": "Changing a public function from anyhow::Result to Result<_, PublishError> is a breaking API signature change for library callers.",
+          "severity": "Warning",
+          "category": "Bug",
+          "file_pattern": "src/lib.rs",
+          "line_hint": 1,
+          "contains_any": [
+            "breaking public api",
+            "error type changed",
+            "anyhow::Result to Result<_, PublishError>",
+            "callers may fail to compile",
+            "requires a semver-major change or compatibility shim"
+          ],
+          "rule_id": "design.api.error-type-change"
+        }
+      ],
+      "negative_findings": [
+        {
+          "description": "Avoid style-only comments.",
+          "contains": "style"
+        }
+      ],
+      "min_total": 1,
+      "max_total": 8,
+      "description": "Public Rust APIs should treat return-type changes as contract breaks and gate them behind compatibility planning.",
+      "source": "deep-review-suite"
+    }
+  ]
+}

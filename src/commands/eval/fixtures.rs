@@ -472,4 +472,65 @@ expect:
             Some("bug.lang.loose-equality")
         );
     }
+
+    #[test]
+    fn test_checked_in_api_design_pack_loads_expected_fixtures() {
+        let pack_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/deep_review_suite/review_depth_api_design.json");
+
+        let fixtures = load_eval_fixtures_from_path(&pack_path).unwrap();
+
+        assert_eq!(fixtures.len(), 4);
+        let field_rename = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-api-design/ts-breaking-api-field-rename")
+            })
+            .unwrap();
+        assert_eq!(
+            field_rename.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("design.api.field-rename")
+        );
+
+        let input_validation = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-api-design/python-missing-input-validation")
+            })
+            .unwrap();
+        assert_eq!(
+            input_validation.fixture.expect.must_find[0]
+                .rule_id
+                .as_deref(),
+            Some("design.api.input-validation")
+        );
+
+        let removed_field = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-api-design/go-removed-required-field")
+            })
+            .unwrap();
+        assert_eq!(
+            removed_field.fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("design.api.required-field-removal")
+        );
+
+        let error_type_change = fixtures
+            .iter()
+            .find(|fixture| {
+                fixture.fixture.name.as_deref()
+                    == Some("review-depth-api-design/rust-public-api-error-type-change")
+            })
+            .unwrap();
+        assert_eq!(
+            error_type_change.fixture.expect.must_find[0]
+                .rule_id
+                .as_deref(),
+            Some("design.api.error-type-change")
+        );
+    }
 }
