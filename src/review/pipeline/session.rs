@@ -25,6 +25,7 @@ pub(super) struct ReviewSession {
     pub semantic_index: Option<core::semantic::SemanticIndex>,
     pub semantic_feedback_store: Option<core::SemanticFeedbackStore>,
     pub verification_context: HashMap<PathBuf, Vec<core::LLMContextChunk>>,
+    pub graph_query_traces: Vec<core::dag::DagExecutionTrace>,
 }
 
 impl ReviewSession {

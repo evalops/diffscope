@@ -103,7 +103,7 @@ impl<'a> ReviewPostprocessDagContext<'a> {
             agent_activity: self.agent_activity,
             verification_report,
             warnings,
-            dag_traces: Vec::new(),
+            dag_traces: self.session.graph_query_traces.clone(),
         }
     }
 }

@@ -41,6 +41,7 @@ pub(super) async fn build_review_session(
         enhanced_ctx,
         enhanced_guidance,
         verification_context: HashMap::new(),
+        graph_query_traces: Vec::new(),
     })
 }
 

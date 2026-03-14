@@ -33,6 +33,9 @@ pub(super) async fn prepare_diff_review_jobs(
     session
         .verification_context
         .insert(diff.file_path.clone(), prepared_file.context_chunks.clone());
+    session
+        .graph_query_traces
+        .extend(prepared_file.graph_query_traces.clone());
 
     build_file_review_jobs(
         services,

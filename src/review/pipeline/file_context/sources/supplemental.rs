@@ -1,25 +1,37 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::time::Instant;
 
 use anyhow::Result;
 
 use crate::config;
 use crate::core;
 
-use super::super::super::context::extract_symbols_from_diff;
 use super::super::super::services::PipelineServices;
 use super::super::super::session::ReviewSession;
+use super::traces::{trace_record, MAX_GRAPH_TRACE_DETAILS};
 
 pub(in super::super) async fn add_semantic_context(
     services: &PipelineServices,
     session: &ReviewSession,
     diff: &core::UnifiedDiff,
+    symbols: &[String],
     context_chunks: &mut Vec<core::LLMContextChunk>,
+    graph_query_records: &mut Vec<core::dag::DagExecutionRecord>,
 ) {
     let Some(index) = session.semantic_index.as_ref() else {
         return;
     };
-    let preferred_files = graph_ranked_semantic_files(services, session, diff);
+    let should_trace_graph_ranking = session.symbol_index.is_some() && !symbols.is_empty();
+    let ranking_started = Instant::now();
+    let preferred_files = graph_ranked_semantic_files(services, session, diff, symbols);
+    if should_trace_graph_ranking {
+        append_semantic_preference_trace_records(
+            graph_query_records,
+            &preferred_files,
+            ranking_started.elapsed().as_millis() as u64,
+        );
+    }
 
     let semantic_chunks = core::semantic_context_for_diff(
         index,
@@ -41,12 +53,12 @@ fn graph_ranked_semantic_files(
     services: &PipelineServices,
     session: &ReviewSession,
     diff: &core::UnifiedDiff,
+    symbols: &[String],
 ) -> Vec<PathBuf> {
     let Some(index) = session.symbol_index.as_ref() else {
         return Vec::new();
     };
 
-    let symbols = extract_symbols_from_diff(diff);
     if symbols.is_empty() {
         return Vec::new();
     }
@@ -59,7 +71,7 @@ fn graph_ranked_semantic_files(
             services.config.symbol_index_graph_max_files,
         ),
     );
-    let related_locations = retriever.related_symbol_locations(&diff.file_path, &symbols);
+    let related_locations = retriever.related_symbol_locations(&diff.file_path, symbols);
 
     let mut preferred_files = Vec::new();
     let mut seen = HashSet::new();
@@ -82,6 +94,27 @@ fn graph_ranked_semantic_files(
     preferred_files.extend(reference_files);
 
     preferred_files
+}
+
+fn append_semantic_preference_trace_records(
+    graph_query_records: &mut Vec<core::dag::DagExecutionRecord>,
+    preferred_files: &[PathBuf],
+    duration_ms: u64,
+) {
+    graph_query_records.push(trace_record(
+        format!("semantic_preferred_files={}", preferred_files.len()),
+        duration_ms,
+    ));
+    for (index, file_path) in preferred_files
+        .iter()
+        .take(MAX_GRAPH_TRACE_DETAILS)
+        .enumerate()
+    {
+        graph_query_records.push(trace_record(
+            format!("semantic_preferred_file[{index}]={}", file_path.display()),
+            0,
+        ));
+    }
 }
 
 pub(in super::super) async fn add_path_context(
@@ -116,4 +149,23 @@ pub(in super::super) async fn add_path_context(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::append_semantic_preference_trace_records;
+    use std::path::PathBuf;
+
+    #[test]
+    fn semantic_preference_trace_records_keep_ranked_order() {
+        let preferred_files = vec![PathBuf::from("src/auth.rs"), PathBuf::from("src/db.rs")];
+
+        let mut records = Vec::new();
+        append_semantic_preference_trace_records(&mut records, &preferred_files, 7);
+
+        assert_eq!(records[0].name, "semantic_preferred_files=2");
+        assert_eq!(records[0].duration_ms, 7);
+        assert_eq!(records[1].name, "semantic_preferred_file[0]=src/auth.rs");
+        assert_eq!(records[2].name, "semantic_preferred_file[1]=src/db.rs");
+    }
 }

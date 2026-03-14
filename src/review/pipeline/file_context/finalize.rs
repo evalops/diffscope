@@ -10,6 +10,7 @@ pub(super) fn finalize_file_context(
     path_config: Option<config::PathConfig>,
     deterministic_comments: Vec<core::Comment>,
     mut context_chunks: Vec<core::LLMContextChunk>,
+    graph_query_traces: Vec<core::dag::DagExecutionTrace>,
 ) -> PreparedFileContext {
     let active_rules = core::active_rules_for_file(
         &services.review_rules,
@@ -33,5 +34,6 @@ pub(super) fn finalize_file_context(
         path_config,
         deterministic_comments,
         context_chunks,
+        graph_query_traces,
     }
 }
