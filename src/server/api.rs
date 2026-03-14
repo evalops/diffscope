@@ -3,6 +3,7 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -65,6 +66,74 @@ pub struct FeedbackRequest {
 #[derive(Serialize)]
 pub struct FeedbackResponse {
     pub ok: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FeedbackEvalTrendGapResponse {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub feedback_total: usize,
+    #[serde(default)]
+    pub high_confidence_total: usize,
+    #[serde(default)]
+    pub high_confidence_acceptance_rate: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_score: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FeedbackEvalTrendEntryResponse {
+    #[serde(default)]
+    pub timestamp: String,
+    #[serde(default)]
+    pub labeled_comments: usize,
+    #[serde(default)]
+    pub accepted: usize,
+    #[serde(default)]
+    pub rejected: usize,
+    #[serde(default)]
+    pub acceptance_rate: f32,
+    #[serde(default)]
+    pub confidence_threshold: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_agreement_rate: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_precision: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_recall: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_f1: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attention_by_category: Vec<FeedbackEvalTrendGapResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attention_by_rule: Vec<FeedbackEvalTrendGapResponse>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FeedbackEvalTrendResponse {
+    #[serde(default)]
+    pub entries: Vec<FeedbackEvalTrendEntryResponse>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AnalyticsTrendsResponse {
+    pub eval_trend_path: String,
+    pub feedback_eval_trend_path: String,
+    #[serde(default)]
+    pub eval_trend: crate::core::eval_benchmarks::QualityTrend,
+    #[serde(default)]
+    pub feedback_eval_trend: FeedbackEvalTrendResponse,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -138,6 +207,65 @@ pub async fn get_event_stats(
         Err(e) => {
             warn!("Failed to get event stats from storage: {}", e);
             Json(EventStats::default())
+        }
+    }
+}
+
+pub async fn get_analytics_trends(
+    State(state): State<Arc<AppState>>,
+) -> Json<AnalyticsTrendsResponse> {
+    let config = state.config.read().await.clone();
+    let mut warnings = Vec::new();
+    let eval_trend = load_optional_json_artifact::<crate::core::eval_benchmarks::QualityTrend>(
+        &config.eval_trend_path,
+        "eval trend",
+        &mut warnings,
+    );
+    let feedback_eval_trend = load_optional_json_artifact::<FeedbackEvalTrendResponse>(
+        &config.feedback_eval_trend_path,
+        "feedback-eval trend",
+        &mut warnings,
+    );
+
+    Json(AnalyticsTrendsResponse {
+        eval_trend_path: config.eval_trend_path.display().to_string(),
+        feedback_eval_trend_path: config.feedback_eval_trend_path.display().to_string(),
+        eval_trend,
+        feedback_eval_trend,
+        warnings,
+    })
+}
+
+fn load_optional_json_artifact<T>(
+    path: &std::path::Path,
+    label: &str,
+    warnings: &mut Vec<String>,
+) -> T
+where
+    T: DeserializeOwned + Default,
+{
+    match std::fs::read_to_string(path) {
+        Ok(content) => match serde_json::from_str::<T>(&content) {
+            Ok(value) => value,
+            Err(err) => {
+                warnings.push(format!(
+                    "Failed to parse {} at {}: {}",
+                    label,
+                    path.display(),
+                    err
+                ));
+                T::default()
+            }
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => T::default(),
+        Err(err) => {
+            warnings.push(format!(
+                "Failed to read {} at {}: {}",
+                label,
+                path.display(),
+                err
+            ));
+            T::default()
         }
     }
 }
@@ -688,34 +816,45 @@ pub async fn submit_feedback(
     let file_patterns = crate::review::derive_file_patterns(&comment.file_path);
     let primary_file_pattern = file_patterns.first().map(String::as_str);
     let is_accepted = request.action == "accept";
-
-    comment.feedback = Some(request.action);
+    let feedback_changed = comment.feedback.as_deref() != Some(request.action.as_str());
+    if feedback_changed {
+        comment.feedback = Some(request.action.clone());
+    }
     drop(reviews);
 
-    AppState::save_reviews_async(&state);
+    if feedback_changed {
+        AppState::save_reviews_async(&state);
+    }
 
-    // Persist feedback to storage backend
-    let _ = state
-        .storage
-        .update_comment_feedback(
-            &id,
-            &comment_id_for_storage,
-            if is_accepted { "accept" } else { "reject" },
-        )
-        .await;
+    if feedback_changed {
+        // Persist feedback to storage backend
+        let _ = state
+            .storage
+            .update_comment_feedback(
+                &id,
+                &comment_id_for_storage,
+                if is_accepted { "accept" } else { "reject" },
+            )
+            .await;
+    }
 
     // Record enhanced feedback pattern stats
-    {
+    if feedback_changed {
         let config = state.config.read().await.clone();
         let mut feedback_store = crate::review::load_feedback_store(&config);
-        feedback_store.record_feedback_patterns(&comment_category, &file_patterns, is_accepted);
-        let _ = crate::review::save_feedback_store(&config.feedback_path, &feedback_store);
-        let _ = crate::review::record_semantic_feedback_examples(
-            &config,
-            std::slice::from_ref(&semantic_comment),
+        if crate::review::apply_comment_feedback_signal(
+            &mut feedback_store,
+            &semantic_comment,
             is_accepted,
-        )
-        .await;
+        ) {
+            let _ = crate::review::save_feedback_store(&config.feedback_path, &feedback_store);
+            let _ = crate::review::record_semantic_feedback_examples(
+                &config,
+                std::slice::from_ref(&semantic_comment),
+                is_accepted,
+            )
+            .await;
+        }
     }
 
     // Record in convention store for learned patterns

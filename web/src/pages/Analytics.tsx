@@ -3,11 +3,16 @@ import {
   AreaChart, Area, BarChart, Bar,
   ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts'
-import { useReviews } from '../api/hooks'
-import { Loader2 } from 'lucide-react'
+import { useAnalyticsTrends, useReviews } from '../api/hooks'
+import { AlertTriangle, Loader2 } from 'lucide-react'
 import { scoreColorClass } from '../lib/scores'
 import { SEV_COLORS, CHART_THEME } from '../lib/constants'
-import type { ReviewSession, Severity } from '../api/types'
+import type {
+  AnalyticsTrendsResponse,
+  FeedbackEvalTrendGap,
+  ReviewSession,
+  Severity,
+} from '../api/types'
 
 function computeAnalytics(reviews: ReviewSession[]) {
   const completed = reviews
@@ -85,14 +90,92 @@ const tooltipStyle = {
 const axisTick = { fontSize: 10, fill: CHART_THEME.tick }
 const gridProps = { strokeDasharray: '3 3' as const, stroke: CHART_THEME.grid }
 
+function formatTrendLabel(timestamp: string, index: number): string {
+  const parsed = new Date(timestamp)
+  if (Number.isNaN(parsed.getTime())) return `#${index + 1}`
+  return `${parsed.getMonth() + 1}/${parsed.getDate()}`
+}
+
+function formatPercent(value: number | undefined): string {
+  return value == null ? 'n/a' : `${(value * 100).toFixed(0)}%`
+}
+
+function computeTrendAnalytics(trends: AnalyticsTrendsResponse | undefined) {
+  const evalEntries = trends?.eval_trend.entries ?? []
+  const feedbackEntries = trends?.feedback_eval_trend.entries ?? []
+
+  const evalSeries = evalEntries.map((entry, index) => ({
+    idx: index + 1,
+    label: formatTrendLabel(entry.timestamp, index),
+    microF1: entry.micro_f1,
+    weightedScore: entry.weighted_score ?? entry.micro_f1,
+    fixtures: entry.fixture_count,
+    warnings: entry.verification_warning_count ?? 0,
+    parseFailures: entry.verification_parse_failure_count ?? 0,
+    requestFailures: entry.verification_request_failure_count ?? 0,
+  }))
+
+  const feedbackSeries = feedbackEntries.map((entry, index) => ({
+    idx: index + 1,
+    label: formatTrendLabel(entry.timestamp, index),
+    acceptanceRate: entry.acceptance_rate,
+    confidenceF1: entry.confidence_f1 ?? 0,
+    confidenceAgreement: entry.confidence_agreement_rate ?? 0,
+    labeledComments: entry.labeled_comments,
+  }))
+
+  return {
+    warnings: trends?.warnings ?? [],
+    evalEntries,
+    feedbackEntries,
+    evalSeries,
+    feedbackSeries,
+    latestEval: evalEntries[evalEntries.length - 1],
+    latestFeedback: feedbackEntries[feedbackEntries.length - 1],
+    evalTrendPath: trends?.eval_trend_path ?? '.diffscope.eval-trend.json',
+    feedbackTrendPath: trends?.feedback_eval_trend_path ?? '.diffscope.feedback-eval-trend.json',
+  }
+}
+
+function TrendList({ items, emptyLabel }: { items: FeedbackEvalTrendGap[]; emptyLabel: string }) {
+  if (items.length === 0) {
+    return (
+      <div className="text-[11px] text-text-muted">
+        {emptyLabel}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      {items.map(item => (
+        <div key={item.name} className="flex items-center justify-between gap-3 text-[11px]">
+          <div className="min-w-0">
+            <div className="text-text-primary font-medium truncate">{item.name}</div>
+            <div className="text-text-muted">
+              {item.feedback_total} labels · {item.high_confidence_total} high-confidence
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="font-code text-sev-warning">{formatPercent(item.gap)}</div>
+            <div className="text-text-muted">gap</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function Analytics() {
   const { data: reviews, isLoading } = useReviews()
+  const { data: trends, isLoading: trendsLoading } = useAnalyticsTrends()
 
   const analytics = useMemo(() => {
     return computeAnalytics(reviews || [])
   }, [reviews])
+  const trendAnalytics = useMemo(() => computeTrendAnalytics(trends), [trends])
 
-  if (isLoading) {
+  if (isLoading || trendsLoading) {
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 className="animate-spin text-accent" size={32} />
@@ -101,170 +184,340 @@ export function Analytics() {
   }
 
   const { scoreOverTime, severityOverTime, categoryData, stats } = analytics
+  const {
+    warnings,
+    evalEntries,
+    feedbackEntries,
+    evalSeries,
+    feedbackSeries,
+    latestEval,
+    latestFeedback,
+    evalTrendPath,
+    feedbackTrendPath,
+  } = trendAnalytics
+  const hasReviewAnalytics = stats.totalReviews > 0
+  const hasTrendAnalytics = evalEntries.length > 0 || feedbackEntries.length > 0
 
-  if (stats.totalReviews === 0) {
+  if (!hasReviewAnalytics && !hasTrendAnalytics) {
     return (
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="p-6 max-w-6xl mx-auto">
         <h1 className="text-xl font-semibold text-text-primary mb-6">Analytics</h1>
         <div className="bg-surface-1 border border-border rounded-lg p-12 text-center text-text-muted text-sm">
-          No completed reviews yet. Run some reviews to see analytics.
+          No completed reviews or eval trend history yet. Run reviews, `diffscope eval`, or `diffscope feedback-eval` to start building analytics.
+        </div>
+        <div className="mt-3 text-[10px] text-text-muted font-code">
+          eval: {evalTrendPath} · feedback: {feedbackTrendPath}
         </div>
       </div>
     )
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-6 max-w-6xl mx-auto">
       <h1 className="text-xl font-semibold text-text-primary mb-6">Analytics</h1>
 
-      {/* Top stats row */}
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        {/* Findings per review chart */}
-        <div className="bg-surface-1 border border-border rounded-lg p-4">
+      {warnings.length > 0 && (
+        <div className="mb-6 flex items-start gap-3 rounded-lg border border-sev-warning/30 bg-sev-warning/10 px-4 py-3 text-[12px] text-text-secondary">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0 text-sev-warning" />
+          <div>{warnings.join(' ')}</div>
+        </div>
+      )}
+
+      {hasReviewAnalytics && (
+        <>
           <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
-            FINDINGS PER REVIEW
+            REVIEW ANALYTICS
           </div>
-          <div className="flex items-baseline gap-2 mb-1">
-            <span className="text-2xl font-bold font-code text-text-primary">
-              {stats.avgFindings.toFixed(1)}
-            </span>
-            <span className="text-[11px] text-text-muted">avg</span>
+
+          <div className="grid grid-cols-2 gap-3 mb-6">
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                FINDINGS PER REVIEW
+              </div>
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className="text-2xl font-bold font-code text-text-primary">
+                  {stats.avgFindings.toFixed(1)}
+                </span>
+                <span className="text-[11px] text-text-muted">avg</span>
+              </div>
+              <div className="h-32 mt-2">
+                <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                  <AreaChart data={scoreOverTime}>
+                    <defs>
+                      <linearGradient id="findingsGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={CHART_THEME.accent} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={CHART_THEME.accent} stopOpacity={0.02} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                    <YAxis tick={axisTick} axisLine={false} tickLine={false} />
+                    <Tooltip {...tooltipStyle} />
+                    <Area type="monotone" dataKey="findings" stroke={CHART_THEME.accent} fill="url(#findingsGrad)" strokeWidth={1.5} dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex items-center gap-6 mt-3 pt-3 border-t border-border-subtle">
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-text-primary">{stats.totalFindings}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">TOTAL</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-sev-error">{stats.sevTotals.Error}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">ERRORS</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-sev-warning">{stats.sevTotals.Warning}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">WARNINGS</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-sev-suggestion">{stats.sevTotals.Suggestion}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">SUGGESTIONS</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                SCORE TREND
+              </div>
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className={`text-2xl font-bold font-code ${scoreColorClass(stats.avgScore)}`}>
+                  {stats.avgScore.toFixed(1)}
+                </span>
+                <span className="text-[11px] text-text-muted">avg score</span>
+              </div>
+              <div className="h-32 mt-2">
+                <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                  <AreaChart data={scoreOverTime}>
+                    <defs>
+                      <linearGradient id="scoreGradA" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={CHART_THEME.accent} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={CHART_THEME.accent} stopOpacity={0.02} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                    <YAxis domain={[0, 10]} tick={axisTick} axisLine={false} tickLine={false} />
+                    <Tooltip {...tooltipStyle} />
+                    <Area type="monotone" dataKey="score" stroke={CHART_THEME.accent} fill="url(#scoreGradA)" strokeWidth={1.5} dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex items-center gap-6 mt-3 pt-3 border-t border-border-subtle">
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-text-primary">{stats.totalReviews}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">REVIEWS</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-text-primary">{stats.totalFiles}</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">FILES</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-sm font-bold font-code text-sev-error">{stats.criticalRate.toFixed(0)}%</div>
+                  <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">CRITICAL RATE</div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="h-32 mt-2">
-            <ResponsiveContainer width="100%" height="99%"  minWidth={50} minHeight={50}>
-              <AreaChart data={scoreOverTime}>
-                <defs>
-                  <linearGradient id="findingsGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={CHART_THEME.accent} stopOpacity={0.3} />
-                    <stop offset="95%" stopColor={CHART_THEME.accent} stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid {...gridProps} />
-                <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
-                <YAxis tick={axisTick} axisLine={false} tickLine={false} />
-                <Tooltip {...tooltipStyle} />
-                <Area type="monotone" dataKey="findings" stroke={CHART_THEME.accent} fill="url(#findingsGrad)" strokeWidth={1.5} dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                SEVERITY BREAKDOWN
+              </div>
+              <div className="h-44">
+                <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                  <AreaChart data={severityOverTime}>
+                    <defs>
+                      {Object.entries(SEV_COLORS).map(([key, color]) => (
+                        <linearGradient key={key} id={`sev${key}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={color} stopOpacity={0.4} />
+                          <stop offset="95%" stopColor={color} stopOpacity={0.05} />
+                        </linearGradient>
+                      ))}
+                    </defs>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                    <YAxis tick={axisTick} axisLine={false} tickLine={false} />
+                    <Tooltip {...tooltipStyle} />
+                    <Area type="monotone" dataKey="Error" stackId="1" stroke={SEV_COLORS.Error} fill="url(#sevError)" strokeWidth={1} />
+                    <Area type="monotone" dataKey="Warning" stackId="1" stroke={SEV_COLORS.Warning} fill="url(#sevWarning)" strokeWidth={1} />
+                    <Area type="monotone" dataKey="Info" stackId="1" stroke={SEV_COLORS.Info} fill="url(#sevInfo)" strokeWidth={1} />
+                    <Area type="monotone" dataKey="Suggestion" stackId="1" stroke={SEV_COLORS.Suggestion} fill="url(#sevSuggestion)" strokeWidth={1} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                FINDINGS BY CATEGORY
+              </div>
+              {categoryData.length > 0 ? (
+                <div className="h-44">
+                  <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                    <BarChart data={categoryData} layout="vertical">
+                      <CartesianGrid {...gridProps} horizontal={false} />
+                      <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: CHART_THEME.tooltipText }} axisLine={false} tickLine={false} width={90} />
+                      <Tooltip {...tooltipStyle} />
+                      <Bar dataKey="value" fill={CHART_THEME.accent} radius={[0, 4, 4, 0]} barSize={14} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-44 flex items-center justify-center text-text-muted text-sm">
+                  No category data yet
+                </div>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-6 mt-3 pt-3 border-t border-border-subtle">
-            <div className="text-center">
-              <div className="text-sm font-bold font-code text-text-primary">{stats.totalFindings}</div>
-              <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">TOTAL</div>
+        </>
+      )}
+
+      <div className={`${hasReviewAnalytics ? 'mt-8' : ''}`}>
+        <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+          EVAL QUALITY & FEEDBACK LOOP
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          {[
+            { label: 'LATEST MICRO F1', value: formatPercent(latestEval?.micro_f1), valueColor: 'text-accent' },
+            { label: 'LATEST WEIGHTED SCORE', value: formatPercent(latestEval?.weighted_score), valueColor: 'text-text-primary' },
+            { label: 'LATEST ACCEPTANCE RATE', value: formatPercent(latestFeedback?.acceptance_rate), valueColor: 'text-sev-suggestion' },
+            { label: 'LATEST CONFIDENCE F1', value: formatPercent(latestFeedback?.confidence_f1), valueColor: 'text-sev-warning' },
+          ].map(card => (
+            <div key={card.label} className="bg-surface-1 border border-border rounded-lg p-3">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code">{card.label}</div>
+              <div className={`text-lg font-bold font-code mt-1 ${card.valueColor}`}>{card.value}</div>
             </div>
-            <div className="text-center">
-              <div className="text-sm font-bold font-code text-sev-error">{stats.sevTotals.Error}</div>
-              <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">ERRORS</div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="bg-surface-1 border border-border rounded-lg p-4">
+            <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+              EVAL QUALITY TREND
             </div>
-            <div className="text-center">
-              <div className="text-sm font-bold font-code text-sev-warning">{stats.sevTotals.Warning}</div>
-              <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">WARNINGS</div>
+            {evalSeries.length > 0 ? (
+              <div className="h-44">
+                <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                  <AreaChart data={evalSeries}>
+                    <defs>
+                      <linearGradient id="evalMicroF1Grad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={CHART_THEME.accent} stopOpacity={0.35} />
+                        <stop offset="95%" stopColor={CHART_THEME.accent} stopOpacity={0.05} />
+                      </linearGradient>
+                      <linearGradient id="evalWeightedGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={SEV_COLORS.Info} stopOpacity={0.25} />
+                        <stop offset="95%" stopColor={SEV_COLORS.Info} stopOpacity={0.04} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                    <YAxis domain={[0, 1]} tick={axisTick} axisLine={false} tickLine={false} />
+                    <Tooltip {...tooltipStyle} />
+                    <Area type="monotone" dataKey="microF1" stroke={CHART_THEME.accent} fill="url(#evalMicroF1Grad)" strokeWidth={1.5} dot={false} name="Micro F1" />
+                    <Area type="monotone" dataKey="weightedScore" stroke={SEV_COLORS.Info} fill="url(#evalWeightedGrad)" strokeWidth={1.5} dot={false} name="Weighted score" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-44 flex items-center justify-center text-text-muted text-sm text-center px-6">
+                No eval trend data yet. `diffscope eval` will append to {evalTrendPath}.
+              </div>
+            )}
+          </div>
+
+          <div className="bg-surface-1 border border-border rounded-lg p-4">
+            <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+              VERIFICATION HEALTH TREND
             </div>
-            <div className="text-center">
-              <div className="text-sm font-bold font-code text-sev-suggestion">{stats.sevTotals.Suggestion}</div>
-              <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">SUGGESTIONS</div>
+            {evalSeries.length > 0 ? (
+              <div className="h-44">
+                <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                  <BarChart data={evalSeries}>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                    <YAxis tick={axisTick} axisLine={false} tickLine={false} />
+                    <Tooltip {...tooltipStyle} />
+                    <Bar dataKey="warnings" fill={SEV_COLORS.Warning} radius={[2, 2, 0, 0]} name="Warnings" />
+                    <Bar dataKey="parseFailures" fill={SEV_COLORS.Error} radius={[2, 2, 0, 0]} name="Parse failures" />
+                    <Bar dataKey="requestFailures" fill={SEV_COLORS.Info} radius={[2, 2, 0, 0]} name="Request failures" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-44 flex items-center justify-center text-text-muted text-sm text-center px-6">
+                Verification health appears once eval trend history exists.
+              </div>
+            )}
+          </div>
+
+          <div className="bg-surface-1 border border-border rounded-lg p-4">
+            <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+              FEEDBACK CALIBRATION TREND
+            </div>
+            {feedbackSeries.length > 0 ? (
+              <div className="h-44">
+                <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                  <AreaChart data={feedbackSeries}>
+                    <defs>
+                      <linearGradient id="feedbackAcceptGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={SEV_COLORS.Suggestion} stopOpacity={0.35} />
+                        <stop offset="95%" stopColor={SEV_COLORS.Suggestion} stopOpacity={0.05} />
+                      </linearGradient>
+                      <linearGradient id="feedbackF1Grad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={SEV_COLORS.Warning} stopOpacity={0.25} />
+                        <stop offset="95%" stopColor={SEV_COLORS.Warning} stopOpacity={0.04} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                    <YAxis domain={[0, 1]} tick={axisTick} axisLine={false} tickLine={false} />
+                    <Tooltip {...tooltipStyle} />
+                    <Area type="monotone" dataKey="acceptanceRate" stroke={SEV_COLORS.Suggestion} fill="url(#feedbackAcceptGrad)" strokeWidth={1.5} dot={false} name="Acceptance rate" />
+                    <Area type="monotone" dataKey="confidenceF1" stroke={SEV_COLORS.Warning} fill="url(#feedbackF1Grad)" strokeWidth={1.5} dot={false} name="Confidence F1" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-44 flex items-center justify-center text-text-muted text-sm text-center px-6">
+                No feedback-eval trend data yet. `diffscope feedback-eval` will append to {feedbackTrendPath}.
+              </div>
+            )}
+          </div>
+
+          <div className="bg-surface-1 border border-border rounded-lg p-4">
+            <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+              LATEST ATTENTION GAPS
+            </div>
+            <div className="grid grid-cols-1 gap-4">
+              <div>
+                <div className="text-[10px] font-semibold text-text-muted tracking-[0.05em] font-code mb-2">
+                  BY CATEGORY
+                </div>
+                <TrendList
+                  items={latestFeedback?.attention_by_category ?? []}
+                  emptyLabel="No category gaps recorded yet"
+                />
+              </div>
+              <div className="pt-3 border-t border-border-subtle">
+                <div className="text-[10px] font-semibold text-text-muted tracking-[0.05em] font-code mb-2">
+                  BY RULE
+                </div>
+                <TrendList
+                  items={latestFeedback?.attention_by_rule ?? []}
+                  emptyLabel="No rule gaps recorded yet"
+                />
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Score trend */}
-        <div className="bg-surface-1 border border-border rounded-lg p-4">
-          <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
-            SCORE TREND
-          </div>
-          <div className="flex items-baseline gap-2 mb-1">
-            <span className={`text-2xl font-bold font-code ${scoreColorClass(stats.avgScore)}`}>
-              {stats.avgScore.toFixed(1)}
-            </span>
-            <span className="text-[11px] text-text-muted">avg score</span>
-          </div>
-          <div className="h-32 mt-2">
-            <ResponsiveContainer width="100%" height="99%"  minWidth={50} minHeight={50}>
-              <AreaChart data={scoreOverTime}>
-                <defs>
-                  <linearGradient id="scoreGradA" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={CHART_THEME.accent} stopOpacity={0.3} />
-                    <stop offset="95%" stopColor={CHART_THEME.accent} stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid {...gridProps} />
-                <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
-                <YAxis domain={[0, 10]} tick={axisTick} axisLine={false} tickLine={false} />
-                <Tooltip {...tooltipStyle} />
-                <Area type="monotone" dataKey="score" stroke={CHART_THEME.accent} fill="url(#scoreGradA)" strokeWidth={1.5} dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="flex items-center gap-6 mt-3 pt-3 border-t border-border-subtle">
-            <div className="text-center">
-              <div className="text-sm font-bold font-code text-text-primary">{stats.totalReviews}</div>
-              <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">REVIEWS</div>
-            </div>
-            <div className="text-center">
-              <div className="text-sm font-bold font-code text-text-primary">{stats.totalFiles}</div>
-              <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">FILES</div>
-            </div>
-            <div className="text-center">
-              <div className="text-sm font-bold font-code text-sev-error">{stats.criticalRate.toFixed(0)}%</div>
-              <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">CRITICAL RATE</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom row */}
-      <div className="grid grid-cols-2 gap-3">
-        {/* Severity stacked area */}
-        <div className="bg-surface-1 border border-border rounded-lg p-4">
-          <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
-            SEVERITY BREAKDOWN
-          </div>
-          <div className="h-44">
-            <ResponsiveContainer width="100%" height="99%"  minWidth={50} minHeight={50}>
-              <AreaChart data={severityOverTime}>
-                <defs>
-                  {Object.entries(SEV_COLORS).map(([key, color]) => (
-                    <linearGradient key={key} id={`sev${key}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={color} stopOpacity={0.4} />
-                      <stop offset="95%" stopColor={color} stopOpacity={0.05} />
-                    </linearGradient>
-                  ))}
-                </defs>
-                <CartesianGrid {...gridProps} />
-                <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
-                <YAxis tick={axisTick} axisLine={false} tickLine={false} />
-                <Tooltip {...tooltipStyle} />
-                <Area type="monotone" dataKey="Error" stackId="1" stroke={SEV_COLORS.Error} fill="url(#sevError)" strokeWidth={1} />
-                <Area type="monotone" dataKey="Warning" stackId="1" stroke={SEV_COLORS.Warning} fill="url(#sevWarning)" strokeWidth={1} />
-                <Area type="monotone" dataKey="Info" stackId="1" stroke={SEV_COLORS.Info} fill="url(#sevInfo)" strokeWidth={1} />
-                <Area type="monotone" dataKey="Suggestion" stackId="1" stroke={SEV_COLORS.Suggestion} fill="url(#sevSuggestion)" strokeWidth={1} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Category bar chart */}
-        <div className="bg-surface-1 border border-border rounded-lg p-4">
-          <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
-            FINDINGS BY CATEGORY
-          </div>
-          {categoryData.length > 0 ? (
-            <div className="h-44">
-              <ResponsiveContainer width="100%" height="99%"  minWidth={50} minHeight={50}>
-                <BarChart data={categoryData} layout="vertical">
-                  <CartesianGrid {...gridProps} horizontal={false} />
-                  <XAxis type="number" tick={axisTick} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: CHART_THEME.tooltipText }} axisLine={false} tickLine={false} width={90} />
-                  <Tooltip {...tooltipStyle} />
-                  <Bar dataKey="value" fill={CHART_THEME.accent} radius={[0, 4, 4, 0]} barSize={14} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <div className="h-44 flex items-center justify-center text-text-muted text-sm">
-              No category data yet
-            </div>
-          )}
+        <div className="mt-3 text-[10px] text-text-muted font-code">
+          eval: {evalTrendPath} · feedback: {feedbackTrendPath}
         </div>
       </div>
     </div>

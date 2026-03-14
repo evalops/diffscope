@@ -29,6 +29,7 @@ enum ReviewPostprocessStage {
     ReviewFilters,
     EnhancedFilters,
     ConventionSuppression,
+    PrioritizeFindings,
     SaveConventionStore,
 }
 
@@ -43,6 +44,7 @@ impl DagNode for ReviewPostprocessStage {
             Self::ReviewFilters => "review_filters",
             Self::EnhancedFilters => "enhanced_filters",
             Self::ConventionSuppression => "convention_suppression",
+            Self::PrioritizeFindings => "prioritize_findings",
             Self::SaveConventionStore => "save_convention_store",
         }
     }
@@ -319,6 +321,27 @@ pub(in super::super) fn describe_review_postprocess_graph(
                 },
                 enabled: spec.enabled,
             },
+            ReviewPostprocessStage::PrioritizeFindings => DagNodeContract {
+                name: spec.id.name().to_string(),
+                description:
+                    "Re-rank final findings using the calibrated confidence and category priority."
+                        .to_string(),
+                kind: DagNodeKind::Transformation,
+                dependencies: spec
+                    .dependencies
+                    .into_iter()
+                    .map(|dependency| dependency.name().to_string())
+                    .collect(),
+                inputs: vec!["comments".to_string()],
+                outputs: vec!["comments".to_string()],
+                hints: DagNodeExecutionHints {
+                    parallelizable: false,
+                    retryable: true,
+                    side_effects: false,
+                    subgraph: None,
+                },
+                enabled: spec.enabled,
+            },
             ReviewPostprocessStage::SaveConventionStore => DagNodeContract {
                 name: spec.id.name().to_string(),
                 description:
@@ -355,7 +378,7 @@ pub(in super::super) fn describe_review_postprocess_graph(
         terminal_nodes: vec![if has_convention_store_path {
             "save_convention_store".to_string()
         } else {
-            "convention_suppression".to_string()
+            "prioritize_findings".to_string()
         }],
         nodes,
     }
@@ -407,8 +430,13 @@ fn build_postprocess_specs(
             enabled: true,
         },
         DagNodeSpec {
-            id: ReviewPostprocessStage::SaveConventionStore,
+            id: ReviewPostprocessStage::PrioritizeFindings,
             dependencies: vec![ReviewPostprocessStage::ConventionSuppression],
+            enabled: true,
+        },
+        DagNodeSpec {
+            id: ReviewPostprocessStage::SaveConventionStore,
+            dependencies: vec![ReviewPostprocessStage::PrioritizeFindings],
             enabled: has_convention_store_path,
         },
     ]
@@ -431,6 +459,7 @@ async fn execute_stage(
         ReviewPostprocessStage::ConventionSuppression => {
             execute_convention_suppression_stage(context)
         }
+        ReviewPostprocessStage::PrioritizeFindings => execute_prioritize_findings_stage(context),
         ReviewPostprocessStage::SaveConventionStore => execute_convention_store_save_stage(context),
     }
 }
@@ -523,6 +552,11 @@ fn execute_convention_suppression_stage(
     Ok(())
 }
 
+fn execute_prioritize_findings_stage(context: &mut ReviewPostprocessDagContext<'_>) -> Result<()> {
+    core::sort_comments_by_priority(&mut context.comments);
+    Ok(())
+}
+
 fn execute_convention_store_save_stage(
     context: &mut ReviewPostprocessDagContext<'_>,
 ) -> Result<()> {
@@ -550,8 +584,11 @@ mod tests {
                 .last()
                 .map(|description| description.dependencies.clone())
                 .unwrap(),
-            vec!["convention_suppression"]
+            vec!["prioritize_findings"]
         );
+        assert!(descriptions
+            .iter()
+            .any(|description| description.name == "prioritize_findings"));
     }
 
     #[test]
@@ -567,5 +604,9 @@ mod tests {
             .iter()
             .any(|node| node.name == "save_convention_store" && node.hints.side_effects));
         assert_eq!(graph.terminal_nodes, vec!["save_convention_store"]);
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.name == "prioritize_findings"));
     }
 }

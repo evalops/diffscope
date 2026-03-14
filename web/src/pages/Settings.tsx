@@ -790,6 +790,17 @@ export function Settings() {
         </p>
       </Section>
 
+      <Section title="DATA PATHS" defaultOpen={false}>
+        <div className="space-y-3">
+          {field('Feedback Store Path', 'feedback_path', 'text', '.diffscope.feedback.json', 'Accepted/rejected review feedback is persisted here for suppression and reranking')}
+          {field('Eval Trend Path', 'eval_trend_path', 'text', '.diffscope.eval-trend.json', 'The eval command appends quality trend snapshots here by default')}
+          {field('Feedback Eval Trend Path', 'feedback_eval_trend_path', 'text', '.diffscope.feedback-eval-trend.json', 'The feedback-eval command appends calibration snapshots here by default')}
+        </div>
+        <p className="text-[10px] text-text-muted mt-2">
+          The Analytics view reads these files directly through the server, so keeping them configured gives you a continuous quality history in the UI.
+        </p>
+      </Section>
+
       <Section title="VAULT INTEGRATION" defaultOpen={false}>
         <p className="text-[10px] text-text-muted mb-3">
           Pull your LLM API key from HashiCorp Vault KV v2 instead of storing it in config. Vault is only queried when no API key is set.

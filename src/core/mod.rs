@@ -28,7 +28,7 @@ pub mod symbol_graph;
 pub mod symbol_index;
 
 pub use changelog::ChangelogGenerator;
-pub use comment::{Comment, CommentSynthesizer};
+pub use comment::{sort_comments_by_priority, Comment, CommentSynthesizer};
 pub use commit_prompt::CommitPromptBuilder;
 pub use context::{ContextFetcher, ContextType, LLMContextChunk};
 pub use context_provenance::ContextProvenance;

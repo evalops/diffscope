@@ -119,4 +119,7 @@ export const api = {
     const suffix = qs.toString() ? `?${qs}` : ''
     return request<import('./types').EventStats>(`/events/stats${suffix}`)
   },
+
+  getAnalyticsTrends: () =>
+    request<import('./types').AnalyticsTrendsResponse>('/analytics/trends'),
 }
