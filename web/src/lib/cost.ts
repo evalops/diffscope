@@ -11,7 +11,7 @@ function parsePricePerMillion(price: string): number {
 // Build a lookup: normalized model fragment -> price per million tokens
 const priceLookup: [string[], number][] = MODEL_PRESETS.map(p => {
   // Extract recognizable fragments from the preset ID
-  // e.g. "anthropic/claude-sonnet-4.6" -> ["claude-sonnet-4.6", "claude-sonnet", "sonnet-4.6"]
+  // e.g. "anthropic/claude-sonnet-4.5" -> ["claude-sonnet-4.5", "claude-sonnet", "sonnet-4.5"]
   const parts = p.id.split('/')
   const modelPart = parts[parts.length - 1].toLowerCase()
   const fragments = [modelPart]

@@ -122,6 +122,20 @@ function setProviders(form: Record<string, unknown>, providers: ProvidersMap): R
 
 type ConnStatus = 'untested' | 'ok' | 'failed'
 
+const MODEL_ROLE_OPTIONS = [
+  { value: 'primary', label: 'Primary' },
+  { value: 'weak', label: 'Weak' },
+  { value: 'fast', label: 'Fast' },
+  { value: 'reasoning', label: 'Reasoning' },
+  { value: 'embedding', label: 'Embedding' },
+]
+
+const VERIFICATION_CONSENSUS_OPTIONS = [
+  { value: 'any', label: 'Any judge passes' },
+  { value: 'majority', label: 'Majority vote' },
+  { value: 'all', label: 'All judges must pass' },
+]
+
 // --------------- main component ---------------
 
 export function Settings() {
@@ -209,6 +223,53 @@ export function Settings() {
       {help && <p className="text-[10px] text-text-muted mt-1">{help}</p>}
     </div>
   )
+
+  const optionalTextField = (label: string, key: string, placeholder?: string, help?: string) => (
+    <div>
+      <label className="block text-[12px] font-medium text-text-secondary mb-1">{label}</label>
+      <input
+        type="text"
+        value={typeof form[key] === 'string' ? String(form[key]) : ''}
+        onChange={(e) => setForm({ ...form, [key]: e.target.value || null })}
+        placeholder={placeholder}
+        className="w-full bg-surface border border-border rounded px-3 py-1.5 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code"
+      />
+      {help && <p className="text-[10px] text-text-muted mt-1">{help}</p>}
+    </div>
+  )
+
+  const textareaListField = (label: string, key: string, placeholder?: string, help?: string) => (
+    <div>
+      <label className="block text-[12px] font-medium text-text-secondary mb-1">{label}</label>
+      <textarea
+        value={Array.isArray(form[key]) ? (form[key] as string[]).join('\n') : ''}
+        onChange={(e) => {
+          const values = e.target.value
+            .split('\n')
+            .map(value => value.trim())
+            .filter(Boolean)
+          setForm({ ...form, [key]: values })
+        }}
+        placeholder={placeholder}
+        rows={4}
+        className="w-full bg-surface border border-border rounded px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code resize-y"
+      />
+      {help && <p className="text-[10px] text-text-muted mt-1">{help}</p>}
+    </div>
+  )
+
+  const stringArrayField = (key: string): string[] =>
+    Array.isArray(form[key])
+      ? (form[key] as unknown[]).filter((value): value is string => typeof value === 'string')
+      : []
+
+  const toggleStringArrayField = (key: string, value: string) => {
+    const current = stringArrayField(key)
+    const next = current.includes(value)
+      ? current.filter(item => item !== value)
+      : [...current, value]
+    setForm({ ...form, [key]: next })
+  }
 
   // --------------- provider helpers ---------------
 
@@ -450,6 +511,9 @@ export function Settings() {
   const renderModelTab = () => (
     <div className="space-y-3">
       <Section title="MODEL">
+        <p className="text-[10px] text-text-muted mb-3">
+          Default frontier stack: <code className="font-code text-accent">anthropic/claude-opus-4.5</code> for primary review and <code className="font-code text-accent">anthropic/claude-sonnet-4.5</code> for weaker and fast roles.
+        </p>
         {/* Quick select grid */}
         <div className="mb-4">
           <div className="text-[11px] text-text-secondary mb-2">Quick Select (via OpenRouter)</div>
@@ -475,7 +539,7 @@ export function Settings() {
         </div>
 
         <div className="space-y-3 border-t border-border-subtle pt-3">
-          {field('Model name', 'model', 'text', 'claude-sonnet-4-6', 'Direct: claude-*, gpt-* | OpenRouter: vendor/model')}
+          {field('Model name', 'model', 'text', 'anthropic/claude-opus-4.5', 'Direct: claude-*, gpt-* | OpenRouter: vendor/model')}
           {selectField('Adapter', 'adapter', [
             { value: '', label: 'Auto-detect' },
             { value: 'openai', label: 'OpenAI (direct)' },
@@ -483,6 +547,16 @@ export function Settings() {
             { value: 'ollama', label: 'Ollama (local)' },
             { value: 'openrouter', label: 'OpenRouter' },
           ])}
+        </div>
+      </Section>
+
+      <Section title="MODEL ROLES" defaultOpen={false}>
+        <div className="space-y-3">
+          {optionalTextField('Weak / Verification Model', 'model_weak', 'anthropic/claude-sonnet-4.5', 'Used for verification, triage, and cheaper supporting work when configured')}
+          {optionalTextField('Fast Utility Model', 'model_fast', 'anthropic/claude-sonnet-4.5', 'Used for lightweight helper tasks such as summaries and titles')}
+          {optionalTextField('Reasoning Model', 'model_reasoning', 'anthropic/claude-opus-4.5', 'Used when the pipeline asks for a deeper reasoning pass')}
+          {optionalTextField('Embedding Model', 'model_embedding', 'text-embedding-3-small', 'Optional embedding model for semantic retrieval and feedback memory')}
+          {textareaListField('Fallback Models', 'fallback_models', 'anthropic/claude-sonnet-4.5\nopenai/gpt-5.4', 'One model per line. These are tried in order when the primary request fails.')}
         </div>
       </Section>
 
@@ -618,8 +692,91 @@ export function Settings() {
           onChange={v => setForm({ ...form, verification_pass: v })}
         />
         <div className="space-y-3 mt-3">
+          {selectField('Primary Judge Role', 'verification_model_role', MODEL_ROLE_OPTIONS, 'Which configured model role should run the first verification pass')}
+          <div>
+            <label className="block text-[12px] font-medium text-text-secondary mb-1">Additional Judge Roles</label>
+            <div className="flex gap-2 flex-wrap">
+              {MODEL_ROLE_OPTIONS
+                .filter(option => option.value !== String(form.verification_model_role ?? 'weak'))
+                .map(option => {
+                  const active = stringArrayField('verification_additional_model_roles').includes(option.value)
+                  return (
+                    <button
+                      key={option.value}
+                      onClick={() => toggleStringArrayField('verification_additional_model_roles', option.value)}
+                      className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+                        active
+                          ? 'bg-accent/15 text-accent border border-accent/30'
+                          : 'bg-surface text-text-muted border border-border hover:text-text-secondary'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  )
+                })}
+            </div>
+            <p className="text-[10px] text-text-muted mt-1">Extra judges vote alongside the primary verification role.</p>
+          </div>
+          {selectField('Consensus Mode', 'verification_consensus_mode', VERIFICATION_CONSENSUS_OPTIONS, 'How multiple verification judges should agree before a comment is kept')}
           {field('Min Score', 'verification_min_score', 'number', '5', 'Minimum verification score (0-10) to keep a comment')}
           {field('Max Comments', 'verification_max_comments', 'number', '20', 'Maximum comments to send through verification (cost control)')}
+        </div>
+        <div className="mt-3">
+          <Toggle
+            label="Fail Open on Judge Errors"
+            description="Keep the original comments if the verification step errors or returns unparseable output"
+            checked={!!form.verification_fail_open}
+            onChange={v => setForm({ ...form, verification_fail_open: v })}
+          />
+        </div>
+      </Section>
+
+      <Section title="PIPELINE MODES" defaultOpen={false}>
+        <Toggle
+          label="Multi-pass Specialized Review"
+          description="Run separate security, correctness, and style passes instead of one monolithic review prompt"
+          checked={!!form.multi_pass_specialized}
+          onChange={v => setForm({ ...form, multi_pass_specialized: v })}
+        />
+        <Toggle
+          label="Enable Symbol Index"
+          description="Index repository symbols so review and retrieval can follow call chains more effectively"
+          checked={form.symbol_index !== false}
+          onChange={v => setForm({ ...form, symbol_index: v })}
+        />
+        <Toggle
+          label="Enable Semantic RAG"
+          description="Retrieve related code context using embeddings and similarity search"
+          checked={!!form.semantic_rag}
+          onChange={v => setForm({ ...form, semantic_rag: v })}
+        />
+        <Toggle
+          label="Enable Enhanced Feedback"
+          description="Track richer acceptance and rejection calibration across categories and rules"
+          checked={!!form.enhanced_feedback}
+          onChange={v => setForm({ ...form, enhanced_feedback: v })}
+        />
+        <Toggle
+          label="Enable Semantic Feedback Memory"
+          description="Use embedding-backed accepted and rejected examples to calibrate similar future findings"
+          checked={!!form.semantic_feedback}
+          onChange={v => setForm({ ...form, semantic_feedback: v })}
+        />
+      </Section>
+
+      <Section title="SEMANTIC CONTEXT & MEMORY" defaultOpen={false}>
+        <div className="space-y-3">
+          {selectField('Symbol Index Provider', 'symbol_index_provider', [
+            { value: 'regex', label: 'Regex' },
+            { value: 'lsp', label: 'LSP' },
+          ], 'Regex is simpler and faster; LSP can provide richer symbol results when available')}
+          {field('Feedback Min Observations', 'feedback_min_observations', 'number', '5', 'Minimum accepted/rejected examples before confidence calibration shifts')}
+          {field('Semantic RAG Max Files', 'semantic_rag_max_files', 'number', '500', 'Maximum files indexed for semantic retrieval')}
+          {field('Semantic RAG Top K', 'semantic_rag_top_k', 'number', '5', 'Maximum nearby semantic matches to inject into the prompt')}
+          {field('Semantic RAG Min Similarity', 'semantic_rag_min_similarity', 'number', '0.25', 'Minimum similarity score (0.0 - 1.0) for semantic retrieval')}
+          {field('Semantic Feedback Similarity', 'semantic_feedback_similarity', 'number', '0.82', 'Minimum similarity score (0.0 - 1.0) to reuse prior feedback examples')}
+          {field('Semantic Feedback Min Examples', 'semantic_feedback_min_examples', 'number', '3', 'Minimum nearby examples required before semantic feedback is applied')}
+          {field('Semantic Feedback Max Neighbors', 'semantic_feedback_max_neighbors', 'number', '8', 'Maximum neighboring feedback examples to consult')}
         </div>
       </Section>
 
