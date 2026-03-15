@@ -369,6 +369,7 @@ mod tests {
         )];
         let result = apply_feedback_confidence_adjustment(comments, &feedback, 5);
         assert_eq!(result[0].confidence, 0.8);
+        assert!(result[0].tags.is_empty());
     }
 
     #[test]
@@ -409,6 +410,10 @@ mod tests {
             "Got: {}",
             result[0].confidence
         );
+        assert!(result[0].tags.contains(&"feedback-calibration".to_string()));
+        assert!(result[0]
+            .tags
+            .contains(&"feedback-calibration:demoted".to_string()));
     }
 
     #[test]
@@ -431,6 +436,10 @@ mod tests {
             "Got: {}",
             result[0].confidence
         );
+        assert!(result[0].tags.contains(&"feedback-calibration".to_string()));
+        assert!(result[0]
+            .tags
+            .contains(&"feedback-calibration:boosted".to_string()));
     }
 
     #[test]
@@ -573,5 +582,9 @@ mod tests {
             "Expected exact accepted comment ids to get a boost, got {}",
             result[0].confidence
         );
+        assert!(result[0].tags.contains(&"feedback-calibration".to_string()));
+        assert!(result[0]
+            .tags
+            .contains(&"feedback-calibration:accepted-id".to_string()));
     }
 }

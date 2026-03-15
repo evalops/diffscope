@@ -43,18 +43,37 @@ pub fn apply_feedback_confidence_adjustment(
         .map(|mut comment| {
             if feedback.accept.contains(&comment.id) {
                 comment.confidence = (comment.confidence * 1.15).clamp(0.0, 1.0);
+                push_feedback_calibration_tag(&mut comment, "feedback-calibration:accepted-id");
             }
             if let Some(stats) = lookup_feedback_confidence_stats(&comment, feedback) {
                 if stats.total() >= min_observations {
                     let rate = stats.acceptance_rate();
                     let adjustment = 0.75 + rate * 0.5;
+                    let previous_confidence = comment.confidence;
                     comment.confidence = (comment.confidence * adjustment).clamp(0.0, 1.0);
+
+                    if comment.confidence > previous_confidence {
+                        push_feedback_calibration_tag(&mut comment, "feedback-calibration:boosted");
+                    } else if comment.confidence < previous_confidence {
+                        push_feedback_calibration_tag(&mut comment, "feedback-calibration:demoted");
+                    }
                 }
             }
 
             comment
         })
         .collect()
+}
+
+fn push_feedback_calibration_tag(comment: &mut core::Comment, tag: &str) {
+    push_feedback_tag(comment, "feedback-calibration");
+    push_feedback_tag(comment, tag);
+}
+
+fn push_feedback_tag(comment: &mut core::Comment, tag: &str) {
+    if !comment.tags.iter().any(|existing| existing == tag) {
+        comment.tags.push(tag.to_string());
+    }
 }
 
 fn lookup_feedback_confidence_stats<'a>(

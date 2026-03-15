@@ -5,6 +5,39 @@ import type {
   Severity,
 } from '../api/types'
 
+type ReviewComment = ReviewSession['comments'][number]
+
+const FEEDBACK_LEARNING_ACCEPT_TAGS = new Set([
+  'feedback-calibration:accepted-id',
+  'feedback-calibration:boosted',
+  'semantic-feedback:accepted',
+])
+
+const FEEDBACK_LEARNING_REJECT_TAGS = new Set([
+  'feedback-calibration:demoted',
+  'semantic-feedback:rejected',
+])
+
+function isLabeledFeedbackComment(comment: ReviewComment): boolean {
+  return comment.feedback === 'accept' || comment.feedback === 'reject'
+}
+
+function isFeedbackLearningComment(comment: ReviewComment): boolean {
+  return comment.tags.some(tag => (
+    tag === 'feedback-calibration'
+    || tag.startsWith('feedback-calibration:')
+    || tag.startsWith('semantic-feedback:')
+  ))
+}
+
+function hasFeedbackLearningAcceptTag(comment: ReviewComment): boolean {
+  return comment.tags.some(tag => FEEDBACK_LEARNING_ACCEPT_TAGS.has(tag))
+}
+
+function hasFeedbackLearningRejectTag(comment: ReviewComment): boolean {
+  return comment.tags.some(tag => FEEDBACK_LEARNING_REJECT_TAGS.has(tag))
+}
+
 export function computeAnalytics(reviews: ReviewSession[]) {
   const completed = getCompletedReviews(reviews)
 
@@ -85,6 +118,37 @@ export function computeAnalytics(reviews: ReviewSession[]) {
       accepted,
       rejected,
       totalComments,
+    }
+  })
+
+  const feedbackLearningSeries = completed.map((r, i) => {
+    const labeledComments = r.comments.filter(isLabeledFeedbackComment)
+    const tunedComments = labeledComments.filter(isFeedbackLearningComment)
+    const baselineComments = labeledComments.filter(comment => !isFeedbackLearningComment(comment))
+    const tunedAccepted = tunedComments.filter(comment => comment.feedback === 'accept').length
+    const tunedRejected = tunedComments.filter(comment => comment.feedback === 'reject').length
+    const baselineAccepted = baselineComments.filter(comment => comment.feedback === 'accept').length
+
+    return {
+      reviewId: r.id,
+      idx: i + 1,
+      label: `#${i + 1}`,
+      tunedLabeled: tunedComments.length,
+      tunedAccepted,
+      tunedRejected,
+      baselineLabeled: baselineComments.length,
+      baselineAccepted,
+      tunedAcceptanceRate: tunedComments.length > 0 ? tunedAccepted / tunedComments.length : null,
+      baselineAcceptanceRate: baselineComments.length > 0 ? baselineAccepted / baselineComments.length : null,
+      acceptanceLift: tunedComments.length > 0 && baselineComments.length > 0
+        ? (tunedAccepted / tunedComments.length) - (baselineAccepted / baselineComments.length)
+        : null,
+      boostedAccepted: tunedComments.filter(comment => (
+        comment.feedback === 'accept' && hasFeedbackLearningAcceptTag(comment)
+      )).length,
+      demotedRejected: tunedComments.filter(comment => (
+        comment.feedback === 'reject' && hasFeedbackLearningRejectTag(comment)
+      )).length,
     }
   })
 
@@ -226,8 +290,49 @@ export function computeAnalytics(reviews: ReviewSession[]) {
   const labeledFeedbackTotal = feedbackCoverageSeries.reduce((sum, point) => sum + point.labeled, 0)
   const acceptedFeedbackTotal = feedbackCoverageSeries.reduce((sum, point) => sum + point.accepted, 0)
   const rejectedFeedbackTotal = feedbackCoverageSeries.reduce((sum, point) => sum + point.rejected, 0)
+  const feedbackLearningLabeledTotal = feedbackLearningSeries.reduce(
+    (sum, point) => sum + point.tunedLabeled,
+    0,
+  )
+  const feedbackLearningAcceptedTotal = feedbackLearningSeries.reduce(
+    (sum, point) => sum + point.tunedAccepted,
+    0,
+  )
+  const feedbackLearningRejectedTotal = feedbackLearningSeries.reduce(
+    (sum, point) => sum + point.tunedRejected,
+    0,
+  )
+  const feedbackLearningBaselineLabeledTotal = feedbackLearningSeries.reduce(
+    (sum, point) => sum + point.baselineLabeled,
+    0,
+  )
+  const feedbackLearningBaselineAcceptedTotal = feedbackLearningSeries.reduce(
+    (sum, point) => sum + point.baselineAccepted,
+    0,
+  )
+  const feedbackLearningBoostedAcceptedTotal = feedbackLearningSeries.reduce(
+    (sum, point) => sum + point.boostedAccepted,
+    0,
+  )
+  const feedbackLearningDemotedRejectedTotal = feedbackLearningSeries.reduce(
+    (sum, point) => sum + point.demotedRejected,
+    0,
+  )
   const totalCommentCount = completed.reduce((sum, r) => sum + r.comments.length, 0)
   const reviewsWithFeedback = feedbackCoverageSeries.filter(point => point.labeled > 0).length
+  const feedbackLearningReviewCount = feedbackLearningSeries.filter(
+    point => point.tunedLabeled > 0,
+  ).length
+  const feedbackLearningAcceptanceRate = feedbackLearningLabeledTotal > 0
+    ? feedbackLearningAcceptedTotal / feedbackLearningLabeledTotal
+    : 0
+  const feedbackLearningBaselineAcceptanceRate = feedbackLearningBaselineLabeledTotal > 0
+    ? feedbackLearningBaselineAcceptedTotal / feedbackLearningBaselineLabeledTotal
+    : null
+  const feedbackLearningAcceptanceLift = feedbackLearningBaselineAcceptanceRate != null
+    && feedbackLearningLabeledTotal > 0
+    ? feedbackLearningAcceptanceRate - feedbackLearningBaselineAcceptanceRate
+    : null
 
   const sevTotals: Record<Severity, number> = { Error: 0, Warning: 0, Info: 0, Suggestion: 0 }
   for (const r of completed) {
@@ -247,6 +352,7 @@ export function computeAnalytics(reviews: ReviewSession[]) {
     completenessSeries,
     meanTimeToResolutionSeries,
     feedbackCoverageSeries,
+    feedbackLearningSeries,
     topAcceptedCategories,
     topRejectedCategories,
     topAcceptedRules,
@@ -281,6 +387,16 @@ export function computeAnalytics(reviews: ReviewSession[]) {
       feedbackCoverageRate: totalCommentCount > 0 ? labeledFeedbackTotal / totalCommentCount : 0,
       feedbackAcceptanceRate: labeledFeedbackTotal > 0 ? acceptedFeedbackTotal / labeledFeedbackTotal : 0,
       reviewsWithFeedback,
+      feedbackLearningLabeledTotal,
+      feedbackLearningAcceptedTotal,
+      feedbackLearningRejectedTotal,
+      feedbackLearningReviewCount,
+      feedbackLearningAcceptanceRate,
+      feedbackLearningBaselineLabeledTotal,
+      feedbackLearningBaselineAcceptanceRate,
+      feedbackLearningAcceptanceLift,
+      feedbackLearningBoostedAcceptedTotal,
+      feedbackLearningDemotedRejectedTotal,
     },
   }
 }
@@ -525,12 +641,23 @@ export interface AnalyticsExportReport {
       feedbackCoverageRate: number
       feedbackAcceptanceRate: number
       reviewsWithFeedback: number
+      feedbackLearningLabeledTotal: number
+      feedbackLearningAcceptedTotal: number
+      feedbackLearningRejectedTotal: number
+      feedbackLearningReviewCount: number
+      feedbackLearningAcceptanceRate: number
+      feedbackLearningBaselineLabeledTotal: number
+      feedbackLearningBaselineAcceptanceRate?: number
+      feedbackLearningAcceptanceLift?: number
+      feedbackLearningBoostedAcceptedTotal: number
+      feedbackLearningDemotedRejectedTotal: number
       latestMicroF1?: number
       latestWeightedScore?: number
       latestAcceptanceRate?: number
       latestConfidenceF1?: number
     }
     coverageByReview: AnalyticsSnapshot['feedbackCoverageSeries']
+    feedbackLearningByReview: AnalyticsSnapshot['feedbackLearningSeries']
     topAcceptedCategories: AnalyticsSnapshot['topAcceptedCategories']
     topRejectedCategories: AnalyticsSnapshot['topRejectedCategories']
     topAcceptedRules: AnalyticsSnapshot['topAcceptedRules']
@@ -644,12 +771,23 @@ export function buildAnalyticsExportReport(
         feedbackCoverageRate: analytics.stats.feedbackCoverageRate,
         feedbackAcceptanceRate: analytics.stats.feedbackAcceptanceRate,
         reviewsWithFeedback: analytics.stats.reviewsWithFeedback,
+        feedbackLearningLabeledTotal: analytics.stats.feedbackLearningLabeledTotal,
+        feedbackLearningAcceptedTotal: analytics.stats.feedbackLearningAcceptedTotal,
+        feedbackLearningRejectedTotal: analytics.stats.feedbackLearningRejectedTotal,
+        feedbackLearningReviewCount: analytics.stats.feedbackLearningReviewCount,
+        feedbackLearningAcceptanceRate: analytics.stats.feedbackLearningAcceptanceRate,
+        feedbackLearningBaselineLabeledTotal: analytics.stats.feedbackLearningBaselineLabeledTotal,
+        feedbackLearningBaselineAcceptanceRate: analytics.stats.feedbackLearningBaselineAcceptanceRate ?? undefined,
+        feedbackLearningAcceptanceLift: analytics.stats.feedbackLearningAcceptanceLift ?? undefined,
+        feedbackLearningBoostedAcceptedTotal: analytics.stats.feedbackLearningBoostedAcceptedTotal,
+        feedbackLearningDemotedRejectedTotal: analytics.stats.feedbackLearningDemotedRejectedTotal,
         latestMicroF1: trendAnalytics.latestEval?.micro_f1,
         latestWeightedScore: trendAnalytics.latestEval?.weighted_score,
         latestAcceptanceRate: trendAnalytics.latestFeedback?.acceptance_rate,
         latestConfidenceF1: trendAnalytics.latestFeedback?.confidence_f1,
       },
       coverageByReview: analytics.feedbackCoverageSeries,
+      feedbackLearningByReview: analytics.feedbackLearningSeries,
       topAcceptedCategories: analytics.topAcceptedCategories,
       topRejectedCategories: analytics.topRejectedCategories,
       topAcceptedRules: analytics.topAcceptedRules,
@@ -717,6 +855,23 @@ export function buildAnalyticsCsv(report: AnalyticsExportReport): string {
     rows.push({ report: 'reinforcement', group: 'coverage_by_review', label: point.label, metric: 'accepted', value: point.accepted })
     rows.push({ report: 'reinforcement', group: 'coverage_by_review', label: point.label, metric: 'rejected', value: point.rejected })
     rows.push({ report: 'reinforcement', group: 'coverage_by_review', label: point.label, metric: 'total_comments', value: point.totalComments })
+  })
+  report.reinforcement.feedbackLearningByReview.forEach(point => {
+    rows.push({ report: 'reinforcement', group: 'feedback_learning_by_review', label: point.label, metric: 'tuned_labeled', value: point.tunedLabeled })
+    rows.push({ report: 'reinforcement', group: 'feedback_learning_by_review', label: point.label, metric: 'tuned_accepted', value: point.tunedAccepted })
+    rows.push({ report: 'reinforcement', group: 'feedback_learning_by_review', label: point.label, metric: 'tuned_rejected', value: point.tunedRejected })
+    rows.push({ report: 'reinforcement', group: 'feedback_learning_by_review', label: point.label, metric: 'baseline_labeled', value: point.baselineLabeled })
+    if (point.tunedAcceptanceRate != null) {
+      rows.push({ report: 'reinforcement', group: 'feedback_learning_by_review', label: point.label, metric: 'tuned_acceptance_rate', value: point.tunedAcceptanceRate })
+    }
+    if (point.baselineAcceptanceRate != null) {
+      rows.push({ report: 'reinforcement', group: 'feedback_learning_by_review', label: point.label, metric: 'baseline_acceptance_rate', value: point.baselineAcceptanceRate })
+    }
+    if (point.acceptanceLift != null) {
+      rows.push({ report: 'reinforcement', group: 'feedback_learning_by_review', label: point.label, metric: 'acceptance_lift', value: point.acceptanceLift })
+    }
+    rows.push({ report: 'reinforcement', group: 'feedback_learning_by_review', label: point.label, metric: 'boosted_accepted', value: point.boostedAccepted })
+    rows.push({ report: 'reinforcement', group: 'feedback_learning_by_review', label: point.label, metric: 'demoted_rejected', value: point.demotedRejected })
   })
   appendFeedbackBreakdownRows(rows, 'top_accepted_categories', report.reinforcement.topAcceptedCategories)
   appendFeedbackBreakdownRows(rows, 'top_rejected_categories', report.reinforcement.topRejectedCategories)

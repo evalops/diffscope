@@ -167,6 +167,7 @@ describe('Analytics exports', () => {
     expect(report.reinforcement.summary.labeledFeedbackTotal).toBe(2)
     expect(report.reinforcement.summary.feedbackCoverageRate).toBe(1)
     expect(report.reinforcement.summary.feedbackAcceptanceRate).toBe(0.5)
+    expect(report.reinforcement.summary.feedbackLearningLabeledTotal).toBe(0)
     expect(report.reinforcement.latestAttentionGaps.byCategory[0].name).toBe('Security')
     expect(report.reinforcement.latestAttentionGaps.byRule[0].name).toBe('sec.auth.boundary')
     expect(report.sources.warnings).toContain('feedback trend lagging behind latest review')
@@ -188,6 +189,77 @@ describe('Analytics exports', () => {
     expect(analytics.stats.meanTimeToResolutionHours).toBeCloseTo(1.5)
     expect(analytics.stats.resolvedWithTimestampCount).toBe(1)
     expect(formatDurationHours(analytics.stats.meanTimeToResolutionHours)).toBe('1.5h')
+  })
+
+  it('computes feedback-learning effectiveness metrics from tagged findings', () => {
+    const tunedReview = makeReview()
+    tunedReview.id = 'review-2'
+    tunedReview.started_at = '2026-03-14T12:00:00Z'
+    tunedReview.completed_at = '2026-03-14T12:05:00Z'
+    tunedReview.comments = [
+      {
+        ...tunedReview.comments[0],
+        id: 'c-3',
+        content: 'Use the learned auth guard pattern here too',
+        feedback: 'accept',
+        tags: ['feedback-calibration', 'feedback-calibration:boosted'],
+      },
+      {
+        ...tunedReview.comments[0],
+        id: 'c-4',
+        file_path: 'src/cache.ts',
+        line_number: 28,
+        content: 'The semantic history caught another accepted regression',
+        feedback: 'accept',
+        tags: ['semantic-feedback:accepted'],
+      },
+      {
+        ...tunedReview.comments[1],
+        id: 'c-5',
+        file_path: 'src/ui.ts',
+        line_number: 81,
+        content: 'Past feedback usually rejects this styling suggestion',
+        feedback: 'reject',
+        tags: ['feedback-calibration', 'feedback-calibration:demoted'],
+      },
+    ]
+    tunedReview.summary = {
+      ...tunedReview.summary!,
+      total_comments: 3,
+      by_severity: { Error: 2, Warning: 0, Info: 0, Suggestion: 1 },
+      by_category: { Security: 2, Style: 1 },
+      critical_issues: 2,
+      files_reviewed: 3,
+      overall_score: 8.4,
+      open_comments: 2,
+      open_by_severity: { Error: 2 },
+      open_blocking_comments: 2,
+      open_informational_comments: 0,
+      resolved_comments: 1,
+      dismissed_comments: 0,
+      open_blockers: 2,
+      completeness: {
+        total_findings: 3,
+        acknowledged_findings: 1,
+        fixed_findings: 1,
+        stale_findings: 0,
+      },
+    }
+
+    const analytics = computeAnalytics([makeReview(), tunedReview])
+
+    expect(analytics.stats.feedbackLearningLabeledTotal).toBe(3)
+    expect(analytics.stats.feedbackLearningAcceptedTotal).toBe(2)
+    expect(analytics.stats.feedbackLearningRejectedTotal).toBe(1)
+    expect(analytics.stats.feedbackLearningReviewCount).toBe(1)
+    expect(analytics.stats.feedbackLearningAcceptanceRate).toBeCloseTo(2 / 3)
+    expect(analytics.stats.feedbackLearningBaselineLabeledTotal).toBe(2)
+    expect(analytics.stats.feedbackLearningBaselineAcceptanceRate).toBeCloseTo(0.5)
+    expect(analytics.stats.feedbackLearningAcceptanceLift).toBeCloseTo((2 / 3) - 0.5)
+    expect(analytics.stats.feedbackLearningBoostedAcceptedTotal).toBe(2)
+    expect(analytics.stats.feedbackLearningDemotedRejectedTotal).toBe(1)
+    expect(analytics.feedbackLearningSeries[0].baselineLabeled).toBe(2)
+    expect(analytics.feedbackLearningSeries[1].tunedLabeled).toBe(3)
   })
 
   it('builds review, category, and rule drilldowns from review-backed analytics', () => {
@@ -253,6 +325,7 @@ describe('Analytics exports', () => {
     expect(csv).toContain('"lifecycle","summary","","completenessRate","0.5"')
     expect(csv).toContain('"lifecycle","mean_time_to_resolution_by_review","#1","mean_hours","1.5"')
     expect(csv).toContain('"reinforcement","summary","","feedbackCoverageRate","1"')
+    expect(csv).toContain('"reinforcement","summary","","feedbackLearningLabeledTotal","0"')
     expect(csv).toContain('"reinforcement","attention_gaps_by_category","Security","gap","-0.38"')
     expect(csv).toContain('"reinforcement","top_accepted_rules","sec.auth.boundary","accepted","1"')
   })

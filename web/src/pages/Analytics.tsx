@@ -32,6 +32,15 @@ function getActivePayloadValue<T>(state: unknown): T | undefined {
   return (state as { activePayload?: Array<{ payload?: T }> } | undefined)?.activePayload?.[0]?.payload
 }
 
+function formatSignedPercent(value: number | undefined): string {
+  if (value == null) {
+    return 'n/a'
+  }
+
+  const percent = `${(value * 100).toFixed(0)}%`
+  return value > 0 ? `+${percent}` : percent
+}
+
 function TrendList({ items, emptyLabel }: { items: FeedbackEvalTrendGap[]; emptyLabel: string }) {
   if (items.length === 0) {
     return (
@@ -579,7 +588,7 @@ export function Analytics() {
             LEARNING LOOP
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
             <div className="bg-surface-1 border border-border rounded-lg p-4">
               <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
                 FEEDBACK COVERAGE
@@ -666,6 +675,70 @@ export function Analytics() {
                   <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">REJECTED</div>
                 </div>
               </div>
+            </div>
+
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                LEARNING EFFECTIVENESS
+              </div>
+              {stats.feedbackLearningLabeledTotal > 0 ? (
+                <>
+                  <div className="flex items-baseline gap-2 mb-3">
+                    <span className={`text-2xl font-bold font-code ${
+                      (stats.feedbackLearningAcceptanceLift ?? 0) >= 0
+                        ? 'text-sev-suggestion'
+                        : 'text-sev-warning'
+                    }`}>
+                      {stats.feedbackLearningAcceptanceLift != null
+                        ? formatSignedPercent(stats.feedbackLearningAcceptanceLift)
+                        : formatPercent(stats.feedbackLearningAcceptanceRate)}
+                    </span>
+                    <span className="text-[11px] text-text-muted">
+                      {stats.feedbackLearningAcceptanceLift != null ? 'lift vs baseline' : 'accepted when tuned'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div className="rounded border border-border-subtle bg-surface px-2 py-1.5">
+                      <div className="text-text-muted">Tuned</div>
+                      <div className="mt-0.5 font-code text-text-primary">
+                        {formatPercent(stats.feedbackLearningAcceptanceRate)}
+                      </div>
+                    </div>
+                    <div className="rounded border border-border-subtle bg-surface px-2 py-1.5">
+                      <div className="text-text-muted">Baseline</div>
+                      <div className="mt-0.5 font-code text-text-primary">
+                        {stats.feedbackLearningBaselineAcceptanceRate != null
+                          ? formatPercent(stats.feedbackLearningBaselineAcceptanceRate)
+                          : 'n/a'}
+                      </div>
+                    </div>
+                    <div className="rounded border border-border-subtle bg-surface px-2 py-1.5">
+                      <div className="text-text-muted">Tuned labeled</div>
+                      <div className="mt-0.5 font-code text-text-primary">{stats.feedbackLearningLabeledTotal}</div>
+                    </div>
+                    <div className="rounded border border-border-subtle bg-surface px-2 py-1.5">
+                      <div className="text-text-muted">Reviews</div>
+                      <div className="mt-0.5 font-code text-text-primary">{stats.feedbackLearningReviewCount}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-6 mt-3 pt-3 border-t border-border-subtle">
+                    <div className="text-center">
+                      <div className="text-sm font-bold font-code text-sev-suggestion">{stats.feedbackLearningBoostedAcceptedTotal}</div>
+                      <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">BOOSTED OK</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-sm font-bold font-code text-sev-warning">{stats.feedbackLearningDemotedRejectedTotal}</div>
+                      <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">DEMOTED REJECTED</div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="h-32 flex items-center justify-center text-center text-text-muted text-sm px-6">
+                  No feedback-tuned findings have been labeled yet. Thumbs on learning-tagged findings will show lift here.
+                </div>
+              )}
             </div>
 
             <div className="bg-surface-1 border border-border rounded-lg p-4">
