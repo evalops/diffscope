@@ -141,6 +141,35 @@ mod tests {
     }
 
     #[test]
+    fn format_blast_radius_summary_normalizes_backslash_paths() {
+        use super::format_blast_radius_summary;
+
+        let dependents = vec![
+            PathBuf::from("src\\a.rs"),
+            PathBuf::from("src\\b.rs"),
+            PathBuf::from("src\\c.rs"),
+        ];
+
+        let summary = format_blast_radius_summary(&dependents);
+        assert!(
+            summary.contains("src/a.rs"),
+            "expected forward slashes in summary, got: {summary}"
+        );
+        assert!(
+            summary.contains("src/b.rs"),
+            "expected forward slashes in summary, got: {summary}"
+        );
+        assert!(
+            summary.contains("src/c.rs"),
+            "expected forward slashes in summary, got: {summary}"
+        );
+        assert!(
+            !summary.contains('\\'),
+            "summary should not contain backslashes: {summary}"
+        );
+    }
+
+    #[test]
     fn skips_blast_radius_summary_below_threshold() {
         let dir = tempfile::tempdir().unwrap();
         write_repo_file(dir.path(), "src/shared.rs", "pub fn helper() {}\n");
