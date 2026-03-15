@@ -29,6 +29,28 @@ pub(in super::super) fn print_configuration(config: &Config) {
     if let Some(cw) = config.context_window {
         println!("  Context:  {cw} tokens");
     }
+    println!(
+        "  Primary Provider: {}",
+        config
+            .resolved_provider_for_role(crate::config::ModelRole::Primary)
+            .provider
+            .as_deref()
+            .unwrap_or("(auto-detect)")
+    );
+    let validation_issues = config.validation_issues();
+    if !validation_issues.is_empty() {
+        println!("  Validation:");
+        for issue in validation_issues {
+            println!(
+                "    - {}: {}",
+                match issue.level {
+                    crate::config::ConfigValidationIssueLevel::Warning => "warning",
+                    crate::config::ConfigValidationIssueLevel::Error => "error",
+                },
+                issue.message,
+            );
+        }
+    }
     println!();
 }
 

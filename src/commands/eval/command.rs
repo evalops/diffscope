@@ -66,6 +66,7 @@ pub async fn eval_command(
         options.artifact_dir.as_deref(),
     );
     emit_eval_report(
+        &config,
         execution.results,
         report_output_path.as_deref(),
         prepared_options,

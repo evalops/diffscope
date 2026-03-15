@@ -216,6 +216,21 @@ pub(crate) async fn run_review_task(
                 .build();
             emit_wide_event(&event);
             AppState::fail_review(&state, &review_id, err_msg, Some(event)).await;
+            capture_review_forensics(
+                &state,
+                &config,
+                &review_id,
+                "review_failed",
+                crate::forensics::ReviewForensicsRuntime {
+                    diff_source: diff_source.clone(),
+                    model: model.clone(),
+                    provider: provider.clone(),
+                    base_url: base_url.clone(),
+                    warnings: vec!["Diff fetch failed before review execution.".to_string()],
+                    ..Default::default()
+                },
+            )
+            .await;
             AppState::save_reviews_async(&state);
             return;
         }
@@ -268,7 +283,7 @@ pub(crate) async fn run_review_task(
         std::time::Duration::from_secs(300),
         crate::review::review_diff_content_raw_with_progress(
             &diff_content,
-            config,
+            config.clone(),
             &repo_path,
             on_progress,
         ),
@@ -355,6 +370,29 @@ pub(crate) async fn run_review_task(
             if let Some(ref cfg) = summary_config {
                 generate_and_store_pr_summary(&state, &review_id, &diff_content, cfg).await;
             }
+
+            if !review_result.warnings.is_empty() {
+                capture_review_forensics(
+                    &state,
+                    &config,
+                    &review_id,
+                    "review_warnings",
+                    crate::forensics::ReviewForensicsRuntime {
+                        diff_source: diff_source.clone(),
+                        model: model.clone(),
+                        provider: provider.clone(),
+                        base_url: base_url.clone(),
+                        warnings: review_result.warnings,
+                        verification_report: review_result.verification_report,
+                        agent_activity: review_result
+                            .agent_activity
+                            .as_ref()
+                            .map(crate::forensics::ReviewForensicsAgentActivity::from),
+                        dag_traces: review_result.dag_traces,
+                    },
+                )
+                .await;
+            }
         }
         Ok(Err(e)) => {
             let err_msg = format!("Review failed: {e}");
@@ -369,6 +407,21 @@ pub(crate) async fn run_review_task(
                 .build();
             emit_wide_event(&event);
             AppState::fail_review(&state, &review_id, err_msg, Some(event)).await;
+            capture_review_forensics(
+                &state,
+                &config,
+                &review_id,
+                "review_failed",
+                crate::forensics::ReviewForensicsRuntime {
+                    diff_source: diff_source.clone(),
+                    model: model.clone(),
+                    provider: provider.clone(),
+                    base_url: base_url.clone(),
+                    warnings: vec![e.to_string()],
+                    ..Default::default()
+                },
+            )
+            .await;
         }
         Err(_) => {
             let err_msg = "Review timed out after 5 minutes".to_string();
@@ -383,6 +436,21 @@ pub(crate) async fn run_review_task(
                 .build();
             emit_wide_event(&event);
             AppState::fail_review(&state, &review_id, err_msg, Some(event)).await;
+            capture_review_forensics(
+                &state,
+                &config,
+                &review_id,
+                "review_timeout",
+                crate::forensics::ReviewForensicsRuntime {
+                    diff_source: diff_source.clone(),
+                    model: model.clone(),
+                    provider: provider.clone(),
+                    base_url: base_url.clone(),
+                    warnings: vec!["Review timed out after 5 minutes.".to_string()],
+                    ..Default::default()
+                },
+            )
+            .await;
         }
     }
 
@@ -402,6 +470,36 @@ pub(crate) async fn run_review_task(
                 }
             }
         }
+    }
+}
+
+async fn capture_review_forensics(
+    state: &Arc<AppState>,
+    config: &crate::config::Config,
+    review_id: &str,
+    trigger: &str,
+    runtime: crate::forensics::ReviewForensicsRuntime,
+) {
+    let session = {
+        let reviews = state.reviews.read().await;
+        reviews.get(review_id).cloned()
+    };
+    let Some(session) = session else {
+        return;
+    };
+
+    if let Err(error) = crate::forensics::write_review_forensics_bundle(
+        config,
+        crate::forensics::ReviewForensicsBundleInput {
+            review_id: review_id.to_string(),
+            trigger: trigger.to_string(),
+            session,
+            runtime,
+        },
+    )
+    .await
+    {
+        warn!(review_id = %review_id, "Failed to write review forensics bundle: {error}");
     }
 }
 
@@ -480,6 +578,15 @@ pub(crate) async fn get_review(
         &addressed_by_follow_up_comment_ids,
         Some(&feedback_store),
     )))
+}
+
+pub(crate) async fn get_review_forensics(
+    Path(id): Path<String>,
+) -> Result<Json<crate::forensics::ForensicsBundleManifest>, StatusCode> {
+    crate::forensics::load_review_forensics_manifest(&id)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::NOT_FOUND)
 }
 
 async fn fetch_current_pr_head_sha_for_review(
@@ -767,7 +874,9 @@ pub(crate) async fn submit_feedback(
         )
     };
 
+    let mut replay_capture_session = None;
     if feedback_changed {
+        replay_capture_session = Some(session.clone());
         {
             let mut reviews = state.reviews.write().await;
             reviews.insert(id.clone(), session);
@@ -789,6 +898,13 @@ pub(crate) async fn submit_feedback(
                 "Failed to persist comment feedback: {}",
                 err
             );
+        }
+    }
+
+    if let Some(session) = replay_capture_session.as_ref() {
+        if let Err(error) = crate::production_replay::record_review_feedback_fixture(session).await
+        {
+            warn!(review_id = %id, "Failed to update production replay fixture pack: {error}");
         }
     }
 

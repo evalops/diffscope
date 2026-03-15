@@ -4,9 +4,11 @@ mod adapters;
 mod commands;
 mod config;
 mod core;
+mod forensics;
 mod output;
 mod parsing;
 mod plugins;
+mod production_replay;
 mod review;
 mod server;
 mod vault;
@@ -675,6 +677,13 @@ async fn main() -> Result<()> {
     // Resolve API key from Vault if configured and api_key is not already set
     if let Err(e) = config.resolve_vault_api_key().await {
         eprintln!("Warning: Failed to fetch API key from Vault: {e:#}");
+    }
+    for issue in config.validation_issues() {
+        let label = match issue.level {
+            crate::config::ConfigValidationIssueLevel::Warning => "Warning",
+            crate::config::ConfigValidationIssueLevel::Error => "Error",
+        };
+        eprintln!("{label}: {}", issue.message);
     }
 
     match cli.command {

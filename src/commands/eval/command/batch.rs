@@ -201,6 +201,7 @@ pub(super) async fn run_eval_batch(
                     .as_ref()
                     .map(|dir| dir.join("report.json"));
                 let report = materialize_eval_report(
+                    &run_config,
                     execution.results,
                     report_output_path.as_deref(),
                     prepared_options.clone(),

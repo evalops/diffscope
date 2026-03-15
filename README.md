@@ -194,6 +194,7 @@ git diff | diffscope review --model custom-model
 ### Self-Hosted / Local Models
 
 Run DiffScope against a local LLM with zero cloud dependencies. No API key required.
+For the server deployment path with persistent analytics, retention, secret-management guidance, and forensics bundles, see [`docs/self-hosting.md`](docs/self-hosting.md).
 
 #### Ollama (Recommended)
 ```bash

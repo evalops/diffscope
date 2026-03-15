@@ -131,11 +131,11 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 83. [x] Add queue depth and worker saturation metrics for long-running review and eval jobs.
 84. [x] Add retention policies for review artifacts, eval artifacts, and trend histories.
 85. [x] Add storage migrations for richer comment lifecycle and reinforcement schemas.
-86. [ ] Add deployment docs for self-hosted review + analytics + trend retention setups.
-87. [ ] Add secret-management guidance and validation for multi-provider enterprise installs.
+86. [x] Add deployment docs for self-hosted review + analytics + trend retention setups.
+87. [x] Add secret-management guidance and validation for multi-provider enterprise installs.
 88. [x] Add background jobs for recomputing analytics after schema or scoring changes.
 89. [x] Add cost dashboards by provider/model/role for review, verification, and eval workloads.
-90. [ ] Add failure forensics bundles for self-hosted users when review or eval jobs degrade.
+90. [x] Add failure forensics bundles for self-hosted users when review or eval jobs degrade.
 
 ## 10. Eval, Benchmarking, and Model Governance
 
@@ -144,7 +144,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 93. [x] Add eval fixtures for addressed-vs-stale finding lifecycle inference.
 94. [x] Add eval fixtures for multi-hop graph reasoning across call chains and contract edges.
 95. [x] Add eval runs that compare single-pass review against agentic loop review.
-96. [ ] Add production replay evals using anonymized accepted/rejected review outcomes.
+96. [x] Add production replay evals using anonymized accepted/rejected review outcomes.
 97. [x] Add leaderboard reporting for reviewer usefulness metrics, not just precision/recall.
 98. [x] Add regression gates for feedback coverage, verifier health, and lifecycle-state accuracy.
 99. [x] Add model-routing policies that explicitly separate generation, verification, and auditing roles.

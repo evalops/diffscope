@@ -79,6 +79,50 @@ impl Default for ProviderConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigValidationIssueLevel {
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigValidationIssue {
+    pub level: ConfigValidationIssueLevel,
+    pub field: String,
+    pub message: String,
+}
+
+impl ConfigValidationIssue {
+    fn warning(field: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            level: ConfigValidationIssueLevel::Warning,
+            field: field.into(),
+            message: message.into(),
+        }
+    }
+
+    fn error(field: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            level: ConfigValidationIssueLevel::Error,
+            field: field.into(),
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedProviderConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VaultConfig {
     /// HashiCorp Vault server address (e.g., https://vault.example.com:8200).
@@ -948,15 +992,67 @@ impl Config {
                 .filter(|s| !s.trim().is_empty());
         }
 
+        apply_provider_env_api_key_fallback(&mut self.providers, "openai", "OPENAI_API_KEY");
+        apply_provider_env_api_key_fallback(
+            &mut self.providers,
+            "openrouter",
+            "OPENROUTER_API_KEY",
+        );
+        apply_provider_env_api_key_fallback(&mut self.providers, "anthropic", "ANTHROPIC_API_KEY");
+
         // Env var fallbacks for GitHub integration
         if self.github.token.is_none() {
             self.github.token = std::env::var("GITHUB_TOKEN")
                 .ok()
                 .filter(|s| !s.trim().is_empty());
         }
+        if self.github.app_id.is_none() {
+            self.github.app_id = std::env::var("DIFFSCOPE_GITHUB_APP_ID")
+                .ok()
+                .and_then(|raw| raw.trim().parse::<u64>().ok())
+                .filter(|value| *value > 0);
+        }
+        if self.github.client_id.is_none() {
+            self.github.client_id = std::env::var("DIFFSCOPE_GITHUB_CLIENT_ID")
+                .ok()
+                .or_else(|| std::env::var("GITHUB_CLIENT_ID").ok())
+                .filter(|s| !s.trim().is_empty());
+        }
+        if self.github.client_secret.is_none() {
+            self.github.client_secret = std::env::var("DIFFSCOPE_GITHUB_CLIENT_SECRET")
+                .ok()
+                .or_else(|| std::env::var("GITHUB_CLIENT_SECRET").ok())
+                .filter(|s| !s.trim().is_empty());
+        }
+        if self.github.private_key.is_none() {
+            self.github.private_key = std::env::var("DIFFSCOPE_GITHUB_PRIVATE_KEY")
+                .ok()
+                .filter(|s| !s.trim().is_empty());
+        }
         if self.github.webhook_secret.is_none() {
             self.github.webhook_secret = std::env::var("DIFFSCOPE_WEBHOOK_SECRET")
                 .ok()
+                .filter(|s| !s.trim().is_empty());
+        }
+        if self.jira.base_url.is_none() {
+            self.jira.base_url = std::env::var("DIFFSCOPE_JIRA_BASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty());
+        }
+        if self.jira.email.is_none() {
+            self.jira.email = std::env::var("DIFFSCOPE_JIRA_EMAIL")
+                .ok()
+                .filter(|s| !s.trim().is_empty());
+        }
+        if self.jira.api_token.is_none() {
+            self.jira.api_token = std::env::var("DIFFSCOPE_JIRA_API_TOKEN")
+                .ok()
+                .filter(|s| !s.trim().is_empty());
+        }
+        if self.linear.api_key.is_none() {
+            self.linear.api_key = std::env::var("DIFFSCOPE_LINEAR_API_KEY")
+                .ok()
+                .or_else(|| std::env::var("LINEAR_API_KEY").ok())
                 .filter(|s| !s.trim().is_empty());
         }
         if self.automation.webhook_url.is_none() {
@@ -987,8 +1083,46 @@ impl Config {
             self.server_security.rate_limit_per_minute = Some(DEFAULT_SERVER_RATE_LIMIT_PER_MINUTE);
         }
 
+        normalize_optional_trimmed(&mut self.api_key);
+        normalize_optional_trimmed(&mut self.base_url);
+        normalize_optional_trimmed(&mut self.github.token);
+        normalize_optional_trimmed(&mut self.github.client_id);
+        normalize_optional_trimmed(&mut self.github.client_secret);
+        normalize_optional_trimmed(&mut self.github.private_key);
+        normalize_optional_trimmed(&mut self.github.webhook_secret);
+        normalize_optional_trimmed(&mut self.jira.base_url);
+        normalize_optional_trimmed(&mut self.jira.email);
+        normalize_optional_trimmed(&mut self.jira.api_token);
+        normalize_optional_trimmed(&mut self.linear.api_key);
+        normalize_optional_trimmed(&mut self.automation.webhook_url);
+        normalize_optional_trimmed(&mut self.automation.webhook_secret);
+        normalize_optional_trimmed(&mut self.server_security.api_key);
+        normalize_optional_trimmed(&mut self.vault.addr);
+        normalize_optional_trimmed(&mut self.vault.token);
+        normalize_optional_trimmed(&mut self.vault.path);
+        normalize_optional_trimmed(&mut self.vault.key);
+        normalize_optional_trimmed(&mut self.vault.mount);
+        normalize_optional_trimmed(&mut self.vault.namespace);
+
+        let mut normalized_providers = HashMap::new();
+        for (name, mut provider) in std::mem::take(&mut self.providers) {
+            let normalized_name = name.trim().to_ascii_lowercase();
+            if normalized_name.is_empty() {
+                continue;
+            }
+            normalize_optional_trimmed(&mut provider.api_key);
+            normalize_optional_trimmed(&mut provider.base_url);
+            validate_optional_http_url(
+                &mut provider.base_url,
+                &format!("providers.{normalized_name}.base_url"),
+            );
+            normalized_providers.insert(normalized_name, provider);
+        }
+        self.providers = normalized_providers;
+
         validate_optional_http_url(&mut self.base_url, "base_url");
         validate_optional_http_url(&mut self.automation.webhook_url, "automation_webhook_url");
+        validate_optional_http_url(&mut self.jira.base_url, "jira_base_url");
 
         // Normalize adapter field
         if let Some(ref adapter) = self.adapter {
@@ -1405,11 +1539,48 @@ impl Config {
         self.model_for_role(self.auditing_model_role)
     }
 
+    pub fn resolved_provider_for_role(&self, role: ModelRole) -> ResolvedProviderConfig {
+        self.resolved_provider_for_model(self.model_for_role(role))
+    }
+
+    pub fn resolved_provider_for_model(&self, model_name: &str) -> ResolvedProviderConfig {
+        let provider = infer_provider_label(
+            model_name,
+            self.adapter.as_deref(),
+            self.base_url.as_deref(),
+        );
+        let provider_config = provider
+            .as_deref()
+            .and_then(|name| self.providers.get(name))
+            .filter(|provider| provider.enabled);
+
+        ResolvedProviderConfig {
+            provider,
+            api_key: provider_config
+                .and_then(|provider| provider.api_key.clone())
+                .or_else(|| self.api_key.clone()),
+            base_url: provider_config
+                .and_then(|provider| provider.base_url.clone())
+                .or_else(|| self.base_url.clone()),
+            adapter: self.adapter.clone(),
+        }
+    }
+
     /// Build a ModelConfig for a specific role.
     pub fn to_model_config_for_role(&self, role: ModelRole) -> crate::adapters::llm::ModelConfig {
-        let mut config = self.to_model_config();
-        config.model_name = self.model_for_role(role).to_string();
-        config
+        let resolved_provider = self.resolved_provider_for_role(role);
+        crate::adapters::llm::ModelConfig {
+            model_name: self.model_for_role(role).to_string(),
+            api_key: resolved_provider.api_key,
+            base_url: resolved_provider.base_url,
+            temperature: self.temperature,
+            max_tokens: self.max_tokens,
+            openai_use_responses: self.openai_use_responses,
+            adapter_override: resolved_provider.adapter,
+            timeout_secs: self.adapter_timeout_secs,
+            max_retries: self.adapter_max_retries,
+            retry_delay_ms: self.adapter_retry_delay_ms,
+        }
     }
 
     pub fn set_model_for_role(&mut self, role: ModelRole, model_name: impl Into<String>) {
@@ -1428,11 +1599,130 @@ impl Config {
     }
 
     pub fn inferred_provider_label_for_role(&self, role: ModelRole) -> Option<String> {
-        infer_provider_label(
-            self.model_for_role(role),
-            self.adapter.as_deref(),
-            self.base_url.as_deref(),
-        )
+        self.resolved_provider_for_role(role).provider
+    }
+
+    pub fn validation_issues(&self) -> Vec<ConfigValidationIssue> {
+        let mut issues = Vec::new();
+
+        for provider_name in self.providers.keys() {
+            if !matches!(
+                provider_name.as_str(),
+                "openai" | "openrouter" | "anthropic" | "ollama"
+            ) {
+                issues.push(ConfigValidationIssue::warning(
+                    format!("providers.{provider_name}"),
+                    format!(
+                        "Provider '{}' is not one of the built-in DiffScope providers (openai, openrouter, anthropic, ollama) and will only be used if a matching adapter is selected.",
+                        provider_name
+                    ),
+                ));
+            }
+        }
+
+        let selected_roles = [
+            ModelRole::Primary,
+            ModelRole::Weak,
+            ModelRole::Reasoning,
+            ModelRole::Embedding,
+            ModelRole::Fast,
+        ]
+        .into_iter()
+        .map(|role| (role, self.resolved_provider_for_role(role)))
+        .collect::<Vec<_>>();
+
+        let unique_selected_providers = selected_roles
+            .iter()
+            .filter_map(|(_, provider)| provider.provider.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        if unique_selected_providers.len() > 1
+            && (self.api_key.is_some() || self.base_url.is_some() || self.adapter.is_some())
+        {
+            issues.push(ConfigValidationIssue::warning(
+                "providers",
+                "Multiple model roles resolve to different providers, but legacy top-level api_key/base_url/adapter settings are still configured. Prefer providers.<name> entries so one provider fallback does not leak into every role.",
+            ));
+        }
+
+        if unique_selected_providers.len() > 1
+            && vault_is_partially_or_fully_configured(&self.vault)
+        {
+            issues.push(ConfigValidationIssue::warning(
+                "vault",
+                "Vault currently resolves only the legacy api_key field. Multi-provider installs should configure provider-specific secrets via providers.<name>.api_key or provider-specific environment variables.",
+            ));
+        }
+
+        for (role, provider) in &selected_roles {
+            let Some(provider_name) = provider.provider.as_deref() else {
+                continue;
+            };
+            if matches!(provider_name, "ollama") || is_local_base_url(provider.base_url.as_deref())
+            {
+                continue;
+            }
+            if provider.api_key.is_none() {
+                issues.push(ConfigValidationIssue::warning(
+                    format!("providers.{provider_name}.api_key"),
+                    format!(
+                        "Model role '{}' resolves to provider '{}' but no API key is configured through providers.{provider_name}.api_key, provider-specific environment variables, or the legacy api_key fallback.",
+                        role.as_str(),
+                        provider_name,
+                    ),
+                ));
+            }
+            if self
+                .providers
+                .get(provider_name)
+                .is_some_and(|provider_config| !provider_config.enabled)
+            {
+                issues.push(ConfigValidationIssue::warning(
+                    format!("providers.{provider_name}.enabled"),
+                    format!(
+                        "Model role '{}' resolves to disabled provider '{}'; DiffScope will fall back to legacy top-level provider settings.",
+                        role.as_str(),
+                        provider_name,
+                    ),
+                ));
+            }
+        }
+
+        let github_app_partial = self.github.app_id.is_some() ^ self.github.private_key.is_some();
+        if github_app_partial {
+            issues.push(ConfigValidationIssue::error(
+                "github_app",
+                "GitHub App authentication requires both github_app_id and github_private_key when either field is configured.",
+            ));
+        }
+        if self.github.client_secret.is_some() && self.github.client_id.is_none() {
+            issues.push(ConfigValidationIssue::warning(
+                "github_client_secret",
+                "github_client_secret is set without github_client_id. The device flow only uses github_client_id today.",
+            ));
+        }
+
+        let jira_fields = [
+            self.jira.base_url.as_ref(),
+            self.jira.email.as_ref(),
+            self.jira.api_token.as_ref(),
+        ];
+        let jira_present = jira_fields.iter().filter(|value| value.is_some()).count();
+        if jira_present > 0 && jira_present < jira_fields.len() {
+            issues.push(ConfigValidationIssue::error(
+                "jira",
+                "Jira integration requires jira_base_url, jira_email, and jira_api_token together.",
+            ));
+        }
+
+        if vault_fields_partially_configured(&self.vault) {
+            issues.push(ConfigValidationIssue::error(
+                "vault",
+                "Vault configuration is incomplete. Set vault_addr, vault_path, and vault_token together (vault_key remains optional).",
+            ));
+        }
+
+        issues
     }
 
     /// Resolve which provider to use based on configuration.
@@ -1443,63 +1733,11 @@ impl Config {
     /// 3. Fall back to top-level `api_key`/`base_url`.
     #[allow(dead_code)]
     pub fn resolve_provider(&self) -> (Option<String>, Option<String>, Option<String>) {
-        // If adapter is explicitly set, look for a matching provider
-        if let Some(ref adapter) = self.adapter {
-            let key = adapter.to_lowercase();
-            if let Some(provider) = self.providers.get(&key) {
-                if provider.enabled {
-                    let api_key = provider.api_key.clone().or_else(|| self.api_key.clone());
-                    let base_url = provider.base_url.clone().or_else(|| self.base_url.clone());
-                    return (api_key, base_url, Some(key));
-                }
-            }
-            // Adapter is set but no matching provider found; fall through to top-level
-            return (self.api_key.clone(), self.base_url.clone(), Some(key));
-        }
-
-        // No adapter set: try to detect provider from model name
-        let model_lower = self.model.to_lowercase();
-        let detected = if model_lower.starts_with("anthropic/") || model_lower.starts_with("claude")
-        {
-            Some("anthropic")
-        } else if model_lower.starts_with("openai/")
-            || model_lower.starts_with("gpt")
-            || model_lower.starts_with("o1")
-            || model_lower.starts_with("o3")
-            || model_lower.starts_with("o4")
-        {
-            Some("openai")
-        } else if model_lower.starts_with("ollama:") {
-            Some("ollama")
-        } else {
-            // Default: check if openrouter provider is configured
-            if self.providers.get("openrouter").is_some_and(|p| p.enabled) {
-                Some("openrouter")
-            } else {
-                None
-            }
-        };
-
-        if let Some(provider_key) = detected {
-            if let Some(provider) = self.providers.get(provider_key) {
-                if provider.enabled {
-                    let api_key = provider.api_key.clone().or_else(|| self.api_key.clone());
-                    let base_url = provider.base_url.clone().or_else(|| self.base_url.clone());
-                    // Map openrouter to openai adapter (OpenRouter uses OpenAI-compatible API)
-                    let adapter = match provider_key {
-                        "openrouter" => Some("openai".to_string()),
-                        other => Some(other.to_string()),
-                    };
-                    return (api_key, base_url, adapter);
-                }
-            }
-        }
-
-        // Fall back to top-level fields
+        let resolved_provider = self.resolved_provider_for_role(ModelRole::Primary);
         (
-            self.api_key.clone(),
-            self.base_url.clone(),
-            self.adapter.clone(),
+            resolved_provider.api_key,
+            resolved_provider.base_url,
+            resolved_provider.adapter,
         )
     }
 
@@ -1579,6 +1817,70 @@ fn validate_optional_http_url(url: &mut Option<String>, field_name: &str) {
             *url = None;
         }
     }
+}
+
+fn normalize_optional_trimmed(value: &mut Option<String>) {
+    *value = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+}
+
+fn apply_provider_env_api_key_fallback(
+    providers: &mut HashMap<String, ProviderConfig>,
+    provider_name: &str,
+    env_name: &str,
+) {
+    let env_value = std::env::var(env_name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if env_value.is_none() && !providers.contains_key(provider_name) {
+        return;
+    }
+
+    let provider = providers.entry(provider_name.to_string()).or_default();
+    normalize_optional_trimmed(&mut provider.api_key);
+    if provider.api_key.is_none() {
+        provider.api_key = env_value;
+    }
+}
+
+fn vault_is_partially_or_fully_configured(vault: &VaultConfig) -> bool {
+    vault.addr.is_some()
+        || vault.token.is_some()
+        || vault.path.is_some()
+        || vault.key.is_some()
+        || vault.mount.is_some()
+        || vault.namespace.is_some()
+        || std::env::var("VAULT_ADDR")
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+        || std::env::var("VAULT_PATH")
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+        || std::env::var("VAULT_TOKEN")
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn vault_fields_partially_configured(vault: &VaultConfig) -> bool {
+    let configured = [
+        vault.addr.as_ref(),
+        vault.path.as_ref(),
+        vault.token.as_ref(),
+    ]
+    .into_iter()
+    .filter(|value| value.is_some())
+    .count();
+    configured > 0 && configured < 3
+}
+
+fn is_local_base_url(base_url: Option<&str>) -> bool {
+    base_url
+        .map(crate::adapters::common::is_local_endpoint)
+        .unwrap_or(false)
 }
 
 fn default_model() -> String {
@@ -1867,7 +2169,14 @@ fn infer_provider_label(
         return None;
     }
 
-    if normalized.starts_with("anthropic/") || normalized.starts_with("claude") {
+    if let Some((vendor, _)) = normalized.split_once('/') {
+        return match vendor {
+            "anthropic" => Some("anthropic".to_string()),
+            _ => Some("openrouter".to_string()),
+        };
+    }
+
+    if normalized.starts_with("claude") {
         Some("anthropic".to_string())
     } else if normalized.starts_with("openai/")
         || normalized.starts_with("gpt")
@@ -1877,7 +2186,7 @@ fn infer_provider_label(
         || normalized.starts_with("o5")
     {
         Some("openai".to_string())
-    } else if normalized.starts_with("ollama:") {
+    } else if normalized.starts_with("ollama:") || is_local_base_url(base_url) {
         Some("ollama".to_string())
     } else {
         None
@@ -2536,7 +2845,7 @@ auditing_model_role: primary
             config
                 .inferred_provider_label_for_role(ModelRole::Reasoning)
                 .as_deref(),
-            Some("openai")
+            Some("openrouter")
         );
         assert_eq!(
             config
@@ -2544,6 +2853,78 @@ auditing_model_role: primary
                 .as_deref(),
             Some("anthropic")
         );
+    }
+
+    #[test]
+    fn test_to_model_config_for_role_uses_provider_specific_credentials() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_reasoning: Some("openai/o3".to_string()),
+            api_key: Some("legacy-key".to_string()),
+            base_url: Some("https://api.anthropic.com".to_string()),
+            providers: HashMap::from([
+                (
+                    "anthropic".to_string(),
+                    ProviderConfig {
+                        api_key: Some("anthropic-key".to_string()),
+                        base_url: Some("https://api.anthropic.com".to_string()),
+                        enabled: true,
+                    },
+                ),
+                (
+                    "openrouter".to_string(),
+                    ProviderConfig {
+                        api_key: Some("openrouter-key".to_string()),
+                        base_url: Some("https://openrouter.ai/api/v1".to_string()),
+                        enabled: true,
+                    },
+                ),
+            ]),
+            ..Config::default()
+        };
+
+        let primary = config.to_model_config_for_role(ModelRole::Primary);
+        assert_eq!(primary.api_key.as_deref(), Some("anthropic-key"));
+        assert_eq!(
+            primary.base_url.as_deref(),
+            Some("https://api.anthropic.com")
+        );
+
+        let reasoning = config.to_model_config_for_role(ModelRole::Reasoning);
+        assert_eq!(reasoning.model_name, "openai/o3");
+        assert_eq!(reasoning.api_key.as_deref(), Some("openrouter-key"));
+        assert_eq!(
+            reasoning.base_url.as_deref(),
+            Some("https://openrouter.ai/api/v1")
+        );
+    }
+
+    #[test]
+    fn test_validation_issues_warn_for_mixed_provider_legacy_fallbacks_and_partial_integrations() {
+        let config = Config {
+            model: "claude-sonnet-4-6".to_string(),
+            model_reasoning: Some("openai/o3".to_string()),
+            api_key: Some("legacy-key".to_string()),
+            github: GitHubConfig {
+                app_id: Some(42),
+                ..GitHubConfig::default()
+            },
+            jira: JiraConfig {
+                base_url: Some("https://jira.example.com".to_string()),
+                ..JiraConfig::default()
+            },
+            vault: VaultConfig {
+                addr: Some("https://vault.example.com".to_string()),
+                ..VaultConfig::default()
+            },
+            ..Config::default()
+        };
+
+        let issues = config.validation_issues();
+        assert!(issues.iter().any(|issue| issue.field == "providers"));
+        assert!(issues.iter().any(|issue| issue.field == "github_app"));
+        assert!(issues.iter().any(|issue| issue.field == "jira"));
+        assert!(issues.iter().any(|issue| issue.field == "vault"));
     }
 
     #[test]

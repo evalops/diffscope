@@ -50,6 +50,10 @@ pub(crate) fn protected_api_routes(state: Arc<AppState>) -> Router<Arc<AppState>
             axum::routing::post(super::api::update_comment_lifecycle),
         )
         .route(
+            "/review/{id}/forensics",
+            axum::routing::get(super::api::get_review_forensics),
+        )
+        .route(
             "/reviews/prune",
             axum::routing::post(super::api::prune_reviews),
         )

@@ -2,6 +2,14 @@ use super::*;
 
 pub(crate) async fn get_doctor(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     let config = state.config.read().await.clone();
+    let validation_issues = config.validation_issues();
+    let role_providers = serde_json::json!({
+        "primary": config.resolved_provider_for_role(crate::config::ModelRole::Primary),
+        "weak": config.resolved_provider_for_role(crate::config::ModelRole::Weak),
+        "reasoning": config.resolved_provider_for_role(crate::config::ModelRole::Reasoning),
+        "embedding": config.resolved_provider_for_role(crate::config::ModelRole::Embedding),
+        "fast": config.resolved_provider_for_role(crate::config::ModelRole::Fast),
+    });
 
     let base_url = config
         .base_url
@@ -12,10 +20,12 @@ pub(crate) async fn get_doctor(State(state): State<Arc<AppState>>) -> Json<serde
         "config": {
             "model": config.model,
             "adapter": config.adapter,
-            "base_url": base_url,
+            "base_url": base_url.clone(),
             "api_key_set": config.api_key.is_some(),
             "context_window": config.context_window,
+            "role_providers": role_providers,
         },
+        "validation_issues": validation_issues,
         "endpoint_reachable": false,
         "endpoint_type": null,
         "models": [],
