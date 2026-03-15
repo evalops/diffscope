@@ -1427,6 +1427,14 @@ impl Config {
         }
     }
 
+    pub fn inferred_provider_label_for_role(&self, role: ModelRole) -> Option<String> {
+        infer_provider_label(
+            self.model_for_role(role),
+            self.adapter.as_deref(),
+            self.base_url.as_deref(),
+        )
+    }
+
     /// Resolve which provider to use based on configuration.
     ///
     /// Returns `(api_key, base_url, adapter)` by checking:
@@ -1839,6 +1847,41 @@ fn normalize_text_generation_roles(
         normalized.push(role);
     }
     normalized
+}
+
+fn infer_provider_label(
+    model_name: &str,
+    adapter: Option<&str>,
+    base_url: Option<&str>,
+) -> Option<String> {
+    if base_url.is_some_and(|value| value.contains("openrouter.ai")) {
+        return Some("openrouter".to_string());
+    }
+
+    if let Some(adapter) = adapter.map(str::trim).filter(|value| !value.is_empty()) {
+        return Some(adapter.to_ascii_lowercase());
+    }
+
+    let normalized = model_name.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    if normalized.starts_with("anthropic/") || normalized.starts_with("claude") {
+        Some("anthropic".to_string())
+    } else if normalized.starts_with("openai/")
+        || normalized.starts_with("gpt")
+        || normalized.starts_with("o1")
+        || normalized.starts_with("o3")
+        || normalized.starts_with("o4")
+        || normalized.starts_with("o5")
+    {
+        Some("openai".to_string())
+    } else if normalized.starts_with("ollama:") {
+        Some("ollama".to_string())
+    } else {
+        None
+    }
 }
 
 fn normalize_comment_types(values: &[String]) -> Vec<String> {
@@ -2480,6 +2523,27 @@ auditing_model_role: primary
 
         assert_eq!(config.model_reasoning.as_deref(), Some("openai/o3"));
         assert_eq!(config.model_fast.as_deref(), Some("openai/gpt-4.1-mini"));
+    }
+
+    #[test]
+    fn test_inferred_provider_label_for_role_uses_model_prefix() {
+        let config = Config {
+            model_reasoning: Some("openai/o3".to_string()),
+            ..Config::default()
+        };
+
+        assert_eq!(
+            config
+                .inferred_provider_label_for_role(ModelRole::Reasoning)
+                .as_deref(),
+            Some("openai")
+        );
+        assert_eq!(
+            config
+                .inferred_provider_label_for_role(ModelRole::Primary)
+                .as_deref(),
+            Some("anthropic")
+        );
     }
 
     #[test]

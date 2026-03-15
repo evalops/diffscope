@@ -7,6 +7,7 @@ use crate::core::eval_benchmarks::{
     AggregateMetrics as BenchmarkAggregateMetrics, BenchmarkThresholds, Difficulty,
     FixtureResult as BenchmarkFixtureResult,
 };
+use crate::server::cost::CostBreakdownRow;
 
 use super::fixtures::EvalFixtureMetadata;
 
@@ -72,6 +73,8 @@ pub struct EvalRunMetadata {
     pub repeat_total: Option<usize>,
     #[serde(default)]
     pub reproduction_validation: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cost_breakdowns: Vec<CostBreakdownRow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -139,6 +142,10 @@ pub struct EvalVerificationJudgeReport {
     #[serde(default)]
     pub model: String,
     #[serde(default)]
+    pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default)]
     pub total_comments: usize,
     #[serde(default)]
     pub passed_comments: usize,
@@ -146,6 +153,14 @@ pub struct EvalVerificationJudgeReport {
     pub filtered_comments: usize,
     #[serde(default)]
     pub abstained_comments: usize,
+    #[serde(default)]
+    pub prompt_tokens: usize,
+    #[serde(default)]
+    pub completion_tokens: usize,
+    #[serde(default)]
+    pub total_tokens: usize,
+    #[serde(default)]
+    pub cost_estimate_usd: f64,
     #[serde(default)]
     pub warnings: Vec<String>,
 }
@@ -188,6 +203,20 @@ pub struct EvalReproductionSummary {
     pub rejected: usize,
     #[serde(default)]
     pub inconclusive: usize,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub prompt_tokens: usize,
+    #[serde(default)]
+    pub completion_tokens: usize,
+    #[serde(default)]
+    pub total_tokens: usize,
+    #[serde(default)]
+    pub cost_estimate_usd: f64,
     #[serde(default)]
     pub checks: Vec<EvalReproductionCheck>,
 }
@@ -268,6 +297,8 @@ pub struct EvalFixtureResult {
     pub artifact_path: Option<String>,
     #[serde(default)]
     pub failures: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cost_breakdowns: Vec<CostBreakdownRow>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dag_traces: Vec<DagExecutionTrace>,
 }

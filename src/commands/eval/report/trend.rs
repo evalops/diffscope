@@ -90,6 +90,7 @@ fn trend_entry_for_report(report: &EvalReport) -> Option<TrendEntry> {
         verification_verified_checks: verification_health.map(|health| health.verified_checks),
         verification_total_checks: verification_health.map(|health| health.total_checks),
         verification_verified_pct: verification_health.map(|health| health.verified_pct),
+        cost_breakdowns: report.run.cost_breakdowns.clone(),
     })
 }
 
@@ -232,6 +233,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec![],
+                cost_breakdowns: vec![],
                 dag_traces: vec![],
             }],
         }

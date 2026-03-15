@@ -54,6 +54,8 @@ pub(super) async fn maybe_run_reproduction_validation(
 
     let model_config = config.to_model_config_for_role(config.auditing_model_role);
     let model_name = model_config.model_name.clone();
+    let role = config.auditing_model_role.as_str().to_string();
+    let provider = config.inferred_provider_label_for_role(config.auditing_model_role);
     let adapter: Arc<dyn adapters::llm::LLMAdapter> =
         Arc::from(adapters::llm::create_adapter(&model_config)?);
     let workspace = prepare_reproduction_workspace(prepared)?;
@@ -67,6 +69,9 @@ pub(super) async fn maybe_run_reproduction_validation(
     let tools = build_review_tools(tool_context, None);
 
     let mut checks = Vec::new();
+    let mut prompt_tokens = 0usize;
+    let mut completion_tokens = 0usize;
+    let mut total_tokens = 0usize;
     for comment in comments.iter().take(max_comments) {
         let (tool_evidence, tool_logs, tool_warnings) =
             gather_reproduction_evidence(&tools, comment, workspace.include_git_tools).await;
@@ -80,6 +85,11 @@ pub(super) async fn maybe_run_reproduction_validation(
         };
         match adapter.complete(request).await {
             Ok(response) => {
+                if let Some(usage) = response.usage.as_ref() {
+                    prompt_tokens += usage.prompt_tokens;
+                    completion_tokens += usage.completion_tokens;
+                    total_tokens += usage.total_tokens;
+                }
                 let parsed = parse_reproduction_response(&response.content);
                 let agent_activity = convert_agent_activity(Some(crate::review::AgentActivity {
                     total_iterations: usize::from(!tool_logs.is_empty()),
@@ -137,7 +147,15 @@ pub(super) async fn maybe_run_reproduction_validation(
         }
     }
 
-    Ok(Some(build_reproduction_summary(checks)))
+    Ok(Some(build_reproduction_summary(
+        checks,
+        model_name,
+        role,
+        provider,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+    )))
 }
 
 fn build_reproduction_prompt(
@@ -161,7 +179,15 @@ fn build_reproduction_prompt(
     )
 }
 
-fn build_reproduction_summary(checks: Vec<EvalReproductionCheck>) -> EvalReproductionSummary {
+fn build_reproduction_summary(
+    checks: Vec<EvalReproductionCheck>,
+    model: String,
+    role: String,
+    provider: Option<String>,
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    total_tokens: usize,
+) -> EvalReproductionSummary {
     let mut summary = EvalReproductionSummary::default();
     for check in &checks {
         match check.reproduced {
@@ -170,6 +196,13 @@ fn build_reproduction_summary(checks: Vec<EvalReproductionCheck>) -> EvalReprodu
             None => summary.inconclusive += 1,
         }
     }
+    summary.model = model.clone();
+    summary.role = role;
+    summary.provider = provider;
+    summary.prompt_tokens = prompt_tokens;
+    summary.completion_tokens = completion_tokens;
+    summary.total_tokens = total_tokens;
+    summary.cost_estimate_usd = crate::server::cost::estimate_cost_usd(&model, total_tokens);
     summary.checks = checks;
     summary
 }

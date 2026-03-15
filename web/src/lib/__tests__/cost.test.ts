@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { estimateCost, formatCost, totalCost } from '../cost'
-import type { ReviewEvent } from '../../api/types'
+import { aggregateCostBreakdowns, estimateCost, formatCost, totalCost } from '../cost'
+import type { CostBreakdownRow, ReviewEvent } from '../../api/types'
 
 function makeEvent(overrides: Partial<ReviewEvent> = {}): ReviewEvent {
   return {
@@ -64,5 +64,46 @@ describe('totalCost', () => {
   })
   it('returns 0 for empty list', () => {
     expect(totalCost([])).toBe(0)
+  })
+})
+
+describe('aggregateCostBreakdowns', () => {
+  it('sums matching workload/provider/model/role rows', () => {
+    const rows: CostBreakdownRow[] = [
+      {
+        workload: 'review_generation',
+        role: 'primary',
+        provider: 'anthropic',
+        model: 'anthropic/claude-opus-4.1',
+        prompt_tokens: 100,
+        completion_tokens: 50,
+        total_tokens: 150,
+        cost_estimate_usd: 0.02,
+      },
+      {
+        workload: 'review_generation',
+        role: 'primary',
+        provider: 'anthropic',
+        model: 'anthropic/claude-opus-4.1',
+        prompt_tokens: 20,
+        completion_tokens: 10,
+        total_tokens: 30,
+        cost_estimate_usd: 0.004,
+      },
+    ]
+
+    const aggregated = aggregateCostBreakdowns(rows)
+
+    expect(aggregated).toHaveLength(1)
+    expect(aggregated[0]).toMatchObject({
+      workload: 'review_generation',
+      role: 'primary',
+      provider: 'anthropic',
+      model: 'anthropic/claude-opus-4.1',
+      prompt_tokens: 120,
+      completion_tokens: 60,
+      total_tokens: 180,
+    })
+    expect(aggregated[0].cost_estimate_usd).toBeCloseTo(0.024)
   })
 })

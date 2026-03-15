@@ -84,11 +84,14 @@ fn build_eval_run_metadata(
     artifact_dir: Option<&Path>,
 ) -> EvalRunMetadata {
     let (_, resolved_base_url, resolved_adapter) = config.resolve_provider();
-    let provider = inferred_provider(
-        resolved_base_url.as_deref().or(config.base_url.as_deref()),
-        resolved_adapter.as_deref().or(config.adapter.as_deref()),
-    );
+    let provider = config.inferred_provider_label_for_role(config.generation_model_role);
     let generation_model = config.generation_model_name().to_string();
+    let cost_breakdowns = crate::server::cost::aggregate_cost_breakdowns(
+        execution
+            .results
+            .iter()
+            .flat_map(|result| result.cost_breakdowns.clone()),
+    );
     let mut verification_judges = Vec::new();
     let mut seen_verification_judges = HashSet::new();
     for role in std::iter::once(config.verification.model_role)
@@ -140,15 +143,8 @@ fn build_eval_run_metadata(
         repeat_index,
         repeat_total,
         reproduction_validation: options.repro_validate,
+        cost_breakdowns,
     }
-}
-
-fn inferred_provider(base_url: Option<&str>, adapter: Option<&str>) -> Option<String> {
-    if base_url.is_some_and(|value| value.contains("openrouter.ai")) {
-        return Some("openrouter".to_string());
-    }
-
-    adapter.map(|value| value.to_string())
 }
 
 fn review_mode_label(agent_enabled: bool) -> &'static str {

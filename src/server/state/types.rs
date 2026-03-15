@@ -72,6 +72,8 @@ pub struct ReviewEvent {
     // --- cost (server-side estimate for stats / log pipelines) ---
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_estimate_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cost_breakdowns: Vec<crate::server::cost::CostBreakdownRow>,
 
     // --- per-file breakdown ---
     #[serde(default, skip_serializing_if = "Option::is_none")]

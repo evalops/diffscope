@@ -32,7 +32,7 @@ pub(super) async fn apply_verification_pass(
             &session.source_files,
             &session.verification_context,
             VerificationJudgeConfig {
-                adapters: &services.verification_adapters,
+                judges: &services.verification_adapters,
                 min_score: services.config.verification.min_score,
                 fail_open: services.config.verification.fail_open,
                 consensus_mode: services.config.verification.consensus_mode,

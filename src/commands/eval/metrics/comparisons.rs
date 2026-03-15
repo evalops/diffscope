@@ -269,6 +269,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec![],
+                cost_breakdowns: vec![],
                 dag_traces: vec![],
             },
             EvalFixtureResult {
@@ -290,6 +291,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec![],
+                cost_breakdowns: vec![],
                 dag_traces: vec![],
             },
         ];
@@ -326,6 +328,7 @@ mod tests {
             reproduction_summary: None,
             artifact_path: None,
             failures: vec![],
+            cost_breakdowns: vec![],
             dag_traces: vec![],
         }];
 
@@ -353,6 +356,7 @@ mod tests {
             reproduction_summary: None,
             artifact_path: None,
             failures: vec![],
+            cost_breakdowns: vec![],
             dag_traces: vec![],
         }];
 
@@ -391,12 +395,14 @@ mod tests {
                     filtered_comments: 0,
                     abstained_comments: 0,
                     warnings: vec![],
+                    ..Default::default()
                 }],
             }),
             agent_activity: None,
             reproduction_summary: None,
             artifact_path: None,
             failures: vec![],
+            cost_breakdowns: vec![],
             dag_traces: vec![],
         }];
 
@@ -434,12 +440,14 @@ mod tests {
                     filtered_comments: 1,
                     abstained_comments: 1,
                     warnings: vec![],
+                    ..Default::default()
                 }],
             }),
             agent_activity: None,
             reproduction_summary: None,
             artifact_path: None,
             failures: vec![],
+            cost_breakdowns: vec![],
             dag_traces: vec![],
         }];
 

@@ -38,6 +38,7 @@ pub struct EventStats {
     pub category_totals: HashMap<String, i64>,
     pub daily_counts: Vec<DailyCount>,
     pub total_cost_estimate: f64,
+    pub cost_breakdowns: Vec<crate::server::cost::CostBreakdownRow>,
 }
 
 #[derive(Debug, Clone, Serialize)]

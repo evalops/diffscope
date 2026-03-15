@@ -6,10 +6,11 @@ use tracing::{info, warn};
 use crate::adapters;
 use crate::adapters::llm::ModelConfig;
 use crate::config;
+use crate::review::verification::VerificationJudgeAdapter;
 
 pub(super) struct AdapterServices {
     pub adapter: Arc<dyn adapters::llm::LLMAdapter>,
-    pub verification_adapters: Vec<Arc<dyn adapters::llm::LLMAdapter>>,
+    pub verification_adapters: Vec<VerificationJudgeAdapter>,
     pub embedding_adapter: Option<Arc<dyn adapters::llm::LLMAdapter>>,
     pub is_local: bool,
 }
@@ -36,7 +37,7 @@ fn build_verification_adapters(
     config: &config::Config,
     model_config: &ModelConfig,
     adapter: &Arc<dyn adapters::llm::LLMAdapter>,
-) -> Result<Vec<Arc<dyn adapters::llm::LLMAdapter>>> {
+) -> Result<Vec<VerificationJudgeAdapter>> {
     let mut verification_adapters = Vec::new();
     let mut seen_models = HashSet::new();
     let mut roles = vec![config.verification.model_role];
@@ -54,16 +55,26 @@ fn build_verification_adapters(
                 format!("{role:?}").to_lowercase(),
                 verification_config.model_name
             );
-            verification_adapters.push(Arc::from(adapters::llm::create_adapter(
-                &verification_config,
-            )?));
+            verification_adapters.push(VerificationJudgeAdapter {
+                role,
+                provider: config.inferred_provider_label_for_role(role),
+                adapter: Arc::from(adapters::llm::create_adapter(&verification_config)?),
+            });
         } else {
-            verification_adapters.push(adapter.clone());
+            verification_adapters.push(VerificationJudgeAdapter {
+                role,
+                provider: config.inferred_provider_label_for_role(role),
+                adapter: adapter.clone(),
+            });
         }
     }
 
     if verification_adapters.is_empty() {
-        verification_adapters.push(adapter.clone());
+        verification_adapters.push(VerificationJudgeAdapter {
+            role: config.generation_model_role,
+            provider: config.inferred_provider_label_for_role(config.generation_model_role),
+            adapter: adapter.clone(),
+        });
     }
 
     Ok(verification_adapters)

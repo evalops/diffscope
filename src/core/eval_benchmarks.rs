@@ -2,6 +2,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::server::cost::CostBreakdownRow;
+
 /// A benchmark suite with named fixture packs and quality thresholds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkSuite {
@@ -470,6 +472,8 @@ pub struct TrendEntry {
     pub verification_total_checks: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_verified_pct: Option<f32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cost_breakdowns: Vec<CostBreakdownRow>,
 }
 
 impl QualityTrend {

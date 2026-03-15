@@ -66,6 +66,7 @@ struct EvalFixtureDagContext {
     dag_config: EvalFixtureDagConfig,
     comments: Vec<core::Comment>,
     warnings: Vec<String>,
+    cost_breakdowns: Vec<crate::server::cost::CostBreakdownRow>,
     verification_report: Option<EvalVerificationReport>,
     agent_activity: Option<EvalAgentActivity>,
     reproduction_summary: Option<EvalReproductionSummary>,
@@ -82,6 +83,7 @@ enum EvalFixtureStageOutput {
     Review {
         comments: Vec<core::Comment>,
         warnings: Vec<String>,
+        cost_breakdowns: Vec<crate::server::cost::CostBreakdownRow>,
         verification_report: Option<EvalVerificationReport>,
         agent_activity: Option<EvalAgentActivity>,
         dag_traces: Vec<DagExecutionTrace>,
@@ -99,6 +101,7 @@ enum EvalFixtureStageOutput {
     ReproductionValidation {
         reproduction_summary: Option<EvalReproductionSummary>,
         warnings: Vec<String>,
+        cost_breakdowns: Vec<crate::server::cost::CostBreakdownRow>,
     },
     ArtifactCapture {
         artifact_path: Option<String>,
@@ -112,6 +115,7 @@ impl EvalFixtureDagContext {
             dag_config,
             comments: Vec::new(),
             warnings: Vec::new(),
+            cost_breakdowns: Vec::new(),
             verification_report: None,
             agent_activity: None,
             reproduction_summary: None,
@@ -147,6 +151,7 @@ impl EvalFixtureDagContext {
                 reproduction_summary: self.reproduction_summary,
                 artifact_path: self.artifact_path,
                 failures: self.failures,
+                cost_breakdowns: self.cost_breakdowns,
                 dag_traces,
             },
         })
@@ -409,9 +414,27 @@ fn spawn_stage(
             let repo_path = context.prepared.repo_path.clone();
             let config = config.clone();
             Ok(async move {
+                let generation_role = config.generation_model_role.as_str().to_string();
+                let generation_provider =
+                    config.inferred_provider_label_for_role(config.generation_model_role);
+                let generation_model = config.generation_model_name().to_string();
                 let review_result =
                     review_diff_content_raw(&diff_content, config, &repo_path).await?;
+                let cost_breakdowns = crate::server::cost::review_cost_breakdowns(
+                    crate::server::cost::CostBreakdownRequest {
+                        workload: "eval_generation",
+                        role: &generation_role,
+                        provider: generation_provider,
+                        model: &generation_model,
+                        prompt_tokens: review_result.total_prompt_tokens,
+                        completion_tokens: review_result.total_completion_tokens,
+                        total_tokens: review_result.total_tokens,
+                    },
+                    "eval_verification",
+                    review_result.verification_report.as_ref(),
+                );
                 Ok(EvalFixtureStageOutput::Review {
+                    cost_breakdowns,
                     verification_report: convert_verification_report(
                         review_result.verification_report,
                     ),
@@ -486,9 +509,27 @@ fn spawn_stage(
                     .as_ref()
                     .map(build_reproduction_warnings)
                     .unwrap_or_default();
+                let cost_breakdowns = reproduction_summary
+                    .as_ref()
+                    .and_then(|summary| {
+                        (summary.total_tokens > 0).then(|| {
+                            crate::server::cost::CostBreakdownRow::new(
+                                "eval_auditing",
+                                summary.role.as_str(),
+                                summary.provider.clone(),
+                                summary.model.as_str(),
+                                summary.prompt_tokens,
+                                summary.completion_tokens,
+                                summary.total_tokens,
+                            )
+                        })
+                    })
+                    .into_iter()
+                    .collect();
                 Ok(EvalFixtureStageOutput::ReproductionValidation {
                     reproduction_summary,
                     warnings,
+                    cost_breakdowns,
                 })
             }
             .boxed())
@@ -543,6 +584,7 @@ fn apply_stage_output(
             EvalFixtureStageOutput::Review {
                 comments,
                 warnings,
+                cost_breakdowns,
                 verification_report,
                 agent_activity,
                 dag_traces,
@@ -551,6 +593,7 @@ fn apply_stage_output(
             context.total_comments = comments.len();
             context.comments = comments;
             context.warnings = warnings;
+            context.cost_breakdowns = cost_breakdowns;
             context.verification_report = verification_report;
             context.agent_activity = agent_activity;
             context.dag_traces = dag_traces;
@@ -586,10 +629,12 @@ fn apply_stage_output(
             EvalFixtureStageOutput::ReproductionValidation {
                 reproduction_summary,
                 warnings,
+                cost_breakdowns,
             },
         ) => {
             context.reproduction_summary = reproduction_summary;
             context.warnings.extend(warnings);
+            context.cost_breakdowns.extend(cost_breakdowns);
             Ok(())
         }
         (

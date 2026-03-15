@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::adapters::llm::{LLMAdapter, LLMRequest};
-use crate::config::VerificationConsensusMode;
+use crate::config::{ModelRole, VerificationConsensusMode};
 use crate::core::{Comment, LLMContextChunk, UnifiedDiff};
 
 #[path = "verification/parser.rs"]
@@ -85,10 +85,22 @@ pub struct VerificationSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VerificationJudgeRun {
     pub model: String,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     pub total_comments: usize,
     pub passed_comments: usize,
     pub filtered_comments: usize,
     pub abstained_comments: usize,
+    #[serde(default)]
+    pub prompt_tokens: usize,
+    #[serde(default)]
+    pub completion_tokens: usize,
+    #[serde(default)]
+    pub total_tokens: usize,
+    #[serde(default)]
+    pub cost_estimate_usd: f64,
     pub warnings: Vec<String>,
 }
 
@@ -145,15 +157,27 @@ struct JudgeDecision {
     abstained: bool,
 }
 
+#[derive(Clone)]
+pub(crate) struct VerificationJudgeAdapter {
+    pub role: ModelRole,
+    pub provider: Option<String>,
+    pub adapter: Arc<dyn LLMAdapter>,
+}
+
 #[derive(Debug, Clone)]
 struct SingleJudgeSummary {
     model: String,
+    role: String,
+    provider: Option<String>,
     decisions: Vec<JudgeDecision>,
     warnings: Vec<String>,
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    total_tokens: usize,
 }
 
 pub(crate) struct VerificationJudgeConfig<'a> {
-    pub adapters: &'a [Arc<dyn LLMAdapter>],
+    pub judges: &'a [VerificationJudgeAdapter],
     pub min_score: u8,
     pub fail_open: bool,
     pub consensus_mode: VerificationConsensusMode,
@@ -164,6 +188,8 @@ struct SingleJudgePassArgs<'a> {
     source_files: &'a HashMap<std::path::PathBuf, String>,
     extra_context: &'a HashMap<std::path::PathBuf, Vec<LLMContextChunk>>,
     adapter: &'a dyn LLMAdapter,
+    role: ModelRole,
+    provider: Option<&'a str>,
     min_score: u8,
     fail_open: bool,
     reuse_cache: Option<&'a mut VerificationReuseCache>,
@@ -214,6 +240,8 @@ pub async fn verify_comments(
             source_files,
             extra_context,
             adapter,
+            role: ModelRole::Primary,
+            provider: None,
             min_score,
             fail_open,
             reuse_cache: None,
@@ -259,7 +287,7 @@ pub(crate) async fn verify_comments_with_judges_and_reuse(
         return VerificationSummary::default();
     }
 
-    if judge_config.adapters.is_empty() {
+    if judge_config.judges.is_empty() {
         return VerificationSummary {
             comments,
             warnings: vec![
@@ -271,7 +299,7 @@ pub(crate) async fn verify_comments_with_judges_and_reuse(
 
     let mut judge_summaries = Vec::new();
     let mut reuse_cache = reuse_cache;
-    for adapter in judge_config.adapters {
+    for judge in judge_config.judges {
         judge_summaries.push(
             verify_comments_single(
                 &comments,
@@ -279,7 +307,9 @@ pub(crate) async fn verify_comments_with_judges_and_reuse(
                     diffs,
                     source_files,
                     extra_context,
-                    adapter: adapter.as_ref(),
+                    adapter: judge.adapter.as_ref(),
+                    role: judge.role,
+                    provider: judge.provider.as_deref(),
                     min_score: judge_config.min_score,
                     fail_open: judge_config.fail_open,
                     reuse_cache: reuse_cache.as_deref_mut(),
@@ -305,6 +335,11 @@ async fn verify_comments_single(
     let mut decisions = Vec::new();
     let mut warnings = Vec::new();
     let model_name = args.adapter.model_name().to_string();
+    let role = args.role.as_str().to_string();
+    let provider = args.provider.map(str::to_string);
+    let mut prompt_tokens = 0usize;
+    let mut completion_tokens = 0usize;
+    let mut total_tokens = 0usize;
     let diff_map = args
         .diffs
         .iter()
@@ -392,6 +427,12 @@ async fn verify_comments_single(
             }
         };
 
+        if let Some(usage) = response.usage.as_ref() {
+            prompt_tokens += usage.prompt_tokens;
+            completion_tokens += usage.completion_tokens;
+            total_tokens += usage.total_tokens;
+        }
+
         let Some(parsed_results) =
             try_parse_verification_response(&response.content, &uncached_comments)
         else {
@@ -471,8 +512,13 @@ async fn verify_comments_single(
 
     SingleJudgeSummary {
         model: model_name,
+        role,
+        provider,
         decisions,
         warnings,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
     }
 }
 
@@ -591,25 +637,43 @@ fn build_verification_summary(
             judge_count: judge_summaries.len(),
             judges: judge_summaries
                 .into_iter()
-                .map(|summary| VerificationJudgeRun {
-                    total_comments: summary.decisions.len(),
-                    passed_comments: summary
-                        .decisions
-                        .iter()
-                        .filter(|decision| decision.passed_vote)
-                        .count(),
-                    filtered_comments: summary
-                        .decisions
-                        .iter()
-                        .filter(|decision| !decision.abstained && !decision.passed_vote)
-                        .count(),
-                    abstained_comments: summary
-                        .decisions
-                        .iter()
-                        .filter(|decision| decision.abstained)
-                        .count(),
-                    model: summary.model,
-                    warnings: summary.warnings,
+                .map(|summary| {
+                    let SingleJudgeSummary {
+                        model,
+                        role,
+                        provider,
+                        decisions,
+                        warnings,
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens,
+                    } = summary;
+                    VerificationJudgeRun {
+                        total_comments: decisions.len(),
+                        passed_comments: decisions
+                            .iter()
+                            .filter(|decision| decision.passed_vote)
+                            .count(),
+                        filtered_comments: decisions
+                            .iter()
+                            .filter(|decision| !decision.abstained && !decision.passed_vote)
+                            .count(),
+                        abstained_comments: decisions
+                            .iter()
+                            .filter(|decision| decision.abstained)
+                            .count(),
+                        model: model.clone(),
+                        role,
+                        provider,
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens,
+                        cost_estimate_usd: crate::server::cost::estimate_cost_usd(
+                            &model,
+                            total_tokens,
+                        ),
+                        warnings,
+                    }
                 })
                 .collect(),
         }),

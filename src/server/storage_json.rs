@@ -9,6 +9,30 @@ use super::storage::{
     EventFilters, EventStats, ModelStats, RepoStats, SourceStats, StorageBackend,
 };
 
+fn event_cost_breakdowns(event: &ReviewEvent) -> Vec<crate::server::cost::CostBreakdownRow> {
+    if !event.cost_breakdowns.is_empty() {
+        return event.cost_breakdowns.clone();
+    }
+
+    let total_tokens = event.tokens_total.unwrap_or(0);
+    if total_tokens == 0 && event.cost_estimate_usd.is_none() {
+        return Vec::new();
+    }
+
+    vec![crate::server::cost::CostBreakdownRow {
+        workload: "review_generation".to_string(),
+        role: "primary".to_string(),
+        provider: event.provider.clone(),
+        model: event.model.clone(),
+        prompt_tokens: event.tokens_prompt.unwrap_or(0),
+        completion_tokens: event.tokens_completion.unwrap_or(0),
+        total_tokens,
+        cost_estimate_usd: event
+            .cost_estimate_usd
+            .unwrap_or_else(|| crate::server::cost::estimate_cost_usd(&event.model, total_tokens)),
+    }]
+}
+
 /// JSON file-based storage backend (original behavior).
 /// Reviews are kept in-memory and periodically flushed to a JSON file.
 pub struct JsonStorageBackend {
@@ -349,7 +373,13 @@ impl StorageBackend for JsonStorageBackend {
             .collect();
         daily_counts.sort_by(|a, b| a.date.cmp(&b.date));
 
-        let total_cost_estimate: f64 = events.iter().filter_map(|e| e.cost_estimate_usd).sum();
+        let cost_breakdowns = crate::server::cost::aggregate_cost_breakdowns(
+            events.iter().flat_map(event_cost_breakdowns),
+        );
+        let total_cost_estimate = cost_breakdowns
+            .iter()
+            .map(|row| row.cost_estimate_usd)
+            .sum();
 
         Ok(EventStats {
             total_reviews: total,
@@ -369,6 +399,7 @@ impl StorageBackend for JsonStorageBackend {
             category_totals,
             daily_counts,
             total_cost_estimate,
+            cost_breakdowns,
         })
     }
 

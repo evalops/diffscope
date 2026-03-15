@@ -35,6 +35,7 @@ impl ReviewEventBuilder {
                 tokens_completion: None,
                 tokens_total: None,
                 cost_estimate_usd: None,
+                cost_breakdowns: Vec::new(),
                 file_metrics: None,
                 hotspot_details: None,
                 convention_suppressed: None,
@@ -142,6 +143,26 @@ impl ReviewEventBuilder {
         } else {
             self.event.file_metrics = Some(metrics);
         }
+        self
+    }
+
+    pub fn cost_breakdowns(mut self, rows: Vec<crate::server::cost::CostBreakdownRow>) -> Self {
+        let rows = crate::server::cost::aggregate_cost_breakdowns(rows);
+        if rows.is_empty() {
+            self.event.cost_breakdowns.clear();
+            return self;
+        }
+
+        let prompt_tokens = rows.iter().map(|row| row.prompt_tokens).sum::<usize>();
+        let completion_tokens = rows.iter().map(|row| row.completion_tokens).sum::<usize>();
+        let total_tokens = rows.iter().map(|row| row.total_tokens).sum::<usize>();
+        let total_cost = rows.iter().map(|row| row.cost_estimate_usd).sum::<f64>();
+
+        self.event.tokens_prompt = Some(prompt_tokens);
+        self.event.tokens_completion = Some(completion_tokens);
+        self.event.tokens_total = Some(total_tokens);
+        self.event.cost_estimate_usd = Some(total_cost);
+        self.event.cost_breakdowns = rows;
         self
     }
 

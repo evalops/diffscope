@@ -13,6 +13,7 @@ use crate::adapters;
 use crate::config;
 use crate::core;
 use crate::plugins;
+use crate::review::verification::VerificationJudgeAdapter;
 
 use super::super::context_helpers::PatternRepositoryMap;
 use super::super::feedback::FeedbackStore;
@@ -28,7 +29,7 @@ pub(super) struct PipelineServices {
     pub feedback_context: String,
     pub plugin_manager: plugins::plugin::PluginManager,
     pub adapter: Arc<dyn adapters::llm::LLMAdapter>,
-    pub verification_adapters: Vec<Arc<dyn adapters::llm::LLMAdapter>>,
+    pub verification_adapters: Vec<VerificationJudgeAdapter>,
     pub embedding_adapter: Option<Arc<dyn adapters::llm::LLMAdapter>>,
     pub base_prompt_config: core::prompt::PromptConfig,
     pub convention_store_path: Option<PathBuf>,

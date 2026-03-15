@@ -254,6 +254,7 @@ mod tests {
             reproduction_summary: None,
             artifact_path: None,
             failures: vec!["missing finding".to_string()],
+            cost_breakdowns: vec![],
             dag_traces: vec![],
         }];
 
@@ -292,6 +293,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec![],
+                cost_breakdowns: vec![],
                 dag_traces: vec![],
             },
             EvalFixtureResult {
@@ -318,6 +320,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec![],
+                cost_breakdowns: vec![],
                 dag_traces: vec![],
             },
         ];
@@ -369,6 +372,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec![],
+                cost_breakdowns: vec![],
                 dag_traces: vec![],
             },
             EvalFixtureResult {
@@ -390,6 +394,7 @@ mod tests {
                 reproduction_summary: None,
                 artifact_path: None,
                 failures: vec!["missing".to_string()],
+                cost_breakdowns: vec![],
                 dag_traces: vec![],
             },
         ];

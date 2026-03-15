@@ -90,6 +90,17 @@ export interface HotspotDetail {
   reasons: string[]
 }
 
+export interface CostBreakdownRow {
+  workload: string
+  role: string
+  provider?: string
+  model: string
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  cost_estimate_usd: number
+}
+
 export interface ReviewEvent {
   review_id: string
   event_type: string
@@ -115,6 +126,7 @@ export interface ReviewEvent {
   tokens_completion?: number
   tokens_total?: number
   cost_estimate_usd?: number
+  cost_breakdowns?: CostBreakdownRow[]
   file_metrics?: FileMetricEvent[]
   hotspot_details?: HotspotDetail[]
   convention_suppressed?: number
@@ -171,6 +183,7 @@ export interface EventStats {
   category_totals: Record<string, number>
   daily_counts: DailyCount[]
   total_cost_estimate: number
+  cost_breakdowns?: CostBreakdownRow[]
 }
 
 export interface ReviewProgress {
@@ -222,6 +235,7 @@ export interface EvalTrendEntry {
   verification_verified_checks?: number
   verification_total_checks?: number
   verification_verified_pct?: number
+  cost_breakdowns?: CostBreakdownRow[]
 }
 
 export interface EvalQualityTrend {

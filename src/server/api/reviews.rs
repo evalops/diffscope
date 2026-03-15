@@ -183,7 +183,8 @@ pub(crate) async fn run_review_task(
     }
 
     let model = config.generation_model_name().to_string();
-    let provider = config.adapter.clone();
+    let generation_role = config.generation_model_role.as_str().to_string();
+    let provider = config.inferred_provider_label_for_role(config.generation_model_role);
     let base_url = config.base_url.clone();
 
     // Get the diff content based on source
@@ -332,6 +333,19 @@ pub(crate) async fn run_review_task(
                     .convention_suppressed(review_result.convention_suppressed_count)
                     .comments_by_pass(review_result.comments_by_pass)
                     .agent_activity(review_result.agent_activity.as_ref())
+                    .cost_breakdowns(crate::server::cost::review_cost_breakdowns(
+                        crate::server::cost::CostBreakdownRequest {
+                            workload: "review_generation",
+                            role: &generation_role,
+                            provider: provider.clone(),
+                            model: &model,
+                            prompt_tokens: review_result.total_prompt_tokens,
+                            completion_tokens: review_result.total_completion_tokens,
+                            total_tokens: review_result.total_tokens,
+                        },
+                        "review_verification",
+                        review_result.verification_report.as_ref(),
+                    ))
                     .build();
             emit_wide_event(&event);
             AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)

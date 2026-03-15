@@ -88,6 +88,7 @@ pub(super) fn build_fixture_result(
         reproduction_summary: details.reproduction_summary,
         artifact_path: details.artifact_path,
         failures: details.failures,
+        cost_breakdowns: details.cost_breakdowns,
         dag_traces: details.dag_traces,
     }
 }
@@ -99,6 +100,7 @@ pub(super) struct FixtureResultDetails {
     pub(super) reproduction_summary: Option<EvalReproductionSummary>,
     pub(super) artifact_path: Option<String>,
     pub(super) failures: Vec<String>,
+    pub(super) cost_breakdowns: Vec<crate::server::cost::CostBreakdownRow>,
     pub(super) dag_traces: Vec<DagExecutionTrace>,
 }
 
@@ -131,10 +133,16 @@ pub(super) fn convert_verification_report(
             .into_iter()
             .map(|judge| EvalVerificationJudgeReport {
                 model: judge.model,
+                role: judge.role,
+                provider: judge.provider,
                 total_comments: judge.total_comments,
                 passed_comments: judge.passed_comments,
                 filtered_comments: judge.filtered_comments,
                 abstained_comments: judge.abstained_comments,
+                prompt_tokens: judge.prompt_tokens,
+                completion_tokens: judge.completion_tokens,
+                total_tokens: judge.total_tokens,
+                cost_estimate_usd: judge.cost_estimate_usd,
                 warnings: judge.warnings,
             })
             .collect(),

@@ -6,7 +6,7 @@ import {
 } from 'recharts'
 import { useAnalyticsTrends, useEventStats, useReviews } from '../api/hooks'
 import { AlertTriangle, Download, Loader2 } from 'lucide-react'
-import type { FeedbackEvalTrendGap } from '../api/types'
+import type { CostBreakdownRow, FeedbackEvalTrendGap } from '../api/types'
 import {
   buildAnalyticsDrilldown,
   buildAnalyticsExportReport,
@@ -17,7 +17,12 @@ import {
   formatDurationHours,
   formatPercent,
 } from '../lib/analytics'
-import { formatCost } from '../lib/cost'
+import {
+  aggregateCostBreakdowns,
+  formatCost,
+  formatCostRole,
+  formatCostWorkload,
+} from '../lib/cost'
 import { scoreColorClass } from '../lib/scores'
 import { SEV_COLORS, CHART_THEME } from '../lib/constants'
 
@@ -188,6 +193,44 @@ function ContextSourceList({
   )
 }
 
+function CostBreakdownList({
+  items,
+  emptyLabel,
+}: {
+  items: CostBreakdownRow[]
+  emptyLabel: string
+}) {
+  if (items.length === 0) {
+    return <div className="text-[11px] text-text-muted">{emptyLabel}</div>
+  }
+
+  return (
+    <div className="space-y-2">
+      {items.map(item => (
+        <div
+          key={`${item.workload}-${item.role}-${item.provider ?? 'unknown'}-${item.model}`}
+          className="flex items-center justify-between gap-3 text-[11px]"
+        >
+          <div className="min-w-0">
+            <div className="truncate font-medium text-text-primary">
+              {formatCostWorkload(item.workload)} · {formatCostRole(item.role)}
+            </div>
+            <div className="truncate text-text-muted">
+              {[item.provider, item.model, `${item.total_tokens.toLocaleString()} tokens`]
+                .filter(Boolean)
+                .join(' · ')}
+            </div>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className="font-code text-text-primary">{formatCost(item.cost_estimate_usd)}</div>
+            <div className="text-text-muted">est.</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function Analytics() {
   const navigate = useNavigate()
   const { data: reviews, isLoading } = useReviews()
@@ -213,6 +256,26 @@ export function Analytics() {
   const exportReport = useMemo(
     () => buildAnalyticsExportReport(reviews || [], trends),
     [reviews, trends],
+  )
+  const reviewCostBreakdowns = useMemo(
+    () => eventStats?.cost_breakdowns ?? [],
+    [eventStats],
+  )
+  const evalCostBreakdowns = useMemo(
+    () => aggregateCostBreakdowns(
+      (trends?.eval_trend?.entries ?? []).flatMap(entry => entry.cost_breakdowns ?? []),
+    ),
+    [trends],
+  )
+  const reviewCostTotal = useMemo(
+    () => reviewCostBreakdowns.reduce((sum, item) => sum + item.cost_estimate_usd, 0)
+      || eventStats?.total_cost_estimate
+      || 0,
+    [eventStats?.total_cost_estimate, reviewCostBreakdowns],
+  )
+  const evalCostTotal = useMemo(
+    () => evalCostBreakdowns.reduce((sum, item) => sum + item.cost_estimate_usd, 0),
+    [evalCostBreakdowns],
   )
 
   const selectReviewDrilldown = (reviewId?: string) => {
@@ -320,6 +383,7 @@ export function Analytics() {
   } = trendAnalytics
   const hasReviewAnalytics = stats.totalReviews > 0
   const hasTrendAnalytics = evalEntries.length > 0 || feedbackEntries.length > 0
+  const hasCostAnalytics = reviewCostBreakdowns.length > 0 || evalCostBreakdowns.length > 0
 
   if (!hasReviewAnalytics && !hasTrendAnalytics) {
     return (
@@ -380,6 +444,46 @@ export function Analytics() {
         </div>
       )}
 
+      {hasCostAnalytics && (
+        <>
+          <div className="mb-3 text-[10px] font-semibold tracking-[0.08em] text-text-muted font-code">
+            COST ROUTING
+          </div>
+          <div className="mb-6 grid grid-cols-2 gap-3">
+            <div className="rounded-lg border border-border bg-surface-1 p-4">
+              <div className="mb-1 text-[10px] font-semibold tracking-[0.08em] text-text-muted font-code">
+                REVIEW WORKLOADS
+              </div>
+              <div className="mb-3 flex items-baseline gap-2">
+                <span className="text-2xl font-bold font-code text-text-primary">
+                  {formatCost(reviewCostTotal)}
+                </span>
+                <span className="text-[11px] text-text-muted">tracked</span>
+              </div>
+              <CostBreakdownList
+                items={reviewCostBreakdowns.slice(0, 6)}
+                emptyLabel="No review cost routing data yet."
+              />
+            </div>
+            <div className="rounded-lg border border-border bg-surface-1 p-4">
+              <div className="mb-1 text-[10px] font-semibold tracking-[0.08em] text-text-muted font-code">
+                EVAL WORKLOADS
+              </div>
+              <div className="mb-3 flex items-baseline gap-2">
+                <span className="text-2xl font-bold font-code text-text-primary">
+                  {formatCost(evalCostTotal)}
+                </span>
+                <span className="text-[11px] text-text-muted">tracked</span>
+              </div>
+              <CostBreakdownList
+                items={evalCostBreakdowns.slice(0, 6)}
+                emptyLabel="No eval cost routing data yet."
+              />
+            </div>
+          </div>
+        </>
+      )}
+
       {hasReviewAnalytics && (
         <>
           <div className="flex items-center gap-4 mb-3">
@@ -388,7 +492,7 @@ export function Analytics() {
             </div>
             {eventStats != null && (
               <div className="text-[11px] text-text-muted font-code">
-                Est. cost (reviews): <span className="text-text-primary font-medium">{formatCost(eventStats.total_cost_estimate)}</span>
+                Est. runtime cost: <span className="text-text-primary font-medium">{formatCost(eventStats.total_cost_estimate)}</span>
               </div>
             )}
           </div>

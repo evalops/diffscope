@@ -134,7 +134,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 86. [ ] Add deployment docs for self-hosted review + analytics + trend retention setups.
 87. [ ] Add secret-management guidance and validation for multi-provider enterprise installs.
 88. [ ] Add background jobs for recomputing analytics after schema or scoring changes.
-89. [ ] Add cost dashboards by provider/model/role for review, verification, and eval workloads.
+89. [x] Add cost dashboards by provider/model/role for review, verification, and eval workloads.
 90. [ ] Add failure forensics bundles for self-hosted users when review or eval jobs degrade.
 
 ## 10. Eval, Benchmarking, and Model Governance

@@ -898,7 +898,8 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
     let config = state.config.read().await.clone();
     let repo_path = state.repo_path.clone();
     let model = config.generation_model_name().to_string();
-    let provider = config.adapter.clone();
+    let generation_role = config.generation_model_role.as_str().to_string();
+    let provider = config.inferred_provider_label_for_role(config.generation_model_role);
     let base_url = config.base_url.clone();
     let summary_config = if config.smart_review_summary {
         Some(config.clone())
@@ -1047,6 +1048,19 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
                     )
                     .convention_suppressed(review_result.convention_suppressed_count)
                     .comments_by_pass(review_result.comments_by_pass)
+                    .cost_breakdowns(crate::server::cost::review_cost_breakdowns(
+                        crate::server::cost::CostBreakdownRequest {
+                            workload: "review_generation",
+                            role: &generation_role,
+                            provider: provider.clone(),
+                            model: &model,
+                            prompt_tokens: review_result.total_prompt_tokens,
+                            completion_tokens: review_result.total_completion_tokens,
+                            total_tokens: review_result.total_tokens,
+                        },
+                        "review_verification",
+                        review_result.verification_report.as_ref(),
+                    ))
                     .github(&repo, pr_number)
                     .github_posted(github_posted)
                     .build();

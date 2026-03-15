@@ -127,6 +127,14 @@ fn make_diff(file_path: &str, entries: &[(usize, &str)]) -> UnifiedDiff {
     }
 }
 
+fn judge_adapter(adapter: Arc<dyn LLMAdapter>) -> VerificationJudgeAdapter {
+    VerificationJudgeAdapter {
+        role: crate::config::ModelRole::Primary,
+        provider: Some("test".to_string()),
+        adapter,
+    }
+}
+
 fn build_prompt_for_tests_with_context(
     comments: &[Comment],
     related_context: HashMap<PathBuf, Vec<crate::core::LLMContextChunk>>,
@@ -494,7 +502,7 @@ async fn test_verify_comments_with_judges_any_consensus_keeps_single_judge_pass(
         &source_files,
         &HashMap::new(),
         VerificationJudgeConfig {
-            adapters: &[passing_judge, rejecting_judge],
+            judges: &[judge_adapter(passing_judge), judge_adapter(rejecting_judge)],
             min_score: 6,
             fail_open: false,
             consensus_mode: crate::config::VerificationConsensusMode::Any,
@@ -540,7 +548,7 @@ async fn test_verify_comments_with_judges_all_consensus_drops_disagreement() {
         &source_files,
         &HashMap::new(),
         VerificationJudgeConfig {
-            adapters: &[passing_judge, rejecting_judge],
+            judges: &[judge_adapter(passing_judge), judge_adapter(rejecting_judge)],
             min_score: 6,
             fail_open: false,
             consensus_mode: crate::config::VerificationConsensusMode::All,
@@ -583,7 +591,7 @@ async fn test_verify_comments_with_judges_reuses_cached_results() {
         &source_files,
         &HashMap::new(),
         VerificationJudgeConfig {
-            adapters: &[judge.clone()],
+            judges: &[judge_adapter(judge.clone())],
             min_score: 6,
             fail_open: false,
             consensus_mode: crate::config::VerificationConsensusMode::Any,
@@ -601,7 +609,7 @@ async fn test_verify_comments_with_judges_reuses_cached_results() {
         &source_files,
         &HashMap::new(),
         VerificationJudgeConfig {
-            adapters: &[judge],
+            judges: &[judge_adapter(judge)],
             min_score: 6,
             fail_open: false,
             consensus_mode: crate::config::VerificationConsensusMode::Any,
@@ -648,7 +656,7 @@ async fn test_verify_comments_with_judges_cache_misses_when_evidence_changes() {
         &initial_source_files,
         &HashMap::new(),
         VerificationJudgeConfig {
-            adapters: &[judge.clone()],
+            judges: &[judge_adapter(judge.clone())],
             min_score: 6,
             fail_open: false,
             consensus_mode: crate::config::VerificationConsensusMode::Any,
@@ -665,7 +673,7 @@ async fn test_verify_comments_with_judges_cache_misses_when_evidence_changes() {
         &changed_source_files,
         &HashMap::new(),
         VerificationJudgeConfig {
-            adapters: &[judge],
+            judges: &[judge_adapter(judge)],
             min_score: 6,
             fail_open: false,
             consensus_mode: crate::config::VerificationConsensusMode::Any,
