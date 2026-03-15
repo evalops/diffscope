@@ -1,0 +1,32 @@
+name: repo regression - persistent findings dropped from not-addressed inference
+repo_path: ../../..
+diff: |
+  diff --git a/src/core/comment/outcomes.rs b/src/core/comment/outcomes.rs
+  index 5555555..deadbeef 100644
+  --- a/src/core/comment/outcomes.rs
+  +++ b/src/core/comment/outcomes.rs
+  @@ -74,8 +74,8 @@ pub fn infer_follow_up_comment_resolution_outcomes(
+      let not_addressed_comment_ids = previous_comments
+          .iter()
+          .filter(|comment| comment.status == CommentStatus::Open)
+          .filter(|comment| !addressed_comment_ids.contains(&comment.id))
+  -        .filter(|comment| current_comment_ids.contains(comment.id.as_str()))
+  +        .filter(|comment| !current_comment_ids.contains(comment.id.as_str()))
+          .map(|comment| comment.id.clone())
+          .collect();
+  
+expect:
+  must_find:
+    - file: src/core/comment/outcomes.rs
+      contains_any:
+        - repeated findings stop being recorded as not addressed
+        - the persistence check is inverted so surviving comments are dropped
+        - this breaks addressed-vs-still-open lifecycle inference for recurring findings
+      rule_id: bug.lifecycle.not-addressed-persistence-inversion
+  must_not_find:
+    - contains: style
+  summary:
+    merge_readiness: NeedsAttention
+    min_open_blockers: 1
+  min_total: 1
+  max_total: 8

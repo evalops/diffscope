@@ -1,0 +1,34 @@
+name: repo regression - API drops follow-up addressed outcome
+repo_path: ../../..
+diff: |
+  diff --git a/src/server/api/types.rs b/src/server/api/types.rs
+  index 6666666..deadbeef 100644
+  --- a/src/server/api/types.rs
+  +++ b/src/server/api/types.rs
+  @@ -111,9 +111,7 @@ pub(crate) fn build_api_review_session(
+          comments: session
+              .comments
+              .into_iter()
+              .map(|comment| {
+  -                let addressed_by_follow_up =
+  -                    addressed_by_follow_up_comment_ids.contains(&comment.id);
+  -                ApiComment::from_comment(comment, stale_review, addressed_by_follow_up)
+  +                ApiComment::from_comment(comment, stale_review, false)
+              })
+              .collect(),
+          summary: session.summary,
+expect:
+  must_find:
+    - file: src/server/api/types.rs
+      contains_any:
+        - API review sessions discard addressed-by-follow-up state
+        - comments touched by later commits will no longer surface as addressed
+        - stale review responses can report fixed open findings as merely stale
+      rule_id: bug.lifecycle.api-drops-followup-addressed
+  must_not_find:
+    - contains: style
+  summary:
+    merge_readiness: NeedsAttention
+    min_open_blockers: 1
+  min_total: 1
+  max_total: 8

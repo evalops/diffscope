@@ -1,0 +1,34 @@
+name: repo regression - context-only edits marked addressed
+repo_path: ../../..
+diff: |
+  diff --git a/src/core/comment/outcomes.rs b/src/core/comment/outcomes.rs
+  index 4444444..deadbeef 100644
+  --- a/src/core/comment/outcomes.rs
+  +++ b/src/core/comment/outcomes.rs
+  @@ -37,9 +37,7 @@ pub fn infer_addressed_by_follow_up_comments(
+          for hunk in &diff.hunks {
+              for line in &hunk.changes {
+  -                if line.change_type != ChangeType::Context {
+  -                    if let Some(old_line_no) = line.old_line_no {
+  -                        changed_old_lines.insert(old_line_no);
+  -                    }
+  +                if let Some(old_line_no) = line.old_line_no {
+  +                    changed_old_lines.insert(old_line_no);
+                  }
+              }
+          }
+expect:
+  must_find:
+    - file: src/core/comment/outcomes.rs
+      contains_any:
+        - context-only lines are being treated as addressed follow-up edits
+        - inserting lines above a finding can falsely mark it addressed
+        - follow-up inference should only count non-context old lines
+      rule_id: bug.lifecycle.context-only-addressed
+  must_not_find:
+    - contains: style
+  summary:
+    merge_readiness: NeedsAttention
+    min_open_blockers: 1
+  min_total: 1
+  max_total: 8

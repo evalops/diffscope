@@ -319,6 +319,100 @@ expect:
     }
 
     #[test]
+    fn test_checked_in_lifecycle_context_only_fixture_loads_summary_expectations() {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/repo_regressions/lifecycle_context_only_addressed.yml");
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("repo regression - context-only edits marked addressed")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.lifecycle.context-only-addressed")
+        );
+        assert_eq!(
+            fixtures[0]
+                .fixture
+                .expect
+                .summary
+                .merge_readiness
+                .as_deref(),
+            Some("NeedsAttention")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.summary.min_open_blockers,
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_checked_in_lifecycle_persistence_fixture_loads_summary_expectations() {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "eval/fixtures/repo_regressions/lifecycle_not_addressed_persistence_inversion.yml",
+        );
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("repo regression - persistent findings dropped from not-addressed inference")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.lifecycle.not-addressed-persistence-inversion")
+        );
+        assert_eq!(
+            fixtures[0]
+                .fixture
+                .expect
+                .summary
+                .merge_readiness
+                .as_deref(),
+            Some("NeedsAttention")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.summary.min_open_blockers,
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_checked_in_lifecycle_api_fixture_loads_summary_expectations() {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/repo_regressions/lifecycle_api_drops_followup_addressed.yml");
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("repo regression - API drops follow-up addressed outcome")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.lifecycle.api-drops-followup-addressed")
+        );
+        assert_eq!(
+            fixtures[0]
+                .fixture
+                .expect
+                .summary
+                .merge_readiness
+                .as_deref(),
+            Some("NeedsAttention")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.summary.min_open_blockers,
+            Some(1)
+        );
+    }
+
+    #[test]
     fn test_collect_eval_fixtures_expands_pack_entries_in_sorted_order() {
         let dir = tempdir().unwrap();
         let standard_path = dir.path().join("b-standard.yml");
