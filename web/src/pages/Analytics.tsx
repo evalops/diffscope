@@ -126,6 +126,65 @@ function FeedbackBreakdownList({
   )
 }
 
+function PatternRepositorySourceList({
+  items,
+  emptyLabel,
+  onSelectItem,
+}: {
+  items: Array<{
+    name: string
+    total: number
+    labeled: number
+    accepted: number
+    rejected: number
+    reviewCount: number
+    acceptanceRate: number
+  }>
+  emptyLabel: string
+  onSelectItem?: (name: string) => void
+}) {
+  if (items.length === 0) {
+    return <div className="text-[11px] text-text-muted">{emptyLabel}</div>
+  }
+
+  return (
+    <div className="space-y-2">
+      {items.map(item => {
+        const content = (
+          <>
+            <div className="min-w-0 text-left">
+              <div className="truncate font-medium text-text-primary">{item.name}</div>
+              <div className="text-text-muted">
+                {item.total} finding{item.total === 1 ? '' : 's'} · {item.reviewCount} review{item.reviewCount === 1 ? '' : 's'} · {formatPercent(item.acceptanceRate)} accepted
+              </div>
+            </div>
+            <div className="shrink-0 font-code text-text-primary">{item.total}</div>
+          </>
+        )
+
+        if (onSelectItem) {
+          return (
+            <button
+              key={item.name}
+              type="button"
+              onClick={() => onSelectItem(item.name)}
+              className="flex w-full items-center justify-between gap-3 rounded px-1 py-1 text-[11px] hover:bg-surface-2"
+            >
+              {content}
+            </button>
+          )
+        }
+
+        return (
+          <div key={item.name} className="flex items-center justify-between gap-3 text-[11px]">
+            {content}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function Analytics() {
   const navigate = useNavigate()
   const { data: reviews, isLoading } = useReviews()
@@ -135,6 +194,7 @@ export function Analytics() {
     { type: 'review'; reviewId: string }
     | { type: 'category'; category: string }
     | { type: 'rule'; ruleId: string }
+    | { type: 'patternRepositorySource'; source: string }
     | null
   >(null)
 
@@ -169,6 +229,12 @@ export function Analytics() {
     }
   }
 
+  const selectPatternRepositorySourceDrilldown = (source?: string) => {
+    if (source) {
+      setDrilldownSelection({ type: 'patternRepositorySource', source })
+    }
+  }
+
   const openReviewTarget = (reviewId: string, params?: Record<string, string | undefined>) => {
     const searchParams = new URLSearchParams()
     Object.entries(params ?? {}).forEach(([key, value]) => {
@@ -189,6 +255,11 @@ export function Analytics() {
 
     if (drilldownSelection.type === 'category') {
       openReviewTarget(reviewId, { view: 'list', category: drilldownSelection.category })
+      return
+    }
+
+    if (drilldownSelection.type === 'patternRepositorySource') {
+      openReviewTarget(reviewId)
       return
     }
 
@@ -224,6 +295,8 @@ export function Analytics() {
     topRejectedCategories,
     topAcceptedRules,
     topRejectedRules,
+    patternRepositorySeries,
+    patternRepositorySourceData,
     stats,
   } = analytics
   const {
@@ -811,6 +884,90 @@ export function Analytics() {
                   Rule-level learning appears once findings with rule IDs receive thumbs.
                 </div>
               )}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mt-3">
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                PATTERN REPOSITORY IMPACT
+              </div>
+              {stats.patternRepositoryFindingTotal > 0 ? (
+                <>
+                  <div className="flex items-baseline gap-2 mb-1">
+                    <span className={`text-2xl font-bold font-code ${
+                      (stats.patternRepositoryAcceptanceLift ?? 0) >= 0
+                        ? 'text-sev-suggestion'
+                        : 'text-sev-warning'
+                    }`}>
+                      {stats.patternRepositoryAcceptanceLift != null
+                        ? formatSignedPercent(stats.patternRepositoryAcceptanceLift)
+                        : formatPercent(stats.patternRepositoryAcceptanceRate)}
+                    </span>
+                    <span className="text-[11px] text-text-muted">
+                      {stats.patternRepositoryAcceptanceLift != null ? 'lift vs baseline' : 'accepted when labeled'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-text-muted">
+                    {formatPercent(stats.patternRepositoryAcceptanceRate)} accepted across {stats.patternRepositoryLabeledTotal} labeled pattern-repo findings.
+                  </div>
+                  <div className="h-32 mt-2">
+                    <ResponsiveContainer width="100%" height="99%" minWidth={50} minHeight={50}>
+                      <AreaChart
+                        data={patternRepositorySeries}
+                        onClick={state => selectReviewDrilldown(
+                          getActivePayloadValue<{ reviewId?: string }>(state)?.reviewId,
+                        )}
+                      >
+                        <defs>
+                          <linearGradient id="patternRepositoryGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor={CHART_THEME.accent} stopOpacity={0.35} />
+                            <stop offset="95%" stopColor={CHART_THEME.accent} stopOpacity={0.05} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid {...gridProps} />
+                        <XAxis dataKey="label" tick={axisTick} axisLine={false} tickLine={false} />
+                        <YAxis tick={axisTick} axisLine={false} tickLine={false} />
+                        <Tooltip {...tooltipStyle} />
+                        <Area type="monotone" dataKey="findings" stroke={CHART_THEME.accent} fill="url(#patternRepositoryGrad)" strokeWidth={1.5} dot={false} name="Pattern-repo findings" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex items-center gap-6 mt-3 pt-3 border-t border-border-subtle">
+                    <div className="text-center">
+                      <div className="text-sm font-bold font-code text-text-primary">{stats.patternRepositoryFindingTotal}</div>
+                      <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">FINDINGS</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-sm font-bold font-code text-text-primary">{stats.patternRepositoryReviewCount}</div>
+                      <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">REVIEWS</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-sm font-bold font-code text-text-primary">{stats.patternRepositorySourceCount}</div>
+                      <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">SOURCES</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-sm font-bold font-code text-accent">{formatPercent(stats.patternRepositoryUtilizationRate)}</div>
+                      <div className="text-[10px] text-text-muted tracking-[0.05em] font-code">UTILIZATION</div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="h-32 flex items-center justify-center text-center text-text-muted text-sm px-6">
+                  No pattern-repository-backed findings yet. External rule hits will appear here once they land in completed reviews.
+                </div>
+              )}
+            </div>
+
+            <div className="bg-surface-1 border border-border rounded-lg p-4">
+              <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code mb-3">
+                TOP PATTERN REPOSITORY SOURCES
+              </div>
+              <PatternRepositorySourceList
+                items={patternRepositorySourceData.slice(0, 8)}
+                emptyLabel="No external rule sources have influenced findings yet"
+                onSelectItem={selectPatternRepositorySourceDrilldown}
+              />
             </div>
           </div>
 

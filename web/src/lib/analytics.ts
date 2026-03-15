@@ -18,6 +18,8 @@ const FEEDBACK_LEARNING_REJECT_TAGS = new Set([
   'semantic-feedback:rejected',
 ])
 
+const PATTERN_REPOSITORY_TAG_PREFIX = 'pattern-repository:'
+
 function isLabeledFeedbackComment(comment: ReviewComment): boolean {
   return comment.feedback === 'accept' || comment.feedback === 'reject'
 }
@@ -36,6 +38,23 @@ function hasFeedbackLearningAcceptTag(comment: ReviewComment): boolean {
 
 function hasFeedbackLearningRejectTag(comment: ReviewComment): boolean {
   return comment.tags.some(tag => FEEDBACK_LEARNING_REJECT_TAGS.has(tag))
+}
+
+function extractPatternRepositorySources(comment: ReviewComment): string[] {
+  const sources = comment.tags
+    .filter(tag => tag.startsWith(PATTERN_REPOSITORY_TAG_PREFIX))
+    .map(tag => tag.slice(PATTERN_REPOSITORY_TAG_PREFIX.length))
+    .filter(Boolean)
+
+  if (sources.length > 0) {
+    return sources
+  }
+
+  return comment.tags.includes('pattern-repository') ? ['external'] : []
+}
+
+function isPatternRepositoryComment(comment: ReviewComment): boolean {
+  return extractPatternRepositorySources(comment).length > 0
 }
 
 export function computeAnalytics(reviews: ReviewSession[]) {
@@ -151,6 +170,76 @@ export function computeAnalytics(reviews: ReviewSession[]) {
       )).length,
     }
   })
+
+  const patternRepositorySourceTotals: Record<string, {
+    total: number
+    labeled: number
+    accepted: number
+    rejected: number
+    reviewIds: Set<string>
+  }> = {}
+
+  const patternRepositorySeries = completed.map((r, i) => {
+    const patternRepositoryComments = r.comments.filter(isPatternRepositoryComment)
+    const labeledPatternRepositoryComments = patternRepositoryComments.filter(isLabeledFeedbackComment)
+    const accepted = labeledPatternRepositoryComments.filter(comment => comment.feedback === 'accept').length
+    const rejected = labeledPatternRepositoryComments.filter(comment => comment.feedback === 'reject').length
+    const reviewSources = new Set<string>()
+
+    for (const comment of patternRepositoryComments) {
+      const sources = Array.from(new Set(extractPatternRepositorySources(comment)))
+      const isLabeled = isLabeledFeedbackComment(comment)
+
+      for (const source of sources) {
+        reviewSources.add(source)
+        const current = patternRepositorySourceTotals[source] ?? {
+          total: 0,
+          labeled: 0,
+          accepted: 0,
+          rejected: 0,
+          reviewIds: new Set<string>(),
+        }
+
+        current.total += 1
+        if (isLabeled) {
+          current.labeled += 1
+          if (comment.feedback === 'accept') {
+            current.accepted += 1
+          } else if (comment.feedback === 'reject') {
+            current.rejected += 1
+          }
+        }
+        current.reviewIds.add(r.id)
+        patternRepositorySourceTotals[source] = current
+      }
+    }
+
+    return {
+      reviewId: r.id,
+      idx: i + 1,
+      label: `#${i + 1}`,
+      findings: patternRepositoryComments.length,
+      labeled: labeledPatternRepositoryComments.length,
+      accepted,
+      rejected,
+      sourceCount: reviewSources.size,
+      acceptanceRate: labeledPatternRepositoryComments.length > 0
+        ? accepted / labeledPatternRepositoryComments.length
+        : null,
+    }
+  })
+
+  const patternRepositorySourceData = Object.entries(patternRepositorySourceTotals)
+    .map(([name, totals]) => ({
+      name,
+      total: totals.total,
+      labeled: totals.labeled,
+      accepted: totals.accepted,
+      rejected: totals.rejected,
+      reviewCount: totals.reviewIds.size,
+      acceptanceRate: totals.labeled > 0 ? totals.accepted / totals.labeled : 0,
+    }))
+    .sort((left, right) => right.total - left.total || right.accepted - left.accepted)
 
   const feedbackCategoryData = Object.entries(feedbackTotalsByCategory)
     .map(([name, totals]) => {
@@ -318,6 +407,22 @@ export function computeAnalytics(reviews: ReviewSession[]) {
     (sum, point) => sum + point.demotedRejected,
     0,
   )
+  const patternRepositoryFindingTotal = patternRepositorySeries.reduce(
+    (sum, point) => sum + point.findings,
+    0,
+  )
+  const patternRepositoryLabeledTotal = patternRepositorySeries.reduce(
+    (sum, point) => sum + point.labeled,
+    0,
+  )
+  const patternRepositoryAcceptedTotal = patternRepositorySeries.reduce(
+    (sum, point) => sum + point.accepted,
+    0,
+  )
+  const patternRepositoryRejectedTotal = patternRepositorySeries.reduce(
+    (sum, point) => sum + point.rejected,
+    0,
+  )
   const totalCommentCount = completed.reduce((sum, r) => sum + r.comments.length, 0)
   const reviewsWithFeedback = feedbackCoverageSeries.filter(point => point.labeled > 0).length
   const feedbackLearningReviewCount = feedbackLearningSeries.filter(
@@ -332,6 +437,25 @@ export function computeAnalytics(reviews: ReviewSession[]) {
   const feedbackLearningAcceptanceLift = feedbackLearningBaselineAcceptanceRate != null
     && feedbackLearningLabeledTotal > 0
     ? feedbackLearningAcceptanceRate - feedbackLearningBaselineAcceptanceRate
+    : null
+  const patternRepositoryReviewCount = patternRepositorySeries.filter(
+    point => point.findings > 0,
+  ).length
+  const patternRepositorySourceCount = patternRepositorySourceData.length
+  const patternRepositoryUtilizationRate = completed.length > 0
+    ? patternRepositoryReviewCount / completed.length
+    : 0
+  const patternRepositoryAcceptanceRate = patternRepositoryLabeledTotal > 0
+    ? patternRepositoryAcceptedTotal / patternRepositoryLabeledTotal
+    : 0
+  const patternRepositoryBaselineLabeledTotal = labeledFeedbackTotal - patternRepositoryLabeledTotal
+  const patternRepositoryBaselineAcceptedTotal = acceptedFeedbackTotal - patternRepositoryAcceptedTotal
+  const patternRepositoryBaselineAcceptanceRate = patternRepositoryBaselineLabeledTotal > 0
+    ? patternRepositoryBaselineAcceptedTotal / patternRepositoryBaselineLabeledTotal
+    : null
+  const patternRepositoryAcceptanceLift = patternRepositoryBaselineAcceptanceRate != null
+    && patternRepositoryLabeledTotal > 0
+    ? patternRepositoryAcceptanceRate - patternRepositoryBaselineAcceptanceRate
     : null
 
   const sevTotals: Record<Severity, number> = { Error: 0, Warning: 0, Info: 0, Suggestion: 0 }
@@ -353,6 +477,8 @@ export function computeAnalytics(reviews: ReviewSession[]) {
     meanTimeToResolutionSeries,
     feedbackCoverageSeries,
     feedbackLearningSeries,
+    patternRepositorySeries,
+    patternRepositorySourceData,
     topAcceptedCategories,
     topRejectedCategories,
     topAcceptedRules,
@@ -397,6 +523,17 @@ export function computeAnalytics(reviews: ReviewSession[]) {
       feedbackLearningAcceptanceLift,
       feedbackLearningBoostedAcceptedTotal,
       feedbackLearningDemotedRejectedTotal,
+      patternRepositoryFindingTotal,
+      patternRepositoryLabeledTotal,
+      patternRepositoryAcceptedTotal,
+      patternRepositoryRejectedTotal,
+      patternRepositoryReviewCount,
+      patternRepositorySourceCount,
+      patternRepositoryUtilizationRate,
+      patternRepositoryAcceptanceRate,
+      patternRepositoryBaselineLabeledTotal,
+      patternRepositoryBaselineAcceptanceRate,
+      patternRepositoryAcceptanceLift,
     },
   }
 }
@@ -405,6 +542,7 @@ export type AnalyticsDrilldownSelection =
   | { type: 'review'; reviewId: string }
   | { type: 'category'; category: string }
   | { type: 'rule'; ruleId: string }
+  | { type: 'patternRepositorySource'; source: string }
 
 export interface AnalyticsDrilldown {
   title: string
@@ -476,9 +614,15 @@ export function buildAnalyticsDrilldown(
   }
 
   const matches = labeledReviews.flatMap(({ review, label }) => review.comments
-    .filter(comment => selection.type === 'category'
-      ? comment.category === selection.category
-      : comment.rule_id?.trim() === selection.ruleId)
+    .filter(comment => {
+      if (selection.type === 'category') {
+        return comment.category === selection.category
+      }
+      if (selection.type === 'rule') {
+        return comment.rule_id?.trim() === selection.ruleId
+      }
+      return extractPatternRepositorySources(comment).includes(selection.source)
+    })
     .map(comment => ({ review, label, comment })))
 
   if (matches.length === 0) {
@@ -507,7 +651,9 @@ export function buildAnalyticsDrilldown(
   return {
     title: selection.type === 'category'
       ? `Category · ${selection.category}`
-      : `Rule · ${selection.ruleId}`,
+      : selection.type === 'rule'
+        ? `Rule · ${selection.ruleId}`
+        : `Pattern repository · ${selection.source}`,
     description: `${matches.length} finding${matches.length === 1 ? '' : 's'} across ${reviewMap.size} review${reviewMap.size === 1 ? '' : 's'}.`,
     reviews: Array.from(reviewMap.values()),
     comments: matches.map(({ review, label, comment }) => ({
@@ -651,6 +797,17 @@ export interface AnalyticsExportReport {
       feedbackLearningAcceptanceLift?: number
       feedbackLearningBoostedAcceptedTotal: number
       feedbackLearningDemotedRejectedTotal: number
+      patternRepositoryFindingTotal: number
+      patternRepositoryLabeledTotal: number
+      patternRepositoryAcceptedTotal: number
+      patternRepositoryRejectedTotal: number
+      patternRepositoryReviewCount: number
+      patternRepositorySourceCount: number
+      patternRepositoryUtilizationRate: number
+      patternRepositoryAcceptanceRate: number
+      patternRepositoryBaselineLabeledTotal: number
+      patternRepositoryBaselineAcceptanceRate?: number
+      patternRepositoryAcceptanceLift?: number
       latestMicroF1?: number
       latestWeightedScore?: number
       latestAcceptanceRate?: number
@@ -658,6 +815,8 @@ export interface AnalyticsExportReport {
     }
     coverageByReview: AnalyticsSnapshot['feedbackCoverageSeries']
     feedbackLearningByReview: AnalyticsSnapshot['feedbackLearningSeries']
+    patternRepositoryByReview: AnalyticsSnapshot['patternRepositorySeries']
+    patternRepositorySources: AnalyticsSnapshot['patternRepositorySourceData']
     topAcceptedCategories: AnalyticsSnapshot['topAcceptedCategories']
     topRejectedCategories: AnalyticsSnapshot['topRejectedCategories']
     topAcceptedRules: AnalyticsSnapshot['topAcceptedRules']
@@ -711,6 +870,20 @@ function appendFeedbackBreakdownRows(
     rows.push({ report: 'reinforcement', group, label: item.name, metric: 'rejected', value: item.rejected })
     rows.push({ report: 'reinforcement', group, label: item.name, metric: 'total', value: item.total })
     rows.push({ report: 'reinforcement', group, label: item.name, metric: 'acceptance_rate', value: item.acceptanceRate })
+  })
+}
+
+function appendPatternRepositoryRows(
+  rows: AnalyticsExportCsvRow[],
+  items: AnalyticsSnapshot['patternRepositorySourceData'],
+) {
+  items.forEach(item => {
+    rows.push({ report: 'reinforcement', group: 'pattern_repository_sources', label: item.name, metric: 'total', value: item.total })
+    rows.push({ report: 'reinforcement', group: 'pattern_repository_sources', label: item.name, metric: 'labeled', value: item.labeled })
+    rows.push({ report: 'reinforcement', group: 'pattern_repository_sources', label: item.name, metric: 'accepted', value: item.accepted })
+    rows.push({ report: 'reinforcement', group: 'pattern_repository_sources', label: item.name, metric: 'rejected', value: item.rejected })
+    rows.push({ report: 'reinforcement', group: 'pattern_repository_sources', label: item.name, metric: 'review_count', value: item.reviewCount })
+    rows.push({ report: 'reinforcement', group: 'pattern_repository_sources', label: item.name, metric: 'acceptance_rate', value: item.acceptanceRate })
   })
 }
 
@@ -781,6 +954,17 @@ export function buildAnalyticsExportReport(
         feedbackLearningAcceptanceLift: analytics.stats.feedbackLearningAcceptanceLift ?? undefined,
         feedbackLearningBoostedAcceptedTotal: analytics.stats.feedbackLearningBoostedAcceptedTotal,
         feedbackLearningDemotedRejectedTotal: analytics.stats.feedbackLearningDemotedRejectedTotal,
+        patternRepositoryFindingTotal: analytics.stats.patternRepositoryFindingTotal,
+        patternRepositoryLabeledTotal: analytics.stats.patternRepositoryLabeledTotal,
+        patternRepositoryAcceptedTotal: analytics.stats.patternRepositoryAcceptedTotal,
+        patternRepositoryRejectedTotal: analytics.stats.patternRepositoryRejectedTotal,
+        patternRepositoryReviewCount: analytics.stats.patternRepositoryReviewCount,
+        patternRepositorySourceCount: analytics.stats.patternRepositorySourceCount,
+        patternRepositoryUtilizationRate: analytics.stats.patternRepositoryUtilizationRate,
+        patternRepositoryAcceptanceRate: analytics.stats.patternRepositoryAcceptanceRate,
+        patternRepositoryBaselineLabeledTotal: analytics.stats.patternRepositoryBaselineLabeledTotal,
+        patternRepositoryBaselineAcceptanceRate: analytics.stats.patternRepositoryBaselineAcceptanceRate ?? undefined,
+        patternRepositoryAcceptanceLift: analytics.stats.patternRepositoryAcceptanceLift ?? undefined,
         latestMicroF1: trendAnalytics.latestEval?.micro_f1,
         latestWeightedScore: trendAnalytics.latestEval?.weighted_score,
         latestAcceptanceRate: trendAnalytics.latestFeedback?.acceptance_rate,
@@ -788,6 +972,8 @@ export function buildAnalyticsExportReport(
       },
       coverageByReview: analytics.feedbackCoverageSeries,
       feedbackLearningByReview: analytics.feedbackLearningSeries,
+      patternRepositoryByReview: analytics.patternRepositorySeries,
+      patternRepositorySources: analytics.patternRepositorySourceData,
       topAcceptedCategories: analytics.topAcceptedCategories,
       topRejectedCategories: analytics.topRejectedCategories,
       topAcceptedRules: analytics.topAcceptedRules,
@@ -873,6 +1059,17 @@ export function buildAnalyticsCsv(report: AnalyticsExportReport): string {
     rows.push({ report: 'reinforcement', group: 'feedback_learning_by_review', label: point.label, metric: 'boosted_accepted', value: point.boostedAccepted })
     rows.push({ report: 'reinforcement', group: 'feedback_learning_by_review', label: point.label, metric: 'demoted_rejected', value: point.demotedRejected })
   })
+  report.reinforcement.patternRepositoryByReview.forEach(point => {
+    rows.push({ report: 'reinforcement', group: 'pattern_repository_by_review', label: point.label, metric: 'findings', value: point.findings })
+    rows.push({ report: 'reinforcement', group: 'pattern_repository_by_review', label: point.label, metric: 'labeled', value: point.labeled })
+    rows.push({ report: 'reinforcement', group: 'pattern_repository_by_review', label: point.label, metric: 'accepted', value: point.accepted })
+    rows.push({ report: 'reinforcement', group: 'pattern_repository_by_review', label: point.label, metric: 'rejected', value: point.rejected })
+    rows.push({ report: 'reinforcement', group: 'pattern_repository_by_review', label: point.label, metric: 'source_count', value: point.sourceCount })
+    if (point.acceptanceRate != null) {
+      rows.push({ report: 'reinforcement', group: 'pattern_repository_by_review', label: point.label, metric: 'acceptance_rate', value: point.acceptanceRate })
+    }
+  })
+  appendPatternRepositoryRows(rows, report.reinforcement.patternRepositorySources)
   appendFeedbackBreakdownRows(rows, 'top_accepted_categories', report.reinforcement.topAcceptedCategories)
   appendFeedbackBreakdownRows(rows, 'top_rejected_categories', report.reinforcement.topRejectedCategories)
   appendFeedbackBreakdownRows(rows, 'top_accepted_rules', report.reinforcement.topAcceptedRules)

@@ -106,7 +106,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 64. [x] Add unresolved blocker counts per repository and per PR.
 65. [x] Add review completeness and mean-time-to-resolution charts.
 66. [x] Add feedback-learning effectiveness metrics: did reranked findings get higher acceptance after rollout?
-67. [ ] Add pattern-repository utilization analytics showing when extra context actually affected findings.
+67. [x] Add pattern-repository utilization analytics showing when extra context actually affected findings.
 68. [x] Add eval-vs-production dashboards comparing benchmark strength against real-world acceptance.
 69. [x] Add drill-downs from trend charts directly into the affected reviews, findings, and rules.
 70. [x] Add exportable JSON/CSV reports for review quality, lifecycle, and reinforcement metrics.

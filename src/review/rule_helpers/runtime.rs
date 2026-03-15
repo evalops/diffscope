@@ -90,4 +90,58 @@ mod tests {
         let result = apply_rule_overrides(vec![comment], &rules);
         assert_eq!(result[0].severity, core::comment::Severity::Info);
     }
+
+    #[test]
+    fn apply_rule_overrides_tags_pattern_repository_sources() {
+        let mut comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Info,
+            0.5,
+        );
+        comment.rule_id = Some("sec.sql.injection".to_string());
+
+        let rules = vec![core::ReviewRule {
+            source: "https://github.com/acme/security-rules.git".to_string(),
+            id: "sec.sql.injection".to_string(),
+            description: "Parameterized queries required".to_string(),
+            severity: None,
+            category: None,
+            scope: None,
+            tags: vec![],
+        }];
+
+        let result = apply_rule_overrides(vec![comment], &rules);
+        assert!(result[0].tags.contains(&"pattern-repository".to_string()));
+        assert!(result[0]
+            .tags
+            .contains(&"pattern-repository:acme/security-rules".to_string()));
+    }
+
+    #[test]
+    fn apply_rule_overrides_skips_repository_source_tag_for_local_rules() {
+        let mut comment = build_comment(
+            "c1",
+            core::comment::Category::Bug,
+            core::comment::Severity::Info,
+            0.5,
+        );
+        comment.rule_id = Some("local.rule".to_string());
+
+        let rules = vec![core::ReviewRule {
+            source: "repository".to_string(),
+            id: "local.rule".to_string(),
+            description: "Repo-local rule".to_string(),
+            severity: None,
+            category: None,
+            scope: None,
+            tags: vec![],
+        }];
+
+        let result = apply_rule_overrides(vec![comment], &rules);
+        assert!(!result[0]
+            .tags
+            .iter()
+            .any(|tag| tag.starts_with("pattern-repository")));
+    }
 }

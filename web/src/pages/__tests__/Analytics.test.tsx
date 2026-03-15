@@ -168,6 +168,7 @@ describe('Analytics exports', () => {
     expect(report.reinforcement.summary.feedbackCoverageRate).toBe(1)
     expect(report.reinforcement.summary.feedbackAcceptanceRate).toBe(0.5)
     expect(report.reinforcement.summary.feedbackLearningLabeledTotal).toBe(0)
+    expect(report.reinforcement.summary.patternRepositoryFindingTotal).toBe(0)
     expect(report.reinforcement.latestAttentionGaps.byCategory[0].name).toBe('Security')
     expect(report.reinforcement.latestAttentionGaps.byRule[0].name).toBe('sec.auth.boundary')
     expect(report.sources.warnings).toContain('feedback trend lagging behind latest review')
@@ -262,6 +263,94 @@ describe('Analytics exports', () => {
     expect(analytics.feedbackLearningSeries[1].tunedLabeled).toBe(3)
   })
 
+  it('computes pattern-repository utilization analytics and drilldowns', () => {
+    const patternRepoReview = makeReview()
+    patternRepoReview.id = 'review-2'
+    patternRepoReview.started_at = '2026-03-14T12:00:00Z'
+    patternRepoReview.completed_at = '2026-03-14T12:05:00Z'
+    patternRepoReview.comments = [
+      {
+        ...patternRepoReview.comments[0],
+        id: 'c-3',
+        content: 'Use the shared auth boundary rule set here',
+        feedback: 'accept',
+        tags: ['pattern-repository', 'pattern-repository:acme/security-rules'],
+      },
+      {
+        ...patternRepoReview.comments[1],
+        id: 'c-4',
+        content: 'Frontend rule from the shared repo flagged this naming issue',
+        feedback: 'reject',
+        tags: ['pattern-repository', 'pattern-repository:acme/frontend-rules'],
+      },
+    ]
+
+    const followupPatternRepoReview = makeReview()
+    followupPatternRepoReview.id = 'review-3'
+    followupPatternRepoReview.started_at = '2026-03-15T12:00:00Z'
+    followupPatternRepoReview.completed_at = '2026-03-15T12:05:00Z'
+    followupPatternRepoReview.comments = [
+      {
+        ...followupPatternRepoReview.comments[0],
+        id: 'c-5',
+        content: 'Shared security rules caught another accepted issue',
+        feedback: 'accept',
+        tags: ['pattern-repository', 'pattern-repository:acme/security-rules'],
+      },
+    ]
+    followupPatternRepoReview.summary = {
+      ...followupPatternRepoReview.summary!,
+      total_comments: 1,
+      by_severity: { Error: 1, Warning: 0, Info: 0, Suggestion: 0 },
+      by_category: { Security: 1 },
+      files_reviewed: 3,
+      overall_score: 9.1,
+      open_comments: 1,
+      open_by_severity: { Error: 1 },
+      open_blocking_comments: 1,
+      open_informational_comments: 0,
+      resolved_comments: 0,
+      dismissed_comments: 0,
+      open_blockers: 1,
+      completeness: {
+        total_findings: 1,
+        acknowledged_findings: 0,
+        fixed_findings: 0,
+        stale_findings: 0,
+      },
+    }
+
+    const reviews = [makeReview(), patternRepoReview, followupPatternRepoReview]
+    const analytics = computeAnalytics(reviews)
+
+    expect(analytics.stats.patternRepositoryFindingTotal).toBe(3)
+    expect(analytics.stats.patternRepositoryLabeledTotal).toBe(3)
+    expect(analytics.stats.patternRepositoryAcceptedTotal).toBe(2)
+    expect(analytics.stats.patternRepositoryRejectedTotal).toBe(1)
+    expect(analytics.stats.patternRepositoryReviewCount).toBe(2)
+    expect(analytics.stats.patternRepositorySourceCount).toBe(2)
+    expect(analytics.stats.patternRepositoryUtilizationRate).toBeCloseTo(2 / 3)
+    expect(analytics.stats.patternRepositoryAcceptanceRate).toBeCloseTo(2 / 3)
+    expect(analytics.stats.patternRepositoryBaselineLabeledTotal).toBe(2)
+    expect(analytics.stats.patternRepositoryBaselineAcceptanceRate).toBeCloseTo(0.5)
+    expect(analytics.stats.patternRepositoryAcceptanceLift).toBeCloseTo((2 / 3) - 0.5)
+    expect(analytics.patternRepositorySourceData[0]).toMatchObject({
+      name: 'acme/security-rules',
+      total: 2,
+      accepted: 2,
+      reviewCount: 2,
+    })
+    expect(analytics.patternRepositorySeries[1].findings).toBe(2)
+
+    const sourceDrilldown = buildAnalyticsDrilldown(reviews, {
+      type: 'patternRepositorySource',
+      source: 'acme/security-rules',
+    })
+    expect(sourceDrilldown?.title).toBe('Pattern repository · acme/security-rules')
+    expect(sourceDrilldown?.comments).toHaveLength(2)
+    expect(sourceDrilldown?.reviews).toHaveLength(2)
+  })
+
   it('builds review, category, and rule drilldowns from review-backed analytics', () => {
     const laterReview = makeReview()
     const laterSummary = laterReview.summary!
@@ -326,6 +415,7 @@ describe('Analytics exports', () => {
     expect(csv).toContain('"lifecycle","mean_time_to_resolution_by_review","#1","mean_hours","1.5"')
     expect(csv).toContain('"reinforcement","summary","","feedbackCoverageRate","1"')
     expect(csv).toContain('"reinforcement","summary","","feedbackLearningLabeledTotal","0"')
+    expect(csv).toContain('"reinforcement","summary","","patternRepositoryFindingTotal","0"')
     expect(csv).toContain('"reinforcement","attention_gaps_by_category","Security","gap","-0.38"')
     expect(csv).toContain('"reinforcement","top_accepted_rules","sec.auth.boundary","accepted","1"')
   })
