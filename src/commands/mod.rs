@@ -13,7 +13,9 @@ pub use doctor::doctor_command;
 pub use eval::{eval_command, EvalRunOptions};
 pub use feedback_eval::feedback_eval_command;
 pub use git::{git_command, GitCommands};
-pub use misc::{changelog_command, discuss_command, feedback_command, lsp_check_command};
+pub use misc::{
+    changelog_command, discuss_command, feedback_command, lsp_check_command, DiscussCommandRequest,
+};
 pub use pr::pr_command;
 pub use review::{check_command, compare_command, review_command};
 pub use smart_review::smart_review_command;

@@ -1,3 +1,5 @@
+#[path = "discussion/candidates.rs"]
+mod candidates;
 #[path = "discussion/command.rs"]
 mod command;
 #[path = "discussion/prompt.rs"]
@@ -9,4 +11,4 @@ mod thread;
 #[path = "discussion/types.rs"]
 mod types;
 
-pub use command::discuss_command;
+pub use command::{discuss_command, DiscussCommandRequest};

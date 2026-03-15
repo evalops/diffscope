@@ -280,6 +280,20 @@ enum Commands {
 
         #[arg(long, help = "Interactive discussion mode")]
         interactive: bool,
+
+        #[arg(
+            long,
+            help = "Generate candidate rules and custom_context snippets from the selected discussion thread"
+        )]
+        suggest_candidates: bool,
+
+        #[arg(
+            long,
+            value_enum,
+            default_value_t = DiscussionCandidateFormat::Yaml,
+            help = "Output format for generated discussion candidates"
+        )]
+        candidate_format: DiscussionCandidateFormat,
     },
     #[command(
         about = "Check self-hosted LLM setup: endpoint reachability, models, and recommendations"
@@ -533,6 +547,12 @@ enum DagGraphKind {
     Eval,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DiscussionCandidateFormat {
+    Yaml,
+    Json,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -691,15 +711,24 @@ async fn main() -> Result<()> {
             question,
             thread,
             interactive,
+            suggest_candidates,
+            candidate_format,
         } => {
             commands::discuss_command(
                 config,
-                review,
-                comment_id,
-                comment_index,
-                question,
-                thread,
-                interactive,
+                commands::DiscussCommandRequest {
+                    review_path: review,
+                    comment_id,
+                    comment_index,
+                    question,
+                    thread_path: thread,
+                    interactive,
+                    suggest_candidates,
+                    candidate_output_json: matches!(
+                        candidate_format,
+                        DiscussionCandidateFormat::Json
+                    ),
+                },
             )
             .await?;
         }
