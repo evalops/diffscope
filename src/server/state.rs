@@ -353,6 +353,7 @@ mod tests {
                 review_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
                 last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
                 pr_verification_reuse_caches: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                analytics_recompute_jobs: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
                 api_rate_limits: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             });
             let handle = AppState::save_reviews_async(&state);
@@ -450,6 +451,7 @@ mod tests {
                 review_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
                 last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
                 pr_verification_reuse_caches: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                analytics_recompute_jobs: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
                 api_rate_limits: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             });
 
@@ -508,6 +510,7 @@ mod tests {
                 review_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
                 last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
                 pr_verification_reuse_caches: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                analytics_recompute_jobs: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
                 api_rate_limits: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             });
 
@@ -589,6 +592,7 @@ mod tests {
                 review_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
                 last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
                 pr_verification_reuse_caches: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                analytics_recompute_jobs: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
                 api_rate_limits: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             });
 

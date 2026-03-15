@@ -53,6 +53,14 @@ pub(crate) fn protected_api_routes(state: Arc<AppState>) -> Router<Arc<AppState>
             "/reviews/prune",
             axum::routing::post(super::api::prune_reviews),
         )
+        .route(
+            "/analytics/recompute",
+            axum::routing::post(super::api::start_analytics_recompute),
+        )
+        .route(
+            "/analytics/recompute/{job_id}",
+            axum::routing::get(super::api::get_analytics_recompute_job),
+        )
         .route("/config", axum::routing::put(super::api::update_config))
         .route(
             "/providers/test",
@@ -348,6 +356,7 @@ mod tests {
             review_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
             last_reviewed_shas: Arc::new(RwLock::new(HashMap::new())),
             pr_verification_reuse_caches: Arc::new(RwLock::new(HashMap::new())),
+            analytics_recompute_jobs: Arc::new(RwLock::new(HashMap::new())),
             api_rate_limits: Arc::new(Mutex::new(HashMap::new())),
         })
     }

@@ -160,6 +160,34 @@ pub enum ReviewStatus {
 /// Maximum number of concurrent reviews.
 pub(crate) const MAX_CONCURRENT_REVIEWS: usize = 5;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyticsRecomputeJobState {
+    #[default]
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AnalyticsRecomputeJobStatus {
+    pub job_id: String,
+    pub status: AnalyticsRecomputeJobState,
+    pub started_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(default)]
+    pub reviews_scanned: usize,
+    #[serde(default)]
+    pub reviews_updated: usize,
+    #[serde(default)]
+    pub events_updated: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 pub struct AppState {
     pub config: Arc<RwLock<Config>>,
     pub repo_path: PathBuf,
@@ -177,6 +205,8 @@ pub struct AppState {
     /// Reuses per-finding verifier decisions across PR reruns, keyed by "owner/repo#pr_number".
     pub pr_verification_reuse_caches:
         Arc<RwLock<HashMap<String, crate::review::verification::VerificationReuseCache>>>,
+    /// Tracks background analytics recompute jobs.
+    pub analytics_recompute_jobs: Arc<RwLock<HashMap<String, AnalyticsRecomputeJobStatus>>>,
     /// Tracks per-subject mutation counts for API rate limiting windows.
     pub api_rate_limits: Arc<tokio::sync::Mutex<HashMap<String, (std::time::Instant, u32)>>>,
 }

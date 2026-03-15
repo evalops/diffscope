@@ -1,3 +1,4 @@
+use super::fix_loop_dag::{execute_fix_loop_dag, FixLoopDagSnapshot};
 use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use once_cell::sync::Lazy;
@@ -2685,407 +2686,26 @@ pub(crate) async fn run_gh_pr_fix_loop(
         .and_then(|summary| summary.loop_telemetry.clone())
         .or_else(|| build_fix_loop_telemetry(&timeline));
     let latest_completed_review = timeline.last().cloned();
-
-    if let Some(latest_review) = latest_review.as_ref() {
-        if matches!(
-            latest_review.status,
-            ReviewStatus::Pending | ReviewStatus::Running
-        ) {
-            return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
-                repo: request.repo.clone(),
-                pr_number: request.pr_number,
-                profile,
-                max_iterations,
-                replay_limit,
-                auto_start_review,
-                auto_rerun_stale,
-                completed_reviews,
-                status: FixLoopStatus::ReviewPending,
-                next_action: "wait_for_review".to_string(),
-                status_message: format!(
-                    "Waiting for DiffScope review '{}' to finish before continuing the fix loop.",
-                    latest_review.id
-                ),
-                latest_review_id: Some(latest_review.id.clone()),
-                latest_review_status: Some(latest_review.status.clone()),
-                triggered_review_id: None,
-                current_head_sha,
-                reviewed_head_sha: latest_review.github_head_sha.clone(),
-                latest_review_stale: false,
-                summary: None,
-                previous_summary,
-                improvement_detected: None,
-                loop_telemetry: loop_telemetry.clone(),
-                stalled_iterations,
-                stop_reason: None,
-                replay_candidates: Vec::new(),
-                fix_handoff: None,
-            })));
-        }
-
-        if latest_review.status == ReviewStatus::Failed
-            && latest_completed_review
-                .as_ref()
-                .is_none_or(|completed| latest_review.started_at >= completed.started_at)
-        {
-            return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
-                repo: request.repo.clone(),
-                pr_number: request.pr_number,
-                profile,
-                max_iterations,
-                replay_limit,
-                auto_start_review,
-                auto_rerun_stale,
-                completed_reviews,
-                status: FixLoopStatus::Failed,
-                next_action: "stop".to_string(),
-                status_message: latest_review
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| "The latest DiffScope review failed.".to_string()),
-                latest_review_id: Some(latest_review.id.clone()),
-                latest_review_status: Some(latest_review.status.clone()),
-                triggered_review_id: None,
-                current_head_sha,
-                reviewed_head_sha: latest_review.github_head_sha.clone(),
-                latest_review_stale: false,
-                summary: None,
-                previous_summary,
-                improvement_detected: None,
-                loop_telemetry: loop_telemetry.clone(),
-                stalled_iterations,
-                stop_reason: Some(FixLoopStopReason::ReviewFailed),
-                replay_candidates: Vec::new(),
-                fix_handoff: None,
-            })));
-        }
-    }
-
-    let Some(latest_completed_review) = latest_completed_review else {
-        if auto_start_review {
-            let started = dispatch_pr_review(
-                &state,
-                StartPrReviewRequest {
-                    repo: request.repo.clone(),
-                    pr_number: request.pr_number,
-                    post_results: false,
-                },
-            )
-            .await?;
-
-            return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
-                repo: request.repo.clone(),
-                pr_number: request.pr_number,
-                profile,
-                max_iterations,
-                replay_limit,
-                auto_start_review,
-                auto_rerun_stale,
-                completed_reviews: 0,
-                status: FixLoopStatus::ReviewPending,
-                next_action: "wait_for_review".to_string(),
-                status_message: format!(
-                    "Started DiffScope review '{}' to begin the fix loop.",
-                    started.id
-                ),
-                latest_review_id: Some(started.id.clone()),
-                latest_review_status: Some(started.status),
-                triggered_review_id: Some(started.id),
-                current_head_sha: current_head_sha.clone(),
-                reviewed_head_sha: current_head_sha,
-                latest_review_stale: false,
-                summary: None,
-                previous_summary: None,
-                improvement_detected: None,
-                loop_telemetry: None,
-                stalled_iterations: 0,
-                stop_reason: None,
-                replay_candidates: Vec::new(),
-                fix_handoff: None,
-            })));
-        }
-
-        return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
-            repo: request.repo.clone(),
-            pr_number: request.pr_number,
-            profile,
-            max_iterations,
-            replay_limit,
-            auto_start_review,
-            auto_rerun_stale,
-            completed_reviews: 0,
-            status: FixLoopStatus::NeedsReview,
-            next_action: "start_review".to_string(),
-            status_message:
-                "No completed DiffScope review exists for this PR. Start a review to begin the fix loop."
-                    .to_string(),
-            latest_review_id: None,
-            latest_review_status: None,
-            triggered_review_id: None,
-            current_head_sha,
-            reviewed_head_sha: None,
-            latest_review_stale: false,
-            summary: None,
-            previous_summary: None,
-            improvement_detected: None,
-            loop_telemetry: None,
-            stalled_iterations: 0,
-            stop_reason: None,
-            replay_candidates: Vec::new(),
-            fix_handoff: None,
-        })));
-    };
-
-    let latest_review_stale = crate::server::pr_readiness::is_review_stale(
-        &latest_completed_review,
-        &latest_heads,
-        current_head_sha.as_deref(),
-    );
-    let latest_completed_review = apply_dynamic_review_state(
-        latest_completed_review,
-        &latest_heads,
-        current_head_sha.as_deref(),
-    );
-    let latest_summary = latest_completed_review.summary.clone();
+    let latest_review_stale = latest_completed_review.as_ref().is_some_and(|review| {
+        crate::server::pr_readiness::is_review_stale(
+            review,
+            &latest_heads,
+            current_head_sha.as_deref(),
+        )
+    });
+    let latest_completed_review = latest_completed_review.map(|review| {
+        apply_dynamic_review_state(review, &latest_heads, current_head_sha.as_deref())
+    });
     let improvement_detected = previous_summary
         .as_ref()
-        .zip(latest_summary.as_ref())
+        .zip(
+            latest_completed_review
+                .as_ref()
+                .and_then(|review| review.summary.as_ref()),
+        )
         .map(|(previous, current)| review_summary_improved(current, previous));
 
-    if latest_review_stale {
-        if completed_reviews >= max_iterations {
-            let fix_handoff = Some(build_pr_fix_handoff_response(
-                &request.repo,
-                request.pr_number,
-                Some(&latest_completed_review),
-                false,
-            ));
-            let replay_candidates = build_fix_loop_replay_candidates(
-                &request.repo,
-                request.pr_number,
-                &latest_completed_review,
-                replay_limit,
-            );
-
-            return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
-                repo: request.repo.clone(),
-                pr_number: request.pr_number,
-                profile,
-                max_iterations,
-                replay_limit,
-                auto_start_review,
-                auto_rerun_stale,
-                completed_reviews,
-                status: FixLoopStatus::Exhausted,
-                next_action: "stop".to_string(),
-                status_message:
-                    "Fix loop budget exhausted before DiffScope could review the latest PR head."
-                        .to_string(),
-                latest_review_id: Some(latest_completed_review.id.clone()),
-                latest_review_status: Some(latest_completed_review.status.clone()),
-                triggered_review_id: None,
-                current_head_sha,
-                reviewed_head_sha: latest_completed_review.github_head_sha.clone(),
-                latest_review_stale: true,
-                summary: latest_summary,
-                previous_summary,
-                improvement_detected,
-                loop_telemetry: loop_telemetry.clone(),
-                stalled_iterations,
-                stop_reason: Some(FixLoopStopReason::MaxIterations),
-                replay_candidates,
-                fix_handoff,
-            })));
-        }
-
-        if auto_rerun_stale {
-            let rerun_request =
-                build_rerun_pr_review_request(&latest_completed_review, Some(false))?;
-            let started = dispatch_pr_review(&state, rerun_request).await?;
-
-            return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
-                repo: request.repo.clone(),
-                pr_number: request.pr_number,
-                profile,
-                max_iterations,
-                replay_limit,
-                auto_start_review,
-                auto_rerun_stale,
-                completed_reviews,
-                status: FixLoopStatus::ReviewPending,
-                next_action: "wait_for_review".to_string(),
-                status_message: format!(
-                    "Started DiffScope rerun '{}' for the latest PR head.",
-                    started.id
-                ),
-                latest_review_id: Some(started.id.clone()),
-                latest_review_status: Some(started.status),
-                triggered_review_id: Some(started.id),
-                current_head_sha: current_head_sha.clone(),
-                reviewed_head_sha: current_head_sha,
-                latest_review_stale: false,
-                summary: None,
-                previous_summary,
-                improvement_detected: None,
-                loop_telemetry: loop_telemetry.clone(),
-                stalled_iterations,
-                stop_reason: None,
-                replay_candidates: Vec::new(),
-                fix_handoff: None,
-            })));
-        }
-
-        return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
-            repo: request.repo.clone(),
-            pr_number: request.pr_number,
-            profile,
-            max_iterations,
-            replay_limit,
-            auto_start_review,
-            auto_rerun_stale,
-            completed_reviews,
-            status: FixLoopStatus::NeedsReview,
-            next_action: "rerun_review".to_string(),
-            status_message:
-                "The latest DiffScope review is stale against the current PR head. Rerun the review before applying more fixes."
-                    .to_string(),
-            latest_review_id: Some(latest_completed_review.id.clone()),
-            latest_review_status: Some(latest_completed_review.status.clone()),
-            triggered_review_id: None,
-            current_head_sha,
-            reviewed_head_sha: latest_completed_review.github_head_sha.clone(),
-            latest_review_stale: true,
-            summary: latest_summary,
-            previous_summary,
-            improvement_detected,
-            loop_telemetry: loop_telemetry.clone(),
-            stalled_iterations,
-            stop_reason: None,
-            replay_candidates: Vec::new(),
-            fix_handoff: None,
-        })));
-    }
-
-    let latest_summary_ref = latest_completed_review.summary.as_ref().ok_or_else(|| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Latest completed review is missing a readiness summary.".to_string(),
-        )
-    })?;
-
-    if latest_summary_ref.merge_readiness == MergeReadiness::Ready
-        && latest_summary_ref.open_blockers == 0
-        && latest_summary_ref.open_comments == 0
-    {
-        return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
-            repo: request.repo.clone(),
-            pr_number: request.pr_number,
-            profile,
-            max_iterations,
-            replay_limit,
-            auto_start_review,
-            auto_rerun_stale,
-            completed_reviews,
-            status: FixLoopStatus::Converged,
-            next_action: "stop".to_string(),
-            status_message: "PR is ready and the fix loop converged with no unresolved findings."
-                .to_string(),
-            latest_review_id: Some(latest_completed_review.id.clone()),
-            latest_review_status: Some(latest_completed_review.status.clone()),
-            triggered_review_id: None,
-            current_head_sha,
-            reviewed_head_sha: latest_completed_review.github_head_sha.clone(),
-            latest_review_stale: false,
-            summary: latest_summary.clone(),
-            previous_summary,
-            improvement_detected,
-            loop_telemetry: loop_telemetry.clone(),
-            stalled_iterations,
-            stop_reason: Some(FixLoopStopReason::Ready),
-            replay_candidates: Vec::new(),
-            fix_handoff: None,
-        })));
-    }
-
-    let fix_handoff = Some(build_pr_fix_handoff_response(
-        &request.repo,
-        request.pr_number,
-        Some(&latest_completed_review),
-        false,
-    ));
-    let replay_candidates = build_fix_loop_replay_candidates(
-        &request.repo,
-        request.pr_number,
-        &latest_completed_review,
-        replay_limit,
-    );
-
-    if completed_reviews >= max_iterations {
-        return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
-            repo: request.repo.clone(),
-            pr_number: request.pr_number,
-            profile,
-            max_iterations,
-            replay_limit,
-            auto_start_review,
-            auto_rerun_stale,
-            completed_reviews,
-            status: FixLoopStatus::Exhausted,
-            next_action: "stop".to_string(),
-            status_message: format!(
-                "Fix loop reached its review budget of {} completed review(s) with blockers still open.",
-                max_iterations
-            ),
-            latest_review_id: Some(latest_completed_review.id.clone()),
-            latest_review_status: Some(latest_completed_review.status.clone()),
-            triggered_review_id: None,
-            current_head_sha,
-            reviewed_head_sha: latest_completed_review.github_head_sha.clone(),
-            latest_review_stale: false,
-            summary: latest_summary.clone(),
-            previous_summary,
-            improvement_detected,
-            loop_telemetry: loop_telemetry.clone(),
-            stalled_iterations,
-            stop_reason: Some(FixLoopStopReason::MaxIterations),
-            replay_candidates,
-            fix_handoff,
-        })));
-    }
-
-    if stalled_iterations >= 2 {
-        return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
-            repo: request.repo.clone(),
-            pr_number: request.pr_number,
-            profile,
-            max_iterations,
-            replay_limit,
-            auto_start_review,
-            auto_rerun_stale,
-            completed_reviews,
-            status: FixLoopStatus::Stalled,
-            next_action: "stop".to_string(),
-            status_message:
-                "Fix loop stopped after two consecutive review iterations showed no improvement."
-                    .to_string(),
-            latest_review_id: Some(latest_completed_review.id.clone()),
-            latest_review_status: Some(latest_completed_review.status.clone()),
-            triggered_review_id: None,
-            current_head_sha,
-            reviewed_head_sha: latest_completed_review.github_head_sha.clone(),
-            latest_review_stale: false,
-            summary: latest_summary,
-            previous_summary,
-            improvement_detected,
-            loop_telemetry: loop_telemetry.clone(),
-            stalled_iterations,
-            stop_reason: Some(FixLoopStopReason::NoImprovement),
-            replay_candidates,
-            fix_handoff,
-        })));
-    }
-
-    Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+    let snapshot = FixLoopDagSnapshot {
         repo: request.repo.clone(),
         pr_number: request.pr_number,
         profile,
@@ -3094,25 +2714,18 @@ pub(crate) async fn run_gh_pr_fix_loop(
         auto_start_review,
         auto_rerun_stale,
         completed_reviews,
-        status: FixLoopStatus::NeedsFixes,
-        next_action: "apply_fixes".to_string(),
-        status_message: "Apply the unresolved fixes, push the changes, and call run_fix_until_clean again to assess the new head."
-            .to_string(),
-        latest_review_id: Some(latest_completed_review.id.clone()),
-        latest_review_status: Some(latest_completed_review.status.clone()),
-        triggered_review_id: None,
         current_head_sha,
-        reviewed_head_sha: latest_completed_review.github_head_sha.clone(),
-        latest_review_stale: false,
-        summary: latest_summary,
+        latest_review,
+        latest_completed_review,
+        latest_review_stale,
         previous_summary,
         improvement_detected,
         loop_telemetry,
         stalled_iterations,
-        stop_reason: None,
-        replay_candidates,
-        fix_handoff,
-    })))
+    };
+
+    let response = execute_fix_loop_dag(&state, snapshot).await?;
+    Ok(Json(response))
 }
 
 // === GitHub PR Review ===

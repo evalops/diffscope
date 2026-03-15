@@ -49,7 +49,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 ## 3. Agentic Validation Loops
 
 21. [x] Build a first-class `fix until clean` loop that can run review, apply fixes, rerun review, and stop on convergence.
-22. [ ] Reuse the existing DAG runtime to model iterative review/fix loops as resumable workflow nodes.
+22. [x] Reuse the existing DAG runtime to model iterative review/fix loops as resumable workflow nodes.
 23. [x] Add a max-iteration policy and loop budget controls for autonomous review convergence.
 24. [x] Add "issue replay" prompts that hand unresolved findings back to a coding agent with file-local context.
 25. [x] Add a handoff contract from reviewer findings to fix agents with rule IDs, evidence, and suggested diffs.
@@ -133,7 +133,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 85. [x] Add storage migrations for richer comment lifecycle and reinforcement schemas.
 86. [ ] Add deployment docs for self-hosted review + analytics + trend retention setups.
 87. [ ] Add secret-management guidance and validation for multi-provider enterprise installs.
-88. [ ] Add background jobs for recomputing analytics after schema or scoring changes.
+88. [x] Add background jobs for recomputing analytics after schema or scoring changes.
 89. [x] Add cost dashboards by provider/model/role for review, verification, and eval workloads.
 90. [ ] Add failure forensics bundles for self-hosted users when review or eval jobs degrade.
 

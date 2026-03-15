@@ -28,6 +28,8 @@ use tracing::{info, warn};
 mod admin;
 #[path = "api/analytics.rs"]
 mod analytics;
+#[path = "api/fix_loop_dag.rs"]
+mod fix_loop_dag;
 #[path = "api/gh.rs"]
 mod gh;
 #[path = "api/reviews.rs"]

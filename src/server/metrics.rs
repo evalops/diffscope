@@ -110,6 +110,17 @@ pub async fn get_metrics(State(state): State<Arc<AppState>>) -> impl IntoRespons
         .available_permits()
         .min(MAX_CONCURRENT_REVIEWS) as u64;
     let review_workers_active = review_worker_capacity.saturating_sub(review_workers_available);
+    let analytics_jobs = state.analytics_recompute_jobs.read().await;
+    let analytics_queue_depth = analytics_jobs
+        .values()
+        .filter(|job| {
+            matches!(
+                job.status,
+                super::state::AnalyticsRecomputeJobState::Running
+            )
+        })
+        .count() as u64;
+    drop(analytics_jobs);
     let long_running_job_metrics = [
         LongRunningJobMetrics::new(
             "review",
@@ -117,6 +128,13 @@ pub async fn get_metrics(State(state): State<Arc<AppState>>) -> impl IntoRespons
             review_worker_capacity,
             review_workers_active,
             review_workers_available,
+        ),
+        LongRunningJobMetrics::new(
+            "analytics_recompute",
+            analytics_queue_depth,
+            1,
+            analytics_queue_depth.min(1),
+            1_u64.saturating_sub(analytics_queue_depth.min(1)),
         ),
         LongRunningJobMetrics::new("eval", 0, 0, 0, 0),
     ];
@@ -448,6 +466,7 @@ mod tests {
             review_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_REVIEWS)),
             last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             pr_verification_reuse_caches: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            analytics_recompute_jobs: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             api_rate_limits: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         });
         let _permit = state
@@ -462,6 +481,7 @@ mod tests {
         let text = String::from_utf8(body.to_vec()).unwrap();
 
         assert!(text.contains("diffscope_job_queue_depth{job_type=\"review\"} 2\n"));
+        assert!(text.contains("diffscope_job_queue_depth{job_type=\"analytics_recompute\"} 0\n"));
         assert!(text.contains("diffscope_job_queue_depth{job_type=\"eval\"} 0\n"));
         assert!(text.contains("diffscope_job_worker_capacity{job_type=\"review\"} 5\n"));
         assert!(text.contains("diffscope_job_workers_active{job_type=\"review\"} 1\n"));
