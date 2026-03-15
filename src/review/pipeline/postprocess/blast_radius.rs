@@ -45,7 +45,7 @@ fn format_blast_radius_summary(dependents: &[PathBuf]) -> String {
     let listed = dependents
         .iter()
         .take(MAX_LISTED_DEPENDENTS)
-        .map(|path| path.display().to_string())
+        .map(|path| path.display().to_string().replace('\\', "/"))
         .collect::<Vec<_>>();
     let remaining = dependents.len().saturating_sub(listed.len());
 
