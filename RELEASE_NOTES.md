@@ -1,3 +1,25 @@
+# Release Notes - v0.5.28
+
+📅 **Release Date**: 2026-03-15
+
+## Summary
+
+- **MCP integration:** Expose review and analytics tools over stdio; reusable readiness, fix-loop, and issue replay prompts; fix-agent handoff contract.
+- **Fix-loop orchestration:** Fix-until-clean loop orchestrator with policy profiles, telemetry persistence, resumable loops, and recomputable analytics.
+- **Symbol graph enhancements:** Graph-ranked semantic retrieval, blast radius annotations, trait contract edge traversal, similar implementation lookup, graph freshness metadata, and repository graph caching.
+- **Feedback learning system:** Learn from feedback explanations, preferred comment phrasing, follow-up outcome reinforcement, stale rule decay, dismissed finding tracking, and review history backfill.
+- **Eval framework expansion:** Independent auditor benchmark, single-pass vs agent-loop comparison, lifecycle/readiness/fix-loop/external-context regression fixtures, performance/API design/error-handling/infra fixture packs, feedback coverage and verification health gates.
+- **Server and API:** Rate-limited API auth with audit logs, signed automation review webhooks, fix-loop policy profiles API.
+- **Analytics:** Workload cost breakdown dashboards, pattern repository impact tracking, feedback learning lift measurement, PR review run comparison, context source lift tracking.
+- **Operations:** Self-hosted diagnostics and replay evals, explicit review model routing, artifact pruning and trend history retention.
+- **CI fixes:** Normalize path separators in blast radius summaries, prebuilt cargo-nextest for rustc version compatibility.
+
+## Full Changelog
+
+[v0.5.27...v0.5.28](https://github.com/evalops/diffscope/compare/v0.5.27...v0.5.28)
+
+---
+
 # Release Notes - v0.5.27
 
 📅 **Release Date**: 2026-03-14

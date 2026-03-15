@@ -72,6 +72,7 @@ Create labels once: `priority: high`, `priority: medium`, `priority: low`, `area
 
 ## Shipped (recent)
 
+- **v0.5.28 (2026-03-15):** MCP tools, fix-loop orchestration, symbol graph enhancements, feedback learning, eval expansion, server API auth, analytics dashboards, self-hosted diagnostics.
 - **v0.5.27 (2026-03-14):** Version bump; test coverage (parsing, guidance, triage, config); PRs #44, #45, #46.
 - **Natural language rules (#12):** `review_rules_prose: [ "Rule one", "Rule two" ]` in config; injected as "Custom rules (natural language)" bullets into review guidance. Tests: `test_config_deserialize_review_rules_prose_from_yaml`, `build_review_guidance_includes_prose_rules`.
 - **Triage skip deletion-only (#29):** `triage_skip_deletion_only: true` in config; when true, deletion-only diffs get `SkipDeletionOnly` and skip expensive review. Default false. Tests: `test_triage_deletion_only_with_skip_true_returns_skip_deletion_only`, config deserialize.
