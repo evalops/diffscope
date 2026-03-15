@@ -133,6 +133,13 @@ pub enum CommentOutcome {
     AutoFixed,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CommentOutcomeContext {
+    pub stale_review: bool,
+    pub addressed_by_follow_up: bool,
+    pub auto_fixed: bool,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum MergeReadiness {
     Ready,

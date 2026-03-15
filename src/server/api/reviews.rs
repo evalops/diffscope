@@ -442,11 +442,146 @@ pub(crate) async fn get_review(
 
     let inventory = load_review_inventory(&state).await;
     let latest_by_source = latest_review_head_by_source(&inventory);
-    let stale_review = is_review_stale(&session, &latest_by_source, None);
+    let current_head_sha =
+        if let Some((repo, pr_number)) = parse_pr_diff_source(&session.diff_source) {
+            fetch_current_pr_head_sha_for_review(&state, &repo, pr_number).await
+        } else {
+            None
+        };
+    let stale_review = is_review_stale(&session, &latest_by_source, current_head_sha.as_deref());
+    let addressed_by_follow_up_comment_ids = infer_follow_up_addressed_comment_ids(
+        &state,
+        &session,
+        &inventory,
+        current_head_sha.as_deref(),
+    )
+    .await;
     Ok(Json(build_api_review_session(
-        apply_dynamic_review_state(session, &latest_by_source, None),
+        apply_dynamic_review_state(session, &latest_by_source, current_head_sha.as_deref()),
         stale_review,
+        &addressed_by_follow_up_comment_ids,
     )))
+}
+
+async fn fetch_current_pr_head_sha_for_review(
+    state: &Arc<AppState>,
+    repo: &str,
+    pr_number: u32,
+) -> Option<String> {
+    let token = state
+        .config
+        .read()
+        .await
+        .github
+        .token
+        .clone()
+        .filter(|token| !token.trim().is_empty());
+
+    let token = token?;
+
+    match fetch_github_pr_head_sha(&state.http_client, &token, repo, pr_number).await {
+        Ok(head_sha) => Some(head_sha),
+        Err(error) => {
+            warn!(repo = %repo, pr_number, "Failed to fetch current PR head SHA: {error}");
+            None
+        }
+    }
+}
+
+fn latest_follow_up_head_sha_from_inventory(
+    session: &ReviewSession,
+    inventory: &[ReviewSession],
+) -> Option<String> {
+    inventory
+        .iter()
+        .filter(|candidate| candidate.diff_source == session.diff_source)
+        .filter(|candidate| candidate.started_at > session.started_at)
+        .filter_map(|candidate| {
+            candidate
+                .github_head_sha
+                .as_deref()
+                .filter(|head_sha| Some(*head_sha) != session.github_head_sha.as_deref())
+                .map(|head_sha| (candidate.started_at, head_sha.to_string()))
+        })
+        .max_by_key(|(started_at, _)| *started_at)
+        .map(|(_, head_sha)| head_sha)
+}
+
+async fn infer_follow_up_addressed_comment_ids(
+    state: &Arc<AppState>,
+    session: &ReviewSession,
+    inventory: &[ReviewSession],
+    current_head_sha: Option<&str>,
+) -> std::collections::HashSet<String> {
+    let Some((repo, _)) = parse_pr_diff_source(&session.diff_source) else {
+        return std::collections::HashSet::new();
+    };
+
+    let Some(reviewed_head_sha) = session.github_head_sha.as_deref() else {
+        return std::collections::HashSet::new();
+    };
+
+    if !session
+        .comments
+        .iter()
+        .any(|comment| comment.status == crate::core::comment::CommentStatus::Open)
+    {
+        return std::collections::HashSet::new();
+    }
+
+    let comparison_head_sha = current_head_sha
+        .filter(|head_sha| *head_sha != reviewed_head_sha)
+        .map(str::to_owned)
+        .or_else(|| latest_follow_up_head_sha_from_inventory(session, inventory));
+
+    let Some(comparison_head_sha) = comparison_head_sha else {
+        return std::collections::HashSet::new();
+    };
+
+    let token = state
+        .config
+        .read()
+        .await
+        .github
+        .token
+        .clone()
+        .filter(|token| !token.trim().is_empty());
+    let Some(token) = token else {
+        return std::collections::HashSet::new();
+    };
+
+    let compare_url = format!(
+        "https://api.github.com/repos/{repo}/compare/{reviewed_head_sha}...{comparison_head_sha}",
+    );
+    let diff_content = match github_api_get_diff(&state.http_client, &token, &compare_url).await {
+        Ok(diff_content) => diff_content,
+        Err(error) => {
+            warn!(
+                review_id = %session.id,
+                repo = %repo,
+                reviewed_head_sha,
+                comparison_head_sha,
+                "Failed to fetch follow-up compare diff: {error}"
+            );
+            return std::collections::HashSet::new();
+        }
+    };
+
+    let follow_up_diffs = match crate::core::DiffParser::parse_unified_diff(&diff_content) {
+        Ok(follow_up_diffs) => follow_up_diffs,
+        Err(error) => {
+            warn!(
+                review_id = %session.id,
+                repo = %repo,
+                reviewed_head_sha,
+                comparison_head_sha,
+                "Failed to parse follow-up compare diff: {error}"
+            );
+            return std::collections::HashSet::new();
+        }
+    };
+
+    crate::core::comment::infer_addressed_by_follow_up_comments(&session.comments, &follow_up_diffs)
 }
 
 pub(crate) async fn list_reviews(

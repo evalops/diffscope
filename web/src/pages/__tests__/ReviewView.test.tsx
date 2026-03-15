@@ -356,6 +356,49 @@ describe('ReviewView blocker mode', () => {
     expect(screen.getByRole('heading', { name: 'Informational' })).toBeInTheDocument()
   })
 
+  it('treats open comments with addressed outcomes as fixed in list view', async () => {
+    const user = userEvent.setup()
+    useReviewMock.mockReturnValue({
+      data: makeReview({
+        comments: [
+          makeComment({
+            content: 'Handled in a follow-up commit',
+            outcomes: ['addressed'],
+          }),
+        ],
+        summary: makeSummary({
+          total_comments: 1,
+          by_severity: { Error: 1 },
+          by_category: { Bug: 1 },
+          critical_issues: 1,
+          open_comments: 1,
+          open_by_severity: { Error: 1 },
+          open_blocking_comments: 1,
+          open_informational_comments: 0,
+          resolved_comments: 0,
+          open_blockers: 1,
+          completeness: {
+            total_findings: 1,
+            acknowledged_findings: 0,
+            fixed_findings: 0,
+            stale_findings: 0,
+          },
+        }),
+      }),
+      isLoading: false,
+    })
+
+    render(<ReviewView />)
+
+    await user.click(screen.getByRole('button', { name: 'List' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Fixed' })).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('heading', { name: 'Unresolved' })).not.toBeInTheDocument()
+    expect(screen.getByText('Handled in a follow-up commit')).toBeInTheDocument()
+  })
+
   it.skip('supports keyboard finding workflows for next, thumbs, and resolve actions', async () => {
     const user = userEvent.setup()
     useReviewMock.mockReturnValue({ data: makeReview(), isLoading: false })

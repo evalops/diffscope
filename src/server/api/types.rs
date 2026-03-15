@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::*;
 
 // === Request/Response types ===
@@ -49,8 +51,19 @@ pub(crate) struct ApiComment {
 }
 
 impl ApiComment {
-    pub(crate) fn from_comment(comment: crate::core::comment::Comment, stale_review: bool) -> Self {
-        let outcomes = crate::core::comment::derive_comment_outcomes(&comment, stale_review);
+    pub(crate) fn from_comment(
+        comment: crate::core::comment::Comment,
+        stale_review: bool,
+        addressed_by_follow_up: bool,
+    ) -> Self {
+        let outcomes = crate::core::comment::derive_comment_outcomes(
+            &comment,
+            crate::core::comment::CommentOutcomeContext {
+                stale_review,
+                addressed_by_follow_up,
+                auto_fixed: false,
+            },
+        );
         Self { comment, outcomes }
     }
 }
@@ -83,6 +96,7 @@ pub(crate) struct ApiReviewSession {
 pub(crate) fn build_api_review_session(
     session: crate::server::state::ReviewSession,
     stale_review: bool,
+    addressed_by_follow_up_comment_ids: &HashSet<String>,
 ) -> ApiReviewSession {
     ApiReviewSession {
         id: session.id,
@@ -95,7 +109,11 @@ pub(crate) fn build_api_review_session(
         comments: session
             .comments
             .into_iter()
-            .map(|comment| ApiComment::from_comment(comment, stale_review))
+            .map(|comment| {
+                let addressed_by_follow_up =
+                    addressed_by_follow_up_comment_ids.contains(&comment.id);
+                ApiComment::from_comment(comment, stale_review, addressed_by_follow_up)
+            })
             .collect(),
         summary: session.summary,
         files_reviewed: session.files_reviewed,
@@ -330,6 +348,7 @@ impl ListEventsParams {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::path::PathBuf;
 
     use super::*;
@@ -370,13 +389,15 @@ mod tests {
             progress: None,
         };
 
-        let api_session = build_api_review_session(session, true);
+        let api_session =
+            build_api_review_session(session, true, &HashSet::from(["comment-1".to_string()]));
 
         assert_eq!(api_session.comments.len(), 1);
         assert_eq!(
             api_session.comments[0].outcomes,
             vec![
                 crate::core::comment::CommentOutcome::Accepted,
+                crate::core::comment::CommentOutcome::Addressed,
                 crate::core::comment::CommentOutcome::Stale
             ]
         );
