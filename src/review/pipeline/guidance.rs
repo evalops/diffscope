@@ -98,6 +98,28 @@ mod tests {
     }
 
     #[test]
+    fn build_review_guidance_includes_linked_issue_intent_validation() {
+        let config = config::Config {
+            linked_issue_contexts: vec![config::LinkedIssueContext {
+                provider: config::LinkedIssueProvider::Jira,
+                identifier: "ENG-123".to_string(),
+                title: Some("Keep API status enum aligned".to_string()),
+                status: Some("In Progress".to_string()),
+                url: None,
+                summary: "The API must keep the documented pending/shipped/cancelled states."
+                    .to_string(),
+            }],
+            ..config::Config::default()
+        };
+        let guidance = build_review_guidance(&config, None).unwrap();
+        assert!(guidance.contains("Linked issue intent validation"));
+        assert!(guidance.contains("acceptance criteria"));
+        assert!(guidance.contains("design.ticket.intent-mismatch"));
+        assert!(guidance.contains("intent-mismatch"));
+        assert!(guidance.contains("Jira ENG-123: Keep API status enum aligned"));
+    }
+
+    #[test]
     fn build_review_guidance_includes_prose_rules() {
         // #12: natural language custom rules — injected as bullets into guidance
         let config = config::Config {

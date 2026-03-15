@@ -10,6 +10,7 @@ pub(super) fn collect_guidance_sections(
     push_section(&mut sections, review_profile_section(config));
     push_section(&mut sections, global_instructions_section(config));
     push_section(&mut sections, prose_rules_section(config));
+    push_section(&mut sections, linked_issue_validation_section(config));
     push_section(&mut sections, path_instructions_section(path_config));
     push_section(&mut sections, output_language_section(config));
     sections.push(fix_suggestion_section(config));
@@ -84,6 +85,44 @@ fn prose_rules_section(config: &config::Config) -> Option<String> {
             .join("\n");
         Some(format!("Custom rules (natural language):\n{bullets}"))
     }
+}
+
+fn linked_issue_validation_section(config: &config::Config) -> Option<String> {
+    if config.linked_issue_contexts.is_empty() {
+        return None;
+    }
+
+    let issues = config
+        .linked_issue_contexts
+        .iter()
+        .map(|issue| {
+            let provider = match issue.provider {
+                config::LinkedIssueProvider::Jira => "Jira",
+                config::LinkedIssueProvider::Linear => "Linear",
+            };
+            let mut label = format!("- {provider} {}", issue.identifier);
+            if let Some(title) = issue
+                .title
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                label.push_str(&format!(": {title}"));
+            }
+            if let Some(status) = issue
+                .status
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                label.push_str(&format!(" ({status})"));
+            }
+            label
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Some(format!(
+        "Linked issue intent validation:\n- Explicitly compare the diff against each linked issue's acceptance criteria, requirements, and promised scope before deciding there are no problems.\n- Report a finding when the change contradicts, omits, or weakens required ticket behavior, or when it introduces behavior that does not match the linked issue intent.\n- For those findings, use rule_id `design.ticket.intent-mismatch` and include the tag `intent-mismatch`.\nLinked issues in scope:\n{issues}"
+    ))
 }
 
 fn path_instructions_section(path_config: Option<&config::PathConfig>) -> Option<String> {

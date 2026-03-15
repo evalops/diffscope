@@ -74,7 +74,7 @@ pub fn inject_linked_issue_context(
             lines.push(format!("URL: {url}"));
         }
         if !issue.summary.trim().is_empty() {
-            lines.push("Summary:".to_string());
+            lines.push("Acceptance criteria / ticket context:".to_string());
             lines.push(issue.summary.trim().to_string());
         }
 
@@ -243,6 +243,9 @@ mod tests {
             context_chunks[1].provenance,
             Some(core::ContextProvenance::linear_issue_context("OPS-9"))
         );
+        assert!(context_chunks[0]
+            .content
+            .contains("Acceptance criteria / ticket context:"));
         assert!(context_chunks[1]
             .content
             .contains("Deployment manifests should use the new secret name."));
