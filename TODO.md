@@ -126,7 +126,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 
 ## 9. Infra, Self-Hosting, and Enterprise Operations
 
-81. [ ] Split `src/server/api.rs` by domain so the growing platform API stays maintainable.
+81. [x] Split `src/server/api.rs` by domain so the growing platform API stays maintainable.
 82. [ ] Split `src/server/state.rs` into session lifecycle, persistence, progress, and GitHub coordination modules.
 83. [x] Add queue depth and worker saturation metrics for long-running review and eval jobs.
 84. [ ] Add retention policies for review artifacts, eval artifacts, and trend histories.
