@@ -15,6 +15,12 @@ pub(in super::super) fn print_feedback_eval_report(report: &FeedbackEvalReport) 
         report.acceptance_rate * 100.0
     );
     println!(
+        "Feedback coverage: {}/{} ({:.0}%)",
+        report.labeled_comments,
+        report.total_comments_seen,
+        report.feedback_coverage_rate * 100.0
+    );
+    println!(
         "Vague comments: {} total | {} accepted | {} rejected | {:.0}% acceptance",
         report.vague_comments.total,
         report.vague_comments.accepted,
@@ -134,6 +140,10 @@ pub(in super::super) fn print_feedback_eval_report(report: &FeedbackEvalReport) 
             "Vague rejections: {} example(s) reinforce the anti-vague filter",
             report.vague_rejections.len()
         );
+    }
+
+    for failure in &report.threshold_failures {
+        println!("Threshold failure: {failure}");
     }
 }
 

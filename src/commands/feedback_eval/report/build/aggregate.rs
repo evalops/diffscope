@@ -40,6 +40,7 @@ pub(in super::super::super) fn build_feedback_eval_report(
         accepted: overview.accepted,
         rejected: overview.rejected,
         acceptance_rate: ratio(overview.accepted, loaded.comments.len()),
+        feedback_coverage_rate: ratio(loaded.comments.len(), loaded.total_comments_seen),
         confidence_threshold,
         vague_comments: overview.vague_bucket,
         confidence_metrics: build_threshold_metrics(&loaded.comments, confidence_threshold),
@@ -59,6 +60,7 @@ pub(in super::super::super) fn build_feedback_eval_report(
         ),
         showcase_candidates: build_showcase_candidates(&loaded.comments, confidence_threshold),
         vague_rejections: build_vague_rejections(&loaded.comments),
+        threshold_failures: Vec::new(),
     }
 }
 
@@ -131,6 +133,7 @@ mod tests {
         assert_eq!(report.labeled_comments, 3);
         assert_eq!(report.accepted, 2);
         assert_eq!(report.rejected, 1);
+        assert!((report.feedback_coverage_rate - 1.0).abs() < f32::EPSILON);
         assert_eq!(report.vague_comments.total, 1);
         assert_eq!(report.vague_comments.rejected, 1);
         assert_eq!(report.by_rule.len(), 2);

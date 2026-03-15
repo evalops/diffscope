@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
 
+use super::super::metrics::build_lifecycle_accuracy;
 use super::super::EvalReport;
 
 pub(in super::super) fn print_eval_report(report: &EvalReport) {
@@ -304,6 +305,15 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
             verification_health.fail_open_warning_count,
             verification_health.parse_failure_count,
             verification_health.request_failure_count
+        );
+    }
+
+    if let Some(accuracy) = build_lifecycle_accuracy(&report.results) {
+        println!(
+            "Lifecycle accuracy: {:.0}% ({}/{})",
+            accuracy.rate * 100.0,
+            accuracy.passed,
+            accuracy.total
         );
     }
 

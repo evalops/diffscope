@@ -362,6 +362,12 @@ enum Commands {
 
         #[arg(
             long,
+            help = "Minimum required pass rate for lifecycle-focused eval fixtures (0.0-1.0)"
+        )]
+        min_lifecycle_accuracy: Option<f32>,
+
+        #[arg(
+            long,
             value_delimiter = ',',
             help = "Per-rule minimum F1 thresholds as rule_id=value (repeatable)"
         )]
@@ -480,6 +486,12 @@ enum Commands {
             help = "Optional eval JSON report to correlate with feedback outcomes"
         )]
         eval_report: Option<PathBuf>,
+
+        #[arg(
+            long,
+            help = "Minimum required labeled-feedback coverage (labeled comments / total comments seen, 0.0-1.0)"
+        )]
+        min_feedback_coverage: Option<f32>,
     },
     #[command(about = "Print pipeline DAG contracts for orchestration and planning")]
     Dag {
@@ -763,6 +775,7 @@ async fn main() -> Result<()> {
             min_micro_f1,
             min_macro_f1,
             min_verification_health,
+            min_lifecycle_accuracy,
             min_rule_f1,
             max_rule_f1_drop,
             matrix_model,
@@ -788,6 +801,7 @@ async fn main() -> Result<()> {
                 min_micro_f1,
                 min_macro_f1,
                 min_verification_health,
+                min_lifecycle_accuracy,
                 min_rule_f1,
                 max_rule_f1_drop,
                 matrix_models: matrix_model,
@@ -812,6 +826,7 @@ async fn main() -> Result<()> {
             trend_file,
             confidence_threshold,
             eval_report,
+            min_feedback_coverage,
         } => {
             commands::feedback_eval_command(
                 input,
@@ -820,6 +835,7 @@ async fn main() -> Result<()> {
                 config.retention.trend_history_max_entries,
                 confidence_threshold,
                 eval_report,
+                min_feedback_coverage,
             )
             .await?;
         }

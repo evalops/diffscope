@@ -3,6 +3,7 @@ use super::super::EvalThresholdOptions;
 use super::drops::check_drop_thresholds;
 use super::minimums::check_minimum_thresholds;
 use super::rules::build_rule_f1_map;
+use crate::commands::eval::metrics::build_lifecycle_accuracy;
 
 pub(in super::super::super) fn evaluate_eval_thresholds(
     current: &EvalReport,
@@ -31,6 +32,16 @@ pub(in super::super::super) fn evaluate_eval_thresholds(
                 failures.push(format!(
                     "verification health {:.3} fell below minimum {:.3} ({}/{})",
                     health.verified_pct, threshold, health.verified_checks, health.total_checks
+                ));
+            }
+        }
+    }
+    if let Some(threshold) = options.min_lifecycle_accuracy {
+        if let Some(accuracy) = build_lifecycle_accuracy(&current.results) {
+            if accuracy.total > 0 && accuracy.rate < threshold {
+                failures.push(format!(
+                    "lifecycle accuracy {:.3} fell below minimum {:.3} ({}/{})",
+                    accuracy.rate, threshold, accuracy.passed, accuracy.total
                 ));
             }
         }
@@ -90,6 +101,7 @@ mod tests {
             min_micro_f1: None,
             min_macro_f1: None,
             min_verification_health: None,
+            min_lifecycle_accuracy: None,
             min_rule_f1: vec![],
             max_rule_f1_drop: vec![],
         };
@@ -172,6 +184,7 @@ mod tests {
             min_micro_f1: None,
             min_macro_f1: None,
             min_verification_health: None,
+            min_lifecycle_accuracy: None,
             min_rule_f1: vec![],
             max_rule_f1_drop: vec![EvalRuleThreshold {
                 rule_id: "sec.sql.injection".to_string(),
@@ -233,6 +246,7 @@ mod tests {
             min_micro_f1: None,
             min_macro_f1: None,
             min_verification_health: None,
+            min_lifecycle_accuracy: None,
             min_rule_f1: vec![],
             max_rule_f1_drop: vec![],
         };
@@ -279,6 +293,7 @@ mod tests {
             min_micro_f1: None,
             min_macro_f1: None,
             min_verification_health: Some(0.8),
+            min_lifecycle_accuracy: None,
             min_rule_f1: vec![],
             max_rule_f1_drop: vec![],
         };
@@ -289,5 +304,77 @@ mod tests {
         assert!(failures[0].contains("verification health 0.700"));
         assert!(failures[0].contains("minimum 0.800"));
         assert!(failures[0].contains("7/10"));
+    }
+
+    #[test]
+    fn test_evaluate_eval_thresholds_checks_lifecycle_accuracy() {
+        let current = EvalReport {
+            run: Default::default(),
+            fixtures_total: 2,
+            fixtures_passed: 1,
+            fixtures_failed: 1,
+            rule_metrics: vec![],
+            rule_summary: Some(EvalRuleScoreSummary::default()),
+            benchmark_summary: None,
+            suite_results: vec![],
+            benchmark_by_category: Default::default(),
+            benchmark_by_language: Default::default(),
+            benchmark_by_difficulty: Default::default(),
+            suite_comparisons: vec![],
+            category_comparisons: vec![],
+            language_comparisons: vec![],
+            verification_health: None,
+            warnings: vec![],
+            threshold_failures: vec![],
+            results: vec![
+                crate::commands::eval::EvalFixtureResult {
+                    passed: true,
+                    rule_metrics: vec![EvalRuleMetrics {
+                        rule_id: "bug.lifecycle.context-only-addressed".to_string(),
+                        expected: 1,
+                        predicted: 1,
+                        true_positives: 1,
+                        false_positives: 0,
+                        false_negatives: 0,
+                        precision: 1.0,
+                        recall: 1.0,
+                        f1: 1.0,
+                    }],
+                    ..Default::default()
+                },
+                crate::commands::eval::EvalFixtureResult {
+                    passed: false,
+                    rule_metrics: vec![EvalRuleMetrics {
+                        rule_id: "bug.lifecycle.api-drops-followup-addressed".to_string(),
+                        expected: 1,
+                        predicted: 0,
+                        true_positives: 0,
+                        false_positives: 0,
+                        false_negatives: 1,
+                        precision: 0.0,
+                        recall: 0.0,
+                        f1: 0.0,
+                    }],
+                    ..Default::default()
+                },
+            ],
+        };
+        let options = EvalThresholdOptions {
+            max_micro_f1_drop: None,
+            max_suite_f1_drop: None,
+            max_category_f1_drop: None,
+            max_language_f1_drop: None,
+            min_micro_f1: None,
+            min_macro_f1: None,
+            min_verification_health: None,
+            min_lifecycle_accuracy: Some(0.8),
+            min_rule_f1: vec![],
+            max_rule_f1_drop: vec![],
+        };
+
+        let failures = evaluate_eval_thresholds(&current, None, &options);
+
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("lifecycle accuracy 0.500"));
     }
 }

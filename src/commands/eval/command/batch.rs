@@ -321,6 +321,7 @@ mod tests {
             min_micro_f1: None,
             min_macro_f1: None,
             min_verification_health: None,
+            min_lifecycle_accuracy: None,
             min_rule_f1: vec![],
             max_rule_f1_drop: vec![],
             matrix_models: vec![],

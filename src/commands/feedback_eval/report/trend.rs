@@ -129,6 +129,7 @@ mod tests {
             accepted: 3,
             rejected: 5,
             acceptance_rate: 0.375,
+            feedback_coverage_rate: 8.0 / 12.0,
             confidence_threshold: 0.75,
             vague_comments: FeedbackEvalBucket {
                 name: "vague".to_string(),
@@ -185,6 +186,7 @@ mod tests {
             }),
             showcase_candidates: vec![],
             vague_rejections: vec![],
+            threshold_failures: vec![],
         }
     }
 

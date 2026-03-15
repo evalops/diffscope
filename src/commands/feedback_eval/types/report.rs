@@ -210,6 +210,8 @@ pub(in super::super) struct FeedbackEvalReport {
     #[serde(default)]
     pub(in super::super) acceptance_rate: f32,
     #[serde(default)]
+    pub(in super::super) feedback_coverage_rate: f32,
+    #[serde(default)]
     pub(in super::super) confidence_threshold: f32,
     pub(in super::super) vague_comments: FeedbackEvalBucket,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -234,4 +236,6 @@ pub(in super::super) struct FeedbackEvalReport {
     pub(in super::super) showcase_candidates: Vec<FeedbackEvalExample>,
     #[serde(default)]
     pub(in super::super) vague_rejections: Vec<FeedbackEvalExample>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in super::super) threshold_failures: Vec<String>,
 }

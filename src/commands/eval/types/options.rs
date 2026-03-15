@@ -10,6 +10,7 @@ pub struct EvalRunOptions {
     pub min_micro_f1: Option<f32>,
     pub min_macro_f1: Option<f32>,
     pub min_verification_health: Option<f32>,
+    pub min_lifecycle_accuracy: Option<f32>,
     pub min_rule_f1: Vec<String>,
     pub max_rule_f1_drop: Vec<String>,
     pub matrix_models: Vec<String>,

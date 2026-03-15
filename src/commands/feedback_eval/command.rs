@@ -16,6 +16,7 @@ pub async fn feedback_eval_command(
     trend_max_entries: usize,
     confidence_threshold: f32,
     eval_report_path: Option<PathBuf>,
+    min_feedback_coverage: Option<f32>,
 ) -> Result<()> {
     let loaded = load_feedback_eval_or_bail(&input_path).await?;
     let eval_report = match eval_report_path.as_deref() {
@@ -29,6 +30,7 @@ pub async fn feedback_eval_command(
         trend_max_entries,
         confidence_threshold,
         eval_report.as_ref(),
+        min_feedback_coverage,
     )
     .await
 }

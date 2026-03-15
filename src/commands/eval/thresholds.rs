@@ -12,6 +12,7 @@ pub(super) struct EvalThresholdOptions {
     pub(super) min_micro_f1: Option<f32>,
     pub(super) min_macro_f1: Option<f32>,
     pub(super) min_verification_health: Option<f32>,
+    pub(super) min_lifecycle_accuracy: Option<f32>,
     pub(super) min_rule_f1: Vec<EvalRuleThreshold>,
     pub(super) max_rule_f1_drop: Vec<EvalRuleThreshold>,
 }
