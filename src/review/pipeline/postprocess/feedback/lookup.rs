@@ -6,6 +6,8 @@ use super::super::super::super::feedback::derive_file_patterns;
 pub(super) struct SemanticFeedbackObservations {
     pub accepted: usize,
     pub rejected: usize,
+    pub weighted_accepted: f32,
+    pub weighted_rejected: f32,
 }
 
 impl SemanticFeedbackObservations {
@@ -39,5 +41,15 @@ pub(super) fn lookup_semantic_feedback_observations(
             .iter()
             .filter(|(example, _)| !example.accepted)
             .count(),
+        weighted_accepted: matches
+            .iter()
+            .filter(|(example, _)| example.accepted)
+            .map(|(example, _)| example.weight.max(0.0))
+            .sum(),
+        weighted_rejected: matches
+            .iter()
+            .filter(|(example, _)| !example.accepted)
+            .map(|(example, _)| example.weight.max(0.0))
+            .sum(),
     }
 }

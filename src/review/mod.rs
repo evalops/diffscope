@@ -15,9 +15,11 @@ pub use context_helpers::{
 #[allow(unused_imports)]
 pub use feedback::{
     apply_comment_dismissal_signal, apply_comment_feedback_signal,
-    apply_comment_resolution_outcome_signal, derive_file_patterns, load_feedback_store,
-    load_feedback_store_from_path, record_semantic_feedback_examples, save_feedback_store,
-    CommentResolutionOutcome, FeedbackExplanation, FeedbackStore,
+    apply_comment_feedback_signal_with_weight, apply_comment_resolution_outcome_signal,
+    derive_file_patterns, load_feedback_store, load_feedback_store_from_path,
+    record_semantic_feedback_examples, record_semantic_feedback_examples_with_weight,
+    save_feedback_store, CommentResolutionOutcome, FeedbackActorMetadata, FeedbackExplanation,
+    FeedbackStore,
 };
 #[allow(unused_imports)]
 pub use filters::apply_review_filters;

@@ -1230,6 +1230,128 @@ pub(crate) async fn get_github_username(
         .ok_or_else(|| "No login field in user response".to_string())
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FeedbackTrustContext {
+    pub github_login: Option<String>,
+    pub github_role: Option<String>,
+    pub trust_weight: f32,
+}
+
+impl Default for FeedbackTrustContext {
+    fn default() -> Self {
+        Self {
+            github_login: None,
+            github_role: None,
+            trust_weight: 1.0,
+        }
+    }
+}
+
+pub(crate) async fn resolve_feedback_trust_context(
+    client: &reqwest::Client,
+    config: &crate::config::Config,
+    repo: Option<&str>,
+    github_login: Option<&str>,
+    github_role: Option<&str>,
+) -> FeedbackTrustContext {
+    let explicit_role = normalize_feedback_role(github_role);
+    let explicit_login = normalize_feedback_login(github_login);
+
+    if let Some(role) = explicit_role {
+        return FeedbackTrustContext {
+            github_login: explicit_login,
+            trust_weight: feedback_trust_weight(Some(role.as_str())),
+            github_role: Some(role),
+        };
+    }
+
+    let Some(token) = config
+        .github
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return FeedbackTrustContext {
+            github_login: explicit_login,
+            ..FeedbackTrustContext::default()
+        };
+    };
+
+    let github_login = match explicit_login {
+        Some(login) => Some(login),
+        None => get_github_username(client, token).await.ok(),
+    };
+
+    let github_role = match (repo, github_login.as_deref()) {
+        (Some(repo), Some(login)) => get_repo_permission(client, token, repo, login)
+            .await
+            .ok()
+            .flatten(),
+        _ => None,
+    };
+
+    FeedbackTrustContext {
+        trust_weight: feedback_trust_weight(github_role.as_deref()),
+        github_login,
+        github_role,
+    }
+}
+
+async fn get_repo_permission(
+    client: &reqwest::Client,
+    token: &str,
+    repo: &str,
+    github_login: &str,
+) -> Result<Option<String>, String> {
+    let url = format!(
+        "https://api.github.com/repos/{repo}/collaborators/{}/permission",
+        urlencoded(github_login)
+    );
+    let resp = github_api_get(client, token, &url).await?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !resp.status().is_success() {
+        return Err(format!(
+            "Failed to resolve GitHub collaborator permission: {}",
+            resp.status()
+        ));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|error| format!("Failed to parse collaborator permission: {error}"))?;
+    Ok(body
+        .get("permission")
+        .or_else(|| body.get("role_name"))
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_ascii_lowercase()))
+}
+
+fn normalize_feedback_login(github_login: Option<&str>) -> Option<String> {
+    github_login
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn normalize_feedback_role(github_role: Option<&str>) -> Option<String> {
+    github_role
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+}
+
+fn feedback_trust_weight(github_role: Option<&str>) -> f32 {
+    match github_role.unwrap_or_default() {
+        "owner" | "admin" | "maintain" => 2.0,
+        "write" | "push" => 1.5,
+        "triage" => 1.25,
+        _ => 1.0,
+    }
+}
+
 // === GitHub PRs ===
 
 #[derive(Deserialize)]
@@ -4239,5 +4361,32 @@ Preserve replay checkpoints.
         assert!(context
             .summary
             .contains("Use the queue worker for retries."));
+    }
+
+    #[test]
+    fn feedback_trust_weight_maps_roles_to_expected_weights() {
+        assert_eq!(feedback_trust_weight(Some("admin")), 2.0);
+        assert_eq!(feedback_trust_weight(Some("maintain")), 2.0);
+        assert_eq!(feedback_trust_weight(Some("write")), 1.5);
+        assert_eq!(feedback_trust_weight(Some("push")), 1.5);
+        assert_eq!(feedback_trust_weight(Some("triage")), 1.25);
+        assert_eq!(feedback_trust_weight(Some("read")), 1.0);
+        assert_eq!(feedback_trust_weight(None), 1.0);
+    }
+
+    #[tokio::test]
+    async fn resolve_feedback_trust_context_prefers_explicit_metadata() {
+        let context = resolve_feedback_trust_context(
+            &reqwest::Client::new(),
+            &crate::config::Config::default(),
+            Some("owner/repo"),
+            Some(" maintainer "),
+            Some(" Write "),
+        )
+        .await;
+
+        assert_eq!(context.github_login.as_deref(), Some("maintainer"));
+        assert_eq!(context.github_role.as_deref(), Some("write"));
+        assert_eq!(context.trust_weight, 1.5);
     }
 }

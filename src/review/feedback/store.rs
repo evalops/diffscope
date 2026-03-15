@@ -8,6 +8,28 @@ const RULE_REINFORCEMENT_DECAY_HALF_LIFE_SECS: f64 = 30.0 * 24.0 * 60.0 * 60.0;
 const MAX_FEEDBACK_EXPLANATIONS: usize = 512;
 const MAX_FEEDBACK_EXPLANATION_CHARS: usize = 600;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FeedbackActorMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_login: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_role: Option<String>,
+    #[serde(default = "default_feedback_weight")]
+    pub trust_weight: f32,
+    pub updated_at: String,
+}
+
+impl Default for FeedbackActorMetadata {
+    fn default() -> Self {
+        Self {
+            github_login: None,
+            github_role: None,
+            trust_weight: default_feedback_weight(),
+            updated_at: String::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FeedbackExplanation {
     pub review_id: String,
@@ -27,22 +49,34 @@ pub struct FeedbackTypeStats {
     #[serde(default)]
     pub accepted: usize,
     #[serde(default)]
+    pub accepted_weight: f32,
+    #[serde(default)]
     pub rejected: usize,
+    #[serde(default)]
+    pub rejected_weight: f32,
     #[serde(default)]
     pub dismissed: usize,
     #[serde(default)]
+    pub dismissed_weight: f32,
+    #[serde(default)]
     pub addressed: usize,
     #[serde(default)]
+    pub addressed_weight: f32,
+    #[serde(default)]
     pub not_addressed: usize,
+    #[serde(default)]
+    pub not_addressed_weight: f32,
 }
 
 impl FeedbackTypeStats {
-    pub fn positive_total(&self) -> usize {
-        self.accepted + self.addressed
+    pub fn weighted_positive_total(&self) -> f32 {
+        weighted_total_or_raw(self.accepted_weight, self.accepted)
+            + weighted_total_or_raw(self.addressed_weight, self.addressed)
     }
 
-    pub fn negative_total(&self) -> usize {
-        self.rejected + self.not_addressed
+    pub fn weighted_negative_total(&self) -> f32 {
+        weighted_total_or_raw(self.rejected_weight, self.rejected)
+            + weighted_total_or_raw(self.not_addressed_weight, self.not_addressed)
     }
 }
 
@@ -67,12 +101,12 @@ impl DecayedFeedbackStats {
         (self.positive * decay, self.negative * decay)
     }
 
-    fn record_signal(&mut self, positive_signal: bool, timestamp: i64) {
+    fn record_signal(&mut self, positive_signal: bool, weight: f32, timestamp: i64) {
         let (mut positive, mut negative) = self.counts_at(timestamp);
         if positive_signal {
-            positive += 1.0;
+            positive += normalize_feedback_weight(weight);
         } else {
-            negative += 1.0;
+            negative += normalize_feedback_weight(weight);
         }
 
         self.positive = positive;
@@ -87,13 +121,23 @@ pub struct FeedbackPatternStats {
     #[serde(default)]
     pub accepted: usize,
     #[serde(default)]
+    pub accepted_weight: f32,
+    #[serde(default)]
     pub rejected: usize,
+    #[serde(default)]
+    pub rejected_weight: f32,
     #[serde(default)]
     pub dismissed: usize,
     #[serde(default)]
+    pub dismissed_weight: f32,
+    #[serde(default)]
     pub addressed: usize,
     #[serde(default)]
+    pub addressed_weight: f32,
+    #[serde(default)]
     pub not_addressed: usize,
+    #[serde(default)]
+    pub not_addressed_weight: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decayed: Option<DecayedFeedbackStats>,
 }
@@ -119,6 +163,28 @@ impl FeedbackPatternStats {
         self.rejected + self.not_addressed
     }
 
+    pub fn weighted_acceptance_rate(&self) -> f32 {
+        let total = self.weighted_total();
+        if total <= f32::EPSILON {
+            return 0.5;
+        }
+        self.weighted_positive_total() / total
+    }
+
+    pub fn weighted_total(&self) -> f32 {
+        self.weighted_positive_total() + self.weighted_negative_total()
+    }
+
+    pub fn weighted_positive_total(&self) -> f32 {
+        weighted_total_or_raw(self.accepted_weight, self.accepted)
+            + weighted_total_or_raw(self.addressed_weight, self.addressed)
+    }
+
+    pub fn weighted_negative_total(&self) -> f32 {
+        weighted_total_or_raw(self.rejected_weight, self.rejected)
+            + weighted_total_or_raw(self.not_addressed_weight, self.not_addressed)
+    }
+
     pub fn decayed_acceptance_rate_at(&self, timestamp: i64) -> Option<f32> {
         let (positive, negative) = self.decayed_counts_at(timestamp)?;
         let total = positive + negative;
@@ -133,10 +199,10 @@ impl FeedbackPatternStats {
         Some(positive + negative)
     }
 
-    pub fn record_decayed_signal(&mut self, positive_signal: bool, timestamp: i64) {
+    pub fn record_decayed_signal(&mut self, positive_signal: bool, weight: f32, timestamp: i64) {
         self.decayed
             .get_or_insert_with(DecayedFeedbackStats::default)
-            .record_signal(positive_signal, timestamp);
+            .record_signal(positive_signal, weight, timestamp);
     }
 
     fn decayed_counts_at(&self, timestamp: i64) -> Option<(f32, f32)> {
@@ -175,6 +241,8 @@ pub struct FeedbackStore {
     pub by_rule_file_pattern: HashMap<String, FeedbackPatternStats>,
     #[serde(default)]
     pub explanations_by_comment: HashMap<String, FeedbackExplanation>,
+    #[serde(default)]
+    pub feedback_actor_by_comment: HashMap<String, FeedbackActorMetadata>,
 }
 
 impl FeedbackStore {
@@ -197,8 +265,21 @@ impl FeedbackStore {
     ) where
         S: AsRef<str>,
     {
+        self.record_feedback_patterns_with_weight(category, file_patterns, accepted, 1.0);
+    }
+
+    /// Record a weighted feedback event across one or more file-pattern buckets.
+    pub fn record_feedback_patterns_with_weight<S>(
+        &mut self,
+        category: &str,
+        file_patterns: &[S],
+        accepted: bool,
+        weight: f32,
+    ) where
+        S: AsRef<str>,
+    {
         let cat_stats = self.by_category.entry(category.to_string()).or_default();
-        update_pattern_stats(cat_stats, accepted);
+        update_pattern_stats(cat_stats, accepted, weight);
 
         let mut unique_patterns = HashSet::new();
         for pattern in file_patterns {
@@ -211,11 +292,11 @@ impl FeedbackStore {
 
         for pattern in unique_patterns {
             let fp_stats = self.by_file_pattern.entry(pattern.clone()).or_default();
-            update_pattern_stats(fp_stats, accepted);
+            update_pattern_stats(fp_stats, accepted, weight);
 
             let composite = format!("{category}|{pattern}");
             let comp_stats = self.by_category_file_pattern.entry(composite).or_default();
-            update_pattern_stats(comp_stats, accepted);
+            update_pattern_stats(comp_stats, accepted, weight);
         }
     }
 
@@ -246,19 +327,38 @@ impl FeedbackStore {
     ) where
         S: AsRef<str>,
     {
+        self.record_rule_feedback_patterns_at_weighted(
+            rule_id,
+            file_patterns,
+            accepted,
+            1.0,
+            timestamp,
+        );
+    }
+
+    pub fn record_rule_feedback_patterns_at_weighted<S>(
+        &mut self,
+        rule_id: &str,
+        file_patterns: &[S],
+        accepted: bool,
+        weight: f32,
+        timestamp: i64,
+    ) where
+        S: AsRef<str>,
+    {
         let Some(rule_id) = normalize_feedback_key(rule_id) else {
             return;
         };
 
         let rule_stats = self.by_rule.entry(rule_id.clone()).or_default();
-        update_pattern_stats(rule_stats, accepted);
-        rule_stats.record_decayed_signal(accepted, timestamp);
+        update_pattern_stats(rule_stats, accepted, weight);
+        rule_stats.record_decayed_signal(accepted, weight, timestamp);
 
         for pattern in collect_unique_patterns(file_patterns) {
             let composite = format!("{}|{}", rule_id, pattern);
             let comp_stats = self.by_rule_file_pattern.entry(composite).or_default();
-            update_pattern_stats(comp_stats, accepted);
-            comp_stats.record_decayed_signal(accepted, timestamp);
+            update_pattern_stats(comp_stats, accepted, weight);
+            comp_stats.record_decayed_signal(accepted, weight, timestamp);
         }
     }
 
@@ -268,15 +368,15 @@ impl FeedbackStore {
         S: AsRef<str>,
     {
         let cat_stats = self.by_category.entry(category.to_string()).or_default();
-        update_pattern_dismissed(cat_stats);
+        update_pattern_dismissed(cat_stats, 1.0);
 
         for pattern in collect_unique_patterns(file_patterns) {
             let fp_stats = self.by_file_pattern.entry(pattern.clone()).or_default();
-            update_pattern_dismissed(fp_stats);
+            update_pattern_dismissed(fp_stats, 1.0);
 
             let composite = format!("{category}|{pattern}");
             let comp_stats = self.by_category_file_pattern.entry(composite).or_default();
-            update_pattern_dismissed(comp_stats);
+            update_pattern_dismissed(comp_stats, 1.0);
         }
     }
 
@@ -289,16 +389,28 @@ impl FeedbackStore {
     ) where
         S: AsRef<str>,
     {
+        self.record_outcome_patterns_with_weight(category, file_patterns, addressed, 1.0);
+    }
+
+    pub fn record_outcome_patterns_with_weight<S>(
+        &mut self,
+        category: &str,
+        file_patterns: &[S],
+        addressed: bool,
+        weight: f32,
+    ) where
+        S: AsRef<str>,
+    {
         let cat_stats = self.by_category.entry(category.to_string()).or_default();
-        update_pattern_outcome(cat_stats, addressed);
+        update_pattern_outcome(cat_stats, addressed, weight);
 
         for pattern in collect_unique_patterns(file_patterns) {
             let fp_stats = self.by_file_pattern.entry(pattern.clone()).or_default();
-            update_pattern_outcome(fp_stats, addressed);
+            update_pattern_outcome(fp_stats, addressed, weight);
 
             let composite = format!("{category}|{pattern}");
             let comp_stats = self.by_category_file_pattern.entry(composite).or_default();
-            update_pattern_outcome(comp_stats, addressed);
+            update_pattern_outcome(comp_stats, addressed, weight);
         }
     }
 
@@ -312,12 +424,12 @@ impl FeedbackStore {
         };
 
         let rule_stats = self.by_rule.entry(rule_id.clone()).or_default();
-        update_pattern_dismissed(rule_stats);
+        update_pattern_dismissed(rule_stats, 1.0);
 
         for pattern in collect_unique_patterns(file_patterns) {
             let composite = format!("{}|{}", rule_id, pattern);
             let comp_stats = self.by_rule_file_pattern.entry(composite).or_default();
-            update_pattern_dismissed(comp_stats);
+            update_pattern_dismissed(comp_stats, 1.0);
         }
     }
 
@@ -348,19 +460,38 @@ impl FeedbackStore {
     ) where
         S: AsRef<str>,
     {
+        self.record_rule_outcome_patterns_at_weighted(
+            rule_id,
+            file_patterns,
+            addressed,
+            1.0,
+            timestamp,
+        );
+    }
+
+    pub fn record_rule_outcome_patterns_at_weighted<S>(
+        &mut self,
+        rule_id: &str,
+        file_patterns: &[S],
+        addressed: bool,
+        weight: f32,
+        timestamp: i64,
+    ) where
+        S: AsRef<str>,
+    {
         let Some(rule_id) = normalize_feedback_key(rule_id) else {
             return;
         };
 
         let rule_stats = self.by_rule.entry(rule_id.clone()).or_default();
-        update_pattern_outcome(rule_stats, addressed);
-        rule_stats.record_decayed_signal(addressed, timestamp);
+        update_pattern_outcome(rule_stats, addressed, weight);
+        rule_stats.record_decayed_signal(addressed, weight, timestamp);
 
         for pattern in collect_unique_patterns(file_patterns) {
             let composite = format!("{}|{}", rule_id, pattern);
             let comp_stats = self.by_rule_file_pattern.entry(composite).or_default();
-            update_pattern_outcome(comp_stats, addressed);
-            comp_stats.record_decayed_signal(addressed, timestamp);
+            update_pattern_outcome(comp_stats, addressed, weight);
+            comp_stats.record_decayed_signal(addressed, weight, timestamp);
         }
     }
 
@@ -371,6 +502,29 @@ impl FeedbackStore {
     ) -> Option<&FeedbackExplanation> {
         self.explanations_by_comment
             .get(&feedback_explanation_key(review_id, comment_id))
+    }
+
+    pub fn feedback_actor(
+        &self,
+        review_id: &str,
+        comment_id: &str,
+    ) -> Option<&FeedbackActorMetadata> {
+        self.feedback_actor_by_comment
+            .get(&feedback_explanation_key(review_id, comment_id))
+    }
+
+    pub fn record_feedback_actor(
+        &mut self,
+        review_id: &str,
+        comment_id: &str,
+        actor: FeedbackActorMetadata,
+    ) -> bool {
+        let key = feedback_explanation_key(review_id, comment_id);
+        if self.feedback_actor_by_comment.get(&key) == Some(&actor) {
+            return false;
+        }
+        self.feedback_actor_by_comment.insert(key, actor);
+        true
     }
 
     pub fn record_feedback_explanation<S>(
@@ -472,23 +626,50 @@ fn current_timestamp() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
-fn update_pattern_stats(stats: &mut FeedbackPatternStats, accepted: bool) {
+fn update_pattern_stats(stats: &mut FeedbackPatternStats, accepted: bool, weight: f32) {
+    let weight = normalize_feedback_weight(weight);
     if accepted {
         stats.accepted += 1;
+        stats.accepted_weight += weight;
     } else {
         stats.rejected += 1;
+        stats.rejected_weight += weight;
     }
 }
 
-fn update_pattern_dismissed(stats: &mut FeedbackPatternStats) {
+fn update_pattern_dismissed(stats: &mut FeedbackPatternStats, weight: f32) {
     stats.dismissed += 1;
+    stats.dismissed_weight += normalize_feedback_weight(weight);
 }
 
-fn update_pattern_outcome(stats: &mut FeedbackPatternStats, addressed: bool) {
+fn update_pattern_outcome(stats: &mut FeedbackPatternStats, addressed: bool, weight: f32) {
+    let weight = normalize_feedback_weight(weight);
     if addressed {
         stats.addressed += 1;
+        stats.addressed_weight += weight;
     } else {
         stats.not_addressed += 1;
+        stats.not_addressed_weight += weight;
+    }
+}
+
+fn default_feedback_weight() -> f32 {
+    1.0
+}
+
+fn normalize_feedback_weight(weight: f32) -> f32 {
+    if weight.is_finite() && weight > 0.0 {
+        weight.clamp(0.25, 4.0)
+    } else {
+        default_feedback_weight()
+    }
+}
+
+fn weighted_total_or_raw(weighted_total: f32, raw_total: usize) -> f32 {
+    if weighted_total <= f32::EPSILON && raw_total > 0 {
+        raw_total as f32
+    } else {
+        weighted_total
     }
 }
 

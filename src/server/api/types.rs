@@ -149,6 +149,10 @@ pub(crate) struct FeedbackRequest {
     pub action: String,
     #[serde(default)]
     pub explanation: Option<String>,
+    #[serde(default)]
+    pub github_login: Option<String>,
+    #[serde(default)]
+    pub github_role: Option<String>,
 }
 
 #[derive(Serialize)]

@@ -5,8 +5,9 @@ const MAX_EXPLANATION_GUIDANCE_ITEMS: usize = 4;
 
 #[derive(Default)]
 struct ExplanationGuidanceBucket {
-    accepted: usize,
-    rejected: usize,
+    observations: usize,
+    accepted: f32,
+    rejected: f32,
     snippets: Vec<String>,
 }
 
@@ -22,7 +23,7 @@ pub fn generate_feedback_context(store: &FeedbackStore) -> String {
         if stats.total() < min_observations {
             continue;
         }
-        let rate = stats.acceptance_rate();
+        let rate = stats.weighted_acceptance_rate();
         if rate >= 0.7 {
             patterns.push(format!(
                 "- {} findings usually produce positive outcomes ({:.0}% positive reinforcement rate) — be thorough on {} issues",
@@ -40,7 +41,7 @@ pub fn generate_feedback_context(store: &FeedbackStore) -> String {
         if stats.total() < min_observations {
             continue;
         }
-        let rate = stats.acceptance_rate();
+        let rate = stats.weighted_acceptance_rate();
         if rate < 0.3 {
             patterns.push(format!(
                 "- Comments on {} files rarely produce positive outcomes ({:.0}% positive reinforcement rate) — be more conservative",
@@ -52,16 +53,21 @@ pub fn generate_feedback_context(store: &FeedbackStore) -> String {
     let mut explanation_buckets =
         std::collections::HashMap::<String, ExplanationGuidanceBucket>::new();
     for explanation in store.explanations_by_comment.values() {
+        let trust_weight = store
+            .feedback_actor(&explanation.review_id, &explanation.comment_id)
+            .map(|actor| actor.trust_weight)
+            .unwrap_or(1.0);
         let bucket_key = explanation
             .rule_id
             .as_deref()
             .map(|rule_id| format!("rule::{rule_id}"))
             .unwrap_or_else(|| format!("category::{}", explanation.category));
         let bucket = explanation_buckets.entry(bucket_key).or_default();
+        bucket.observations += 1;
         if explanation.action == "accept" {
-            bucket.accepted += 1;
+            bucket.accepted += trust_weight;
         } else {
-            bucket.rejected += 1;
+            bucket.rejected += trust_weight;
         }
 
         if let Some(snippet) = explanation_snippet(&explanation.text) {
@@ -79,9 +85,9 @@ pub fn generate_feedback_context(store: &FeedbackStore) -> String {
         .into_iter()
         .filter_map(|(bucket_key, bucket)| {
             let total = bucket.accepted + bucket.rejected;
-            if total < MIN_EXPLANATION_OBSERVATIONS
+            if bucket.observations < MIN_EXPLANATION_OBSERVATIONS
                 || bucket.snippets.is_empty()
-                || bucket.accepted == bucket.rejected
+                || (bucket.accepted - bucket.rejected).abs() <= f32::EPSILON
             {
                 return None;
             }
@@ -114,8 +120,12 @@ pub fn generate_feedback_context(store: &FeedbackStore) -> String {
             }
         })
         .collect::<Vec<_>>();
-    explanation_guidance
-        .sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    explanation_guidance.sort_by(|left, right| {
+        right
+            .0
+            .total_cmp(&left.0)
+            .then_with(|| left.1.cmp(&right.1))
+    });
     patterns.extend(
         explanation_guidance
             .into_iter()

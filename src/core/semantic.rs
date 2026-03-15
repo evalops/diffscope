@@ -51,7 +51,7 @@ impl SemanticFeedbackStore {
             &example.file_patterns,
             example.accepted,
         );
-        if self.examples.iter().any(|existing| {
+        if let Some(existing) = self.examples.iter_mut().find(|existing| {
             feedback_example_fingerprint(
                 &existing.content,
                 &existing.category,
@@ -59,6 +59,8 @@ impl SemanticFeedbackStore {
                 existing.accepted,
             ) == fingerprint
         }) {
+            existing.weight += example.weight.max(0.0);
+            existing.created_at = example.created_at;
             return;
         }
         self.examples.push(example);
@@ -696,11 +698,18 @@ mod tests {
             file_patterns: vec!["*.rs".to_string()],
             accepted: false,
             created_at: "2026-03-13T00:00:00Z".to_string(),
+            weight: 1.0,
             embedding: local_hash_embedding("Style nit"),
         };
         store.add_example(example.clone());
-        store.add_example(example);
+        store.add_example(SemanticFeedbackExample {
+            weight: 1.5,
+            created_at: "2026-03-14T00:00:00Z".to_string(),
+            ..example
+        });
         assert_eq!(store.examples.len(), 1);
+        assert!((store.examples[0].weight - 2.5).abs() < f32::EPSILON);
+        assert_eq!(store.examples[0].created_at, "2026-03-14T00:00:00Z");
     }
 
     #[tokio::test]

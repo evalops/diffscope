@@ -12,12 +12,14 @@ pub(super) fn adjust_comment_from_feedback(
         return;
     }
 
-    if observations.rejected > observations.accepted {
-        let delta = ((observations.rejected - observations.accepted) as f32 * 0.15).min(0.45);
+    if observations.weighted_rejected > observations.weighted_accepted {
+        let delta =
+            ((observations.weighted_rejected - observations.weighted_accepted) * 0.15).min(0.45);
         comment.confidence = (comment.confidence - delta).clamp(0.0, 1.0);
         push_feedback_tag(comment, "semantic-feedback:rejected");
-    } else if observations.accepted > observations.rejected {
-        let delta = ((observations.accepted - observations.rejected) as f32 * 0.10).min(0.25);
+    } else if observations.weighted_accepted > observations.weighted_rejected {
+        let delta =
+            ((observations.weighted_accepted - observations.weighted_rejected) * 0.10).min(0.25);
         comment.confidence = (comment.confidence + delta).clamp(0.0, 1.0);
         push_feedback_tag(comment, "semantic-feedback:accepted");
     }

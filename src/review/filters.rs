@@ -106,11 +106,8 @@ mod tests {
             by_comment_type: HashMap::from([(
                 "style".to_string(),
                 super::super::feedback::FeedbackTypeStats {
-                    accepted: 0,
                     rejected: 3,
-                    dismissed: 0,
-                    addressed: 0,
-                    not_addressed: 0,
+                    ..Default::default()
                 },
             )]),
             ..Default::default()
@@ -145,11 +142,8 @@ mod tests {
             by_comment_type: HashMap::from([(
                 "logic".to_string(),
                 super::super::feedback::FeedbackTypeStats {
-                    accepted: 0,
                     rejected: 10,
-                    dismissed: 0,
-                    addressed: 0,
-                    not_addressed: 0,
+                    ..Default::default()
                 },
             )]),
             ..Default::default()
@@ -174,11 +168,8 @@ mod tests {
             by_comment_type: HashMap::from([(
                 "logic".to_string(),
                 super::super::feedback::FeedbackTypeStats {
-                    accepted: 0,
                     rejected: 10,
-                    dismissed: 0,
-                    addressed: 0,
-                    not_addressed: 0,
+                    ..Default::default()
                 },
             )]),
             ..Default::default()

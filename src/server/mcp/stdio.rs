@@ -78,6 +78,10 @@ struct ReviewFeedbackInput {
     action: String,
     #[serde(default)]
     explanation: Option<String>,
+    #[serde(default)]
+    github_login: Option<String>,
+    #[serde(default)]
+    github_role: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -439,6 +443,8 @@ impl StdioMcpServer {
             comment_id: input.comment_id.clone(),
             action: input.action.clone(),
             explanation: input.explanation.clone(),
+            github_login: input.github_login.clone(),
+            github_role: input.github_role.clone(),
         };
 
         match api::submit_feedback(
@@ -835,6 +841,14 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "explanation": {
                         "type": "string",
                         "description": "Optional short note explaining why the feedback was accepted or rejected"
+                    },
+                    "github_login": {
+                        "type": "string",
+                        "description": "Optional GitHub login for the reviewer who submitted the feedback"
+                    },
+                    "github_role": {
+                        "type": "string",
+                        "description": "Optional GitHub repository role or permission bucket (for example: admin, maintain, write, triage, read)"
                     }
                 }),
                 &["review_id", "comment_id", "action"],

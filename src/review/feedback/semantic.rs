@@ -21,6 +21,15 @@ pub async fn record_semantic_feedback_examples(
     comments: &[core::Comment],
     accepted: bool,
 ) -> Result<usize> {
+    record_semantic_feedback_examples_with_weight(config, comments, accepted, 1.0).await
+}
+
+pub async fn record_semantic_feedback_examples_with_weight(
+    config: &config::Config,
+    comments: &[core::Comment],
+    accepted: bool,
+    weight: f32,
+) -> Result<usize> {
     if comments.is_empty() {
         return Ok(0);
     }
@@ -48,6 +57,11 @@ pub async fn record_semantic_feedback_examples(
             file_patterns: derive_file_patterns(&comment.file_path),
             accepted,
             created_at: timestamp.clone(),
+            weight: if weight.is_finite() && weight > 0.0 {
+                weight
+            } else {
+                1.0
+            },
             embedding,
         });
     }

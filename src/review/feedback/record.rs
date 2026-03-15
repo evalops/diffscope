@@ -20,14 +20,50 @@ pub fn record_comment_feedback_stats(
     let stats = store.by_comment_type.entry(key).or_default();
     if accepted {
         stats.accepted = stats.accepted.saturating_add(1);
+        stats.accepted_weight += 1.0;
     } else {
         stats.rejected = stats.rejected.saturating_add(1);
+        stats.rejected_weight += 1.0;
     }
 
     let file_patterns = derive_file_patterns(&comment.file_path);
     store.record_feedback_patterns(&comment.category.to_string(), &file_patterns, accepted);
     if let Some(rule_id) = normalize_rule_id(comment.rule_id.as_deref()) {
         store.record_rule_feedback_patterns(&rule_id, &file_patterns, accepted);
+    }
+}
+
+pub fn record_comment_feedback_stats_with_weight(
+    store: &mut FeedbackStore,
+    comment: &core::Comment,
+    accepted: bool,
+    weight: f32,
+) {
+    let key = classify_comment_type(comment).as_str().to_string();
+    let stats = store.by_comment_type.entry(key).or_default();
+    if accepted {
+        stats.accepted = stats.accepted.saturating_add(1);
+        stats.accepted_weight += weight;
+    } else {
+        stats.rejected = stats.rejected.saturating_add(1);
+        stats.rejected_weight += weight;
+    }
+
+    let file_patterns = derive_file_patterns(&comment.file_path);
+    store.record_feedback_patterns_with_weight(
+        &comment.category.to_string(),
+        &file_patterns,
+        accepted,
+        weight,
+    );
+    if let Some(rule_id) = normalize_rule_id(comment.rule_id.as_deref()) {
+        store.record_rule_feedback_patterns_at_weighted(
+            &rule_id,
+            &file_patterns,
+            accepted,
+            weight,
+            chrono::Utc::now().timestamp(),
+        );
     }
 }
 
@@ -41,8 +77,10 @@ pub fn record_comment_feedback_stats_at(
     let stats = store.by_comment_type.entry(key).or_default();
     if accepted {
         stats.accepted = stats.accepted.saturating_add(1);
+        stats.accepted_weight += 1.0;
     } else {
         stats.rejected = stats.rejected.saturating_add(1);
+        stats.rejected_weight += 1.0;
     }
 
     let file_patterns = derive_file_patterns(&comment.file_path);
@@ -56,6 +94,7 @@ pub fn record_comment_dismissal_stats(store: &mut FeedbackStore, comment: &core:
     let key = classify_comment_type(comment).as_str().to_string();
     let stats = store.by_comment_type.entry(key).or_default();
     stats.dismissed = stats.dismissed.saturating_add(1);
+    stats.dismissed_weight += 1.0;
 
     let file_patterns = derive_file_patterns(&comment.file_path);
     store.record_dismissal_patterns(&comment.category.to_string(), &file_patterns);
@@ -75,8 +114,10 @@ pub fn record_comment_resolution_stats(
 
     if addressed {
         stats.addressed = stats.addressed.saturating_add(1);
+        stats.addressed_weight += 1.0;
     } else {
         stats.not_addressed = stats.not_addressed.saturating_add(1);
+        stats.not_addressed_weight += 1.0;
     }
 
     let file_patterns = derive_file_patterns(&comment.file_path);
@@ -98,8 +139,10 @@ pub fn record_comment_resolution_stats_at(
 
     if addressed {
         stats.addressed = stats.addressed.saturating_add(1);
+        stats.addressed_weight += 1.0;
     } else {
         stats.not_addressed = stats.not_addressed.saturating_add(1);
+        stats.not_addressed_weight += 1.0;
     }
 
     let file_patterns = derive_file_patterns(&comment.file_path);
@@ -124,6 +167,27 @@ pub fn apply_comment_feedback_signal(
 
     if changed {
         record_comment_feedback_stats(store, comment, accepted);
+    }
+
+    changed
+}
+
+pub fn apply_comment_feedback_signal_with_weight(
+    store: &mut FeedbackStore,
+    comment: &core::Comment,
+    accepted: bool,
+    weight: f32,
+) -> bool {
+    let changed = if accepted {
+        store.suppress.remove(&comment.id);
+        store.accept.insert(comment.id.clone())
+    } else {
+        store.accept.remove(&comment.id);
+        store.suppress.insert(comment.id.clone())
+    };
+
+    if changed {
+        record_comment_feedback_stats_with_weight(store, comment, accepted, weight);
     }
 
     changed

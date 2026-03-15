@@ -139,8 +139,8 @@ fn lookup_feedback_confidence_stats(
 
 fn raw_confidence_stats(stats: &FeedbackPatternStats) -> FeedbackConfidenceStats {
     FeedbackConfidenceStats {
-        acceptance_rate: stats.acceptance_rate(),
-        total: stats.total() as f32,
+        acceptance_rate: stats.weighted_acceptance_rate(),
+        total: stats.weighted_total(),
     }
 }
 
@@ -148,9 +148,9 @@ fn rule_confidence_stats(stats: &FeedbackPatternStats, timestamp: i64) -> Feedba
     FeedbackConfidenceStats {
         acceptance_rate: stats
             .decayed_acceptance_rate_at(timestamp)
-            .unwrap_or_else(|| stats.acceptance_rate()),
+            .unwrap_or_else(|| stats.weighted_acceptance_rate()),
         total: stats
             .decayed_total_at(timestamp)
-            .unwrap_or_else(|| stats.total() as f32),
+            .unwrap_or_else(|| stats.weighted_total()),
     }
 }

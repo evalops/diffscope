@@ -731,6 +731,7 @@ pub(crate) async fn submit_feedback(
     let is_accepted = request.action == "accept";
     let (
         semantic_comment,
+        github_repo,
         comment_content,
         comment_category,
         file_patterns,
@@ -747,6 +748,7 @@ pub(crate) async fn submit_feedback(
         let semantic_comment = comment.clone();
         let comment_content = comment.content.clone();
         let comment_category = comment.category.to_string();
+        let github_repo = parse_pr_diff_source(&session.diff_source).map(|(repo, _)| repo);
         let file_patterns = crate::review::derive_file_patterns(&comment.file_path);
         let primary_file_pattern = file_patterns.first().cloned();
         let feedback_changed = comment.feedback.as_deref() != Some(request.action.as_str());
@@ -756,6 +758,7 @@ pub(crate) async fn submit_feedback(
 
         (
             semantic_comment,
+            github_repo,
             comment_content,
             comment_category,
             file_patterns,
@@ -792,12 +795,34 @@ pub(crate) async fn submit_feedback(
     // Record enhanced feedback pattern stats and explanation guidance.
     if feedback_changed || request.explanation.is_some() {
         let config = state.config.read().await.clone();
+        let feedback_updated_at = chrono::Utc::now().to_rfc3339();
+        let trust_context = resolve_feedback_trust_context(
+            &state.http_client,
+            &config,
+            github_repo.as_deref(),
+            request.github_login.as_deref(),
+            request.github_role.as_deref(),
+        )
+        .await;
         let mut feedback_store = crate::review::load_feedback_store(&config);
         let feedback_signal_recorded = feedback_changed
-            && crate::review::apply_comment_feedback_signal(
+            && crate::review::apply_comment_feedback_signal_with_weight(
                 &mut feedback_store,
                 &semantic_comment,
                 is_accepted,
+                trust_context.trust_weight,
+            );
+        let actor_recorded = (trust_context.github_login.is_some()
+            || trust_context.github_role.is_some())
+            && feedback_store.record_feedback_actor(
+                &id,
+                &request.comment_id,
+                crate::review::FeedbackActorMetadata {
+                    github_login: trust_context.github_login.clone(),
+                    github_role: trust_context.github_role.clone(),
+                    trust_weight: trust_context.trust_weight,
+                    updated_at: feedback_updated_at.clone(),
+                },
             );
         let explanation_recorded = if let Some(explanation) = request.explanation.as_deref() {
             feedback_store.record_feedback_explanation(
@@ -806,7 +831,7 @@ pub(crate) async fn submit_feedback(
                 &file_patterns,
                 &request.action,
                 explanation,
-                &chrono::Utc::now().to_rfc3339(),
+                &feedback_updated_at,
             )
         } else if feedback_changed {
             feedback_store.clear_feedback_explanation(&id, &request.comment_id)
@@ -814,15 +839,16 @@ pub(crate) async fn submit_feedback(
             false
         };
 
-        if feedback_signal_recorded || explanation_recorded {
+        if feedback_signal_recorded || explanation_recorded || actor_recorded {
             let _ = crate::review::save_feedback_store(&config.feedback_path, &feedback_store);
         }
 
         if feedback_signal_recorded {
-            let _ = crate::review::record_semantic_feedback_examples(
+            let _ = crate::review::record_semantic_feedback_examples_with_weight(
                 &config,
                 std::slice::from_ref(&semantic_comment),
                 is_accepted,
+                trust_context.trust_weight,
             )
             .await;
         }

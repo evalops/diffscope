@@ -39,6 +39,8 @@ pub struct SemanticFeedbackExample {
     pub file_patterns: Vec<String>,
     pub accepted: bool,
     pub created_at: String,
+    #[serde(default = "default_feedback_weight")]
+    pub weight: f32,
     pub embedding: Vec<f32>,
 }
 
@@ -48,6 +50,10 @@ pub struct SemanticFeedbackStore {
     pub examples: Vec<SemanticFeedbackExample>,
     #[serde(default)]
     pub embedding: SemanticEmbeddingMetadata,
+}
+
+fn default_feedback_weight() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]

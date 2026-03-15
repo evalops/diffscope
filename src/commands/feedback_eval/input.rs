@@ -97,6 +97,7 @@ mod tests {
                 file_patterns: vec!["*.rs".to_string()],
                 accepted: false,
                 created_at: "2026-03-13T00:00:00Z".to_string(),
+                weight: 1.0,
                 embedding: vec![],
             }],
             embedding: Default::default(),

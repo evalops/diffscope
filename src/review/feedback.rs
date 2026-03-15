@@ -20,17 +20,21 @@ pub use persistence::{load_feedback_store, load_feedback_store_from_path, save_f
 #[allow(unused_imports)]
 pub use record::{
     apply_comment_dismissal_signal, apply_comment_feedback_signal,
-    apply_comment_feedback_signal_at, apply_comment_resolution_outcome_signal,
-    apply_comment_resolution_outcome_signal_at, record_comment_dismissal_stats,
-    record_comment_feedback_stats, record_comment_feedback_stats_at,
+    apply_comment_feedback_signal_at, apply_comment_feedback_signal_with_weight,
+    apply_comment_resolution_outcome_signal, apply_comment_resolution_outcome_signal_at,
+    record_comment_dismissal_stats, record_comment_feedback_stats,
+    record_comment_feedback_stats_at, record_comment_feedback_stats_with_weight,
     record_comment_resolution_stats, record_comment_resolution_stats_at, CommentResolutionOutcome,
 };
 #[allow(unused_imports)]
-pub use semantic::{record_semantic_feedback_example, record_semantic_feedback_examples};
+pub use semantic::{
+    record_semantic_feedback_example, record_semantic_feedback_examples,
+    record_semantic_feedback_examples_with_weight,
+};
 #[allow(unused_imports)]
 pub use store::{
-    DecayedFeedbackStats, FeedbackExplanation, FeedbackPatternStats, FeedbackStore,
-    FeedbackTypeStats,
+    DecayedFeedbackStats, FeedbackActorMetadata, FeedbackExplanation, FeedbackPatternStats,
+    FeedbackStore, FeedbackTypeStats,
 };
 
 #[cfg(test)]
@@ -53,6 +57,7 @@ mod tests {
         assert!(store.by_rule.is_empty());
         assert!(store.by_rule_file_pattern.is_empty());
         assert!(store.explanations_by_comment.is_empty());
+        assert!(store.feedback_actor_by_comment.is_empty());
     }
 
     #[test]
@@ -83,14 +88,12 @@ mod tests {
             FeedbackPatternStats {
                 accepted: 1,
                 rejected: 2,
-                dismissed: 0,
-                addressed: 0,
-                not_addressed: 0,
                 decayed: Some(DecayedFeedbackStats {
                     positive: 0.75,
                     negative: 1.25,
                     last_event_at: Some(123),
                 }),
+                ..Default::default()
             },
         );
         store.by_comment_type.insert(
@@ -101,6 +104,7 @@ mod tests {
                 dismissed: 3,
                 addressed: 4,
                 not_addressed: 5,
+                ..Default::default()
             },
         );
         store.explanations_by_comment.insert(
@@ -113,6 +117,15 @@ mod tests {
                 rule_id: Some("sec.auth.boundary".to_string()),
                 file_patterns: vec!["src/**".to_string()],
                 text: "Tenant boundaries must stay explicit.".to_string(),
+                updated_at: "2026-03-15T00:00:00Z".to_string(),
+            },
+        );
+        store.feedback_actor_by_comment.insert(
+            "review-1::comment-1".to_string(),
+            FeedbackActorMetadata {
+                github_login: Some("maintainer".to_string()),
+                github_role: Some("write".to_string()),
+                trust_weight: 1.5,
                 updated_at: "2026-03-15T00:00:00Z".to_string(),
             },
         );
@@ -134,6 +147,12 @@ mod tests {
             Some(2.0)
         );
         assert_eq!(deserialized.explanations_by_comment.len(), 1);
+        assert_eq!(
+            deserialized.feedback_actor_by_comment["review-1::comment-1"]
+                .github_role
+                .as_deref(),
+            Some("write")
+        );
     }
 
     #[test]
@@ -155,11 +174,7 @@ mod tests {
     fn pattern_stats_acceptance_rate_all_accepted() {
         let stats = FeedbackPatternStats {
             accepted: 10,
-            rejected: 0,
-            dismissed: 0,
-            addressed: 0,
-            not_addressed: 0,
-            decayed: None,
+            ..Default::default()
         };
         assert_eq!(stats.acceptance_rate(), 1.0);
         assert_eq!(stats.total(), 10);
@@ -168,12 +183,8 @@ mod tests {
     #[test]
     fn pattern_stats_acceptance_rate_all_rejected() {
         let stats = FeedbackPatternStats {
-            accepted: 0,
             rejected: 10,
-            dismissed: 0,
-            addressed: 0,
-            not_addressed: 0,
-            decayed: None,
+            ..Default::default()
         };
         assert_eq!(stats.acceptance_rate(), 0.0);
     }
@@ -183,12 +194,38 @@ mod tests {
         let stats = FeedbackPatternStats {
             accepted: 3,
             rejected: 7,
-            dismissed: 0,
-            addressed: 0,
-            not_addressed: 0,
-            decayed: None,
+            ..Default::default()
         };
         assert!((stats.acceptance_rate() - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn pattern_stats_weighted_acceptance_rate_prefers_weighted_signal() {
+        let stats = FeedbackPatternStats {
+            accepted: 1,
+            rejected: 1,
+            accepted_weight: 3.0,
+            rejected_weight: 1.0,
+            ..Default::default()
+        };
+
+        assert!((stats.weighted_acceptance_rate() - 0.75).abs() < f32::EPSILON);
+        assert!((stats.weighted_total() - 4.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn pattern_stats_weighted_acceptance_rate_preserves_legacy_counts_without_weights() {
+        let stats = FeedbackPatternStats {
+            accepted: 1,
+            addressed: 1,
+            rejected: 1,
+            accepted_weight: 2.0,
+            ..Default::default()
+        };
+
+        assert!((stats.weighted_positive_total() - 3.0).abs() < f32::EPSILON);
+        assert!((stats.weighted_negative_total() - 1.0).abs() < f32::EPSILON);
+        assert!((stats.weighted_acceptance_rate() - 0.75).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -196,10 +233,9 @@ mod tests {
         let stats = FeedbackPatternStats {
             accepted: 1,
             rejected: 1,
-            dismissed: 0,
             addressed: 3,
             not_addressed: 1,
-            decayed: None,
+            ..Default::default()
         };
 
         assert!((stats.acceptance_rate() - (4.0 / 6.0)).abs() < f32::EPSILON);
@@ -415,6 +451,26 @@ mod tests {
             "accept",
             "Tenant isolation must stay explicit to avoid cross-account reads.",
             "2026-03-15T00:01:00Z",
+        ));
+        assert!(store.record_feedback_actor(
+            "review-1",
+            "comment-1",
+            FeedbackActorMetadata {
+                github_login: Some("repo-owner".to_string()),
+                github_role: Some("admin".to_string()),
+                trust_weight: 2.0,
+                updated_at: "2026-03-15T00:00:00Z".to_string(),
+            }
+        ));
+        assert!(store.record_feedback_actor(
+            "review-2",
+            "comment-2",
+            FeedbackActorMetadata {
+                github_login: Some("triager".to_string()),
+                github_role: Some("triage".to_string()),
+                trust_weight: 1.25,
+                updated_at: "2026-03-15T00:01:00Z".to_string(),
+            }
         ));
 
         let context = generate_feedback_context(&store);
