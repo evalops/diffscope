@@ -5,6 +5,12 @@ use super::super::rule_helpers::normalize_rule_id;
 use super::patterns::derive_file_patterns;
 use super::store::FeedbackStore;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommentResolutionOutcome {
+    Addressed,
+    NotAddressed,
+}
+
 pub fn record_comment_feedback_stats(
     store: &mut FeedbackStore,
     comment: &core::Comment,
@@ -37,6 +43,28 @@ pub fn record_comment_dismissal_stats(store: &mut FeedbackStore, comment: &core:
     }
 }
 
+pub fn record_comment_resolution_stats(
+    store: &mut FeedbackStore,
+    comment: &core::Comment,
+    outcome: CommentResolutionOutcome,
+) {
+    let key = classify_comment_type(comment).as_str().to_string();
+    let stats = store.by_comment_type.entry(key).or_default();
+    let addressed = matches!(outcome, CommentResolutionOutcome::Addressed);
+
+    if addressed {
+        stats.addressed = stats.addressed.saturating_add(1);
+    } else {
+        stats.not_addressed = stats.not_addressed.saturating_add(1);
+    }
+
+    let file_patterns = derive_file_patterns(&comment.file_path);
+    store.record_outcome_patterns(&comment.category.to_string(), &file_patterns, addressed);
+    if let Some(rule_id) = normalize_rule_id(comment.rule_id.as_deref()) {
+        store.record_rule_outcome_patterns(&rule_id, &file_patterns, addressed);
+    }
+}
+
 pub fn apply_comment_feedback_signal(
     store: &mut FeedbackStore,
     comment: &core::Comment,
@@ -62,6 +90,23 @@ pub fn apply_comment_dismissal_signal(store: &mut FeedbackStore, comment: &core:
 
     if changed {
         record_comment_dismissal_stats(store, comment);
+    }
+
+    changed
+}
+
+pub fn apply_comment_resolution_outcome_signal(
+    store: &mut FeedbackStore,
+    comment: &core::Comment,
+    outcome: CommentResolutionOutcome,
+) -> bool {
+    let changed = match outcome {
+        CommentResolutionOutcome::Addressed => store.addressed.insert(comment.id.clone()),
+        CommentResolutionOutcome::NotAddressed => store.not_addressed.insert(comment.id.clone()),
+    };
+
+    if changed {
+        record_comment_resolution_stats(store, comment, outcome);
     }
 
     changed
@@ -153,5 +198,57 @@ mod tests {
             store.by_rule_file_pattern["sec.sql.injection|*.rs"].dismissed,
             1
         );
+    }
+
+    #[test]
+    fn apply_comment_resolution_outcome_signal_is_idempotent_per_outcome() {
+        let comment = sample_comment();
+        let mut store = FeedbackStore::default();
+
+        assert!(apply_comment_resolution_outcome_signal(
+            &mut store,
+            &comment,
+            CommentResolutionOutcome::Addressed,
+        ));
+        assert!(!apply_comment_resolution_outcome_signal(
+            &mut store,
+            &comment,
+            CommentResolutionOutcome::Addressed,
+        ));
+
+        assert!(store.addressed.contains(&comment.id));
+        assert_eq!(store.by_comment_type["logic"].addressed, 1);
+        assert_eq!(store.by_category["Security"].addressed, 1);
+        assert_eq!(store.by_file_pattern["src/**"].addressed, 1);
+        assert_eq!(store.by_rule["sec.sql.injection"].addressed, 1);
+    }
+
+    #[test]
+    fn apply_comment_resolution_outcome_signal_records_both_outcome_directions_once() {
+        let comment = sample_comment();
+        let mut store = FeedbackStore::default();
+
+        assert!(apply_comment_resolution_outcome_signal(
+            &mut store,
+            &comment,
+            CommentResolutionOutcome::NotAddressed,
+        ));
+        assert!(apply_comment_resolution_outcome_signal(
+            &mut store,
+            &comment,
+            CommentResolutionOutcome::Addressed,
+        ));
+        assert!(!apply_comment_resolution_outcome_signal(
+            &mut store,
+            &comment,
+            CommentResolutionOutcome::NotAddressed,
+        ));
+
+        assert!(store.not_addressed.contains(&comment.id));
+        assert!(store.addressed.contains(&comment.id));
+        assert_eq!(store.by_comment_type["logic"].not_addressed, 1);
+        assert_eq!(store.by_comment_type["logic"].addressed, 1);
+        assert_eq!(store.by_rule["sec.sql.injection"].not_addressed, 1);
+        assert_eq!(store.by_rule["sec.sql.injection"].addressed, 1);
     }
 }

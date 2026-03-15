@@ -10,9 +10,23 @@ pub struct FeedbackTypeStats {
     pub rejected: usize,
     #[serde(default)]
     pub dismissed: usize,
+    #[serde(default)]
+    pub addressed: usize,
+    #[serde(default)]
+    pub not_addressed: usize,
 }
 
-/// Tracks acceptance/rejection counts for a specific pattern (category, file extension, etc.)
+impl FeedbackTypeStats {
+    pub fn positive_total(&self) -> usize {
+        self.accepted + self.addressed
+    }
+
+    pub fn negative_total(&self) -> usize {
+        self.rejected + self.not_addressed
+    }
+}
+
+/// Tracks explicit and outcome-derived reinforcement counts for a specific pattern.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct FeedbackPatternStats {
     #[serde(default)]
@@ -21,6 +35,10 @@ pub struct FeedbackPatternStats {
     pub rejected: usize,
     #[serde(default)]
     pub dismissed: usize,
+    #[serde(default)]
+    pub addressed: usize,
+    #[serde(default)]
+    pub not_addressed: usize,
 }
 
 impl FeedbackPatternStats {
@@ -29,11 +47,19 @@ impl FeedbackPatternStats {
         if total == 0 {
             return 0.5; // neutral when no data
         }
-        self.accepted as f32 / total as f32
+        self.positive_total() as f32 / total as f32
     }
 
     pub fn total(&self) -> usize {
-        self.accepted + self.rejected
+        self.positive_total() + self.negative_total()
+    }
+
+    pub fn positive_total(&self) -> usize {
+        self.accepted + self.addressed
+    }
+
+    pub fn negative_total(&self) -> usize {
+        self.rejected + self.not_addressed
     }
 }
 
@@ -45,6 +71,10 @@ pub struct FeedbackStore {
     pub accept: HashSet<String>,
     #[serde(default)]
     pub dismissed: HashSet<String>,
+    #[serde(default)]
+    pub addressed: HashSet<String>,
+    #[serde(default)]
+    pub not_addressed: HashSet<String>,
     #[serde(default)]
     pub by_comment_type: HashMap<String, FeedbackTypeStats>,
     /// Feedback stats keyed by category (e.g., "Bug", "Security", "Performance").
@@ -147,6 +177,28 @@ impl FeedbackStore {
         }
     }
 
+    /// Record an addressed/not-addressed outcome across one or more file-pattern buckets.
+    pub fn record_outcome_patterns<S>(
+        &mut self,
+        category: &str,
+        file_patterns: &[S],
+        addressed: bool,
+    ) where
+        S: AsRef<str>,
+    {
+        let cat_stats = self.by_category.entry(category.to_string()).or_default();
+        update_pattern_outcome(cat_stats, addressed);
+
+        for pattern in collect_unique_patterns(file_patterns) {
+            let fp_stats = self.by_file_pattern.entry(pattern.clone()).or_default();
+            update_pattern_outcome(fp_stats, addressed);
+
+            let composite = format!("{category}|{pattern}");
+            let comp_stats = self.by_category_file_pattern.entry(composite).or_default();
+            update_pattern_outcome(comp_stats, addressed);
+        }
+    }
+
     /// Record a dismissal event across normalized rule-id buckets.
     pub fn record_rule_dismissal_patterns<S>(&mut self, rule_id: &str, file_patterns: &[S])
     where
@@ -165,6 +217,29 @@ impl FeedbackStore {
             update_pattern_dismissed(comp_stats);
         }
     }
+
+    /// Record an addressed/not-addressed outcome across normalized rule-id buckets.
+    pub fn record_rule_outcome_patterns<S>(
+        &mut self,
+        rule_id: &str,
+        file_patterns: &[S],
+        addressed: bool,
+    ) where
+        S: AsRef<str>,
+    {
+        let Some(rule_id) = normalize_feedback_key(rule_id) else {
+            return;
+        };
+
+        let rule_stats = self.by_rule.entry(rule_id.clone()).or_default();
+        update_pattern_outcome(rule_stats, addressed);
+
+        for pattern in collect_unique_patterns(file_patterns) {
+            let composite = format!("{}|{}", rule_id, pattern);
+            let comp_stats = self.by_rule_file_pattern.entry(composite).or_default();
+            update_pattern_outcome(comp_stats, addressed);
+        }
+    }
 }
 
 fn update_pattern_stats(stats: &mut FeedbackPatternStats, accepted: bool) {
@@ -177,6 +252,14 @@ fn update_pattern_stats(stats: &mut FeedbackPatternStats, accepted: bool) {
 
 fn update_pattern_dismissed(stats: &mut FeedbackPatternStats) {
     stats.dismissed += 1;
+}
+
+fn update_pattern_outcome(stats: &mut FeedbackPatternStats, addressed: bool) {
+    if addressed {
+        stats.addressed += 1;
+    } else {
+        stats.not_addressed += 1;
+    }
 }
 
 fn collect_unique_patterns<S>(file_patterns: &[S]) -> HashSet<String>

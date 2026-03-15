@@ -109,6 +109,8 @@ mod tests {
                     accepted: 0,
                     rejected: 3,
                     dismissed: 0,
+                    addressed: 0,
+                    not_addressed: 0,
                 },
             )]),
             ..Default::default()
@@ -146,6 +148,8 @@ mod tests {
                     accepted: 0,
                     rejected: 10,
                     dismissed: 0,
+                    addressed: 0,
+                    not_addressed: 0,
                 },
             )]),
             ..Default::default()
@@ -173,6 +177,8 @@ mod tests {
                     accepted: 0,
                     rejected: 10,
                     dismissed: 0,
+                    addressed: 0,
+                    not_addressed: 0,
                 },
             )]),
             ..Default::default()

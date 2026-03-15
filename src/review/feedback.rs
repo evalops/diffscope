@@ -19,8 +19,9 @@ pub use patterns::derive_file_patterns;
 pub use persistence::{load_feedback_store, load_feedback_store_from_path, save_feedback_store};
 #[allow(unused_imports)]
 pub use record::{
-    apply_comment_dismissal_signal, apply_comment_feedback_signal, record_comment_dismissal_stats,
-    record_comment_feedback_stats,
+    apply_comment_dismissal_signal, apply_comment_feedback_signal,
+    apply_comment_resolution_outcome_signal, record_comment_dismissal_stats,
+    record_comment_feedback_stats, record_comment_resolution_stats, CommentResolutionOutcome,
 };
 #[allow(unused_imports)]
 pub use semantic::{record_semantic_feedback_example, record_semantic_feedback_examples};
@@ -38,6 +39,8 @@ mod tests {
         assert!(store.suppress.is_empty());
         assert!(store.accept.is_empty());
         assert!(store.dismissed.is_empty());
+        assert!(store.addressed.is_empty());
+        assert!(store.not_addressed.is_empty());
         assert!(store.by_comment_type.is_empty());
         assert!(store.by_category.is_empty());
         assert!(store.by_file_pattern.is_empty());
@@ -67,12 +70,16 @@ mod tests {
         store.suppress.insert("c1".to_string());
         store.accept.insert("c2".to_string());
         store.dismissed.insert("c3".to_string());
+        store.addressed.insert("c4".to_string());
+        store.not_addressed.insert("c5".to_string());
         store.by_comment_type.insert(
             "style".to_string(),
             FeedbackTypeStats {
                 accepted: 1,
                 rejected: 2,
                 dismissed: 3,
+                addressed: 4,
+                not_addressed: 5,
             },
         );
 
@@ -81,9 +88,13 @@ mod tests {
         assert!(deserialized.suppress.contains("c1"));
         assert!(deserialized.accept.contains("c2"));
         assert!(deserialized.dismissed.contains("c3"));
+        assert!(deserialized.addressed.contains("c4"));
+        assert!(deserialized.not_addressed.contains("c5"));
         assert_eq!(deserialized.by_comment_type["style"].accepted, 1);
         assert_eq!(deserialized.by_comment_type["style"].rejected, 2);
         assert_eq!(deserialized.by_comment_type["style"].dismissed, 3);
+        assert_eq!(deserialized.by_comment_type["style"].addressed, 4);
+        assert_eq!(deserialized.by_comment_type["style"].not_addressed, 5);
     }
 
     #[test]
@@ -107,6 +118,8 @@ mod tests {
             accepted: 10,
             rejected: 0,
             dismissed: 0,
+            addressed: 0,
+            not_addressed: 0,
         };
         assert_eq!(stats.acceptance_rate(), 1.0);
         assert_eq!(stats.total(), 10);
@@ -118,6 +131,8 @@ mod tests {
             accepted: 0,
             rejected: 10,
             dismissed: 0,
+            addressed: 0,
+            not_addressed: 0,
         };
         assert_eq!(stats.acceptance_rate(), 0.0);
     }
@@ -128,8 +143,24 @@ mod tests {
             accepted: 3,
             rejected: 7,
             dismissed: 0,
+            addressed: 0,
+            not_addressed: 0,
         };
         assert!((stats.acceptance_rate() - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn pattern_stats_acceptance_rate_includes_outcome_signals() {
+        let stats = FeedbackPatternStats {
+            accepted: 1,
+            rejected: 1,
+            dismissed: 0,
+            addressed: 3,
+            not_addressed: 1,
+        };
+
+        assert!((stats.acceptance_rate() - (4.0 / 6.0)).abs() < f32::EPSILON);
+        assert_eq!(stats.total(), 6);
     }
 
     // ── record_feedback tests ─────────────────────────────────────────────
@@ -247,8 +278,8 @@ mod tests {
         let context = generate_feedback_context(&store);
         assert!(context.contains("Style"), "Should mention Style: {context}");
         assert!(
-            context.contains("rejected"),
-            "Should note rejection: {context}"
+            context.contains("positive reinforcement rate"),
+            "Should note outcome-weighted reinforcement: {context}"
         );
     }
 

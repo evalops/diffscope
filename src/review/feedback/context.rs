@@ -15,12 +15,12 @@ pub fn generate_feedback_context(store: &FeedbackStore) -> String {
         let rate = stats.acceptance_rate();
         if rate >= 0.7 {
             patterns.push(format!(
-                "- {} findings are usually accepted ({:.0}% acceptance rate) — be thorough on {} issues",
+                "- {} findings usually produce positive outcomes ({:.0}% positive reinforcement rate) — be thorough on {} issues",
                 category, rate * 100.0, category.to_lowercase()
             ));
         } else if rate < 0.3 {
             patterns.push(format!(
-                "- {} findings are frequently rejected ({:.0}% acceptance rate) — only flag clear {} issues",
+                "- {} findings rarely produce positive outcomes ({:.0}% positive reinforcement rate) — only flag clear {} issues",
                 category, rate * 100.0, category.to_lowercase()
             ));
         }
@@ -33,7 +33,7 @@ pub fn generate_feedback_context(store: &FeedbackStore) -> String {
         let rate = stats.acceptance_rate();
         if rate < 0.3 {
             patterns.push(format!(
-                "- Comments on {} files are usually rejected ({:.0}% acceptance rate) — be more conservative",
+                "- Comments on {} files rarely produce positive outcomes ({:.0}% positive reinforcement rate) — be more conservative",
                 pattern, rate * 100.0
             ));
         }

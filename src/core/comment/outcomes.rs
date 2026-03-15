@@ -5,6 +5,12 @@ use crate::core::{diff_parser::ChangeType, UnifiedDiff};
 
 use super::{Comment, CommentOutcome, CommentOutcomeContext, CommentStatus};
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FollowUpCommentResolutionOutcomes {
+    pub addressed_comment_ids: HashSet<String>,
+    pub not_addressed_comment_ids: HashSet<String>,
+}
+
 fn push_unique(outcomes: &mut Vec<CommentOutcome>, outcome: CommentOutcome) {
     if !outcomes.contains(&outcome) {
         outcomes.push(outcome);
@@ -51,6 +57,32 @@ pub fn infer_addressed_by_follow_up_comments(
                 .map(|_| comment.id.clone())
         })
         .collect()
+}
+
+pub fn infer_follow_up_comment_resolution_outcomes(
+    previous_comments: &[Comment],
+    current_comments: &[Comment],
+    follow_up_diffs: &[UnifiedDiff],
+) -> FollowUpCommentResolutionOutcomes {
+    let addressed_comment_ids =
+        infer_addressed_by_follow_up_comments(previous_comments, follow_up_diffs);
+    let current_comment_ids = current_comments
+        .iter()
+        .map(|comment| comment.id.as_str())
+        .collect::<HashSet<_>>();
+
+    let not_addressed_comment_ids = previous_comments
+        .iter()
+        .filter(|comment| comment.status == CommentStatus::Open)
+        .filter(|comment| !addressed_comment_ids.contains(&comment.id))
+        .filter(|comment| current_comment_ids.contains(comment.id.as_str()))
+        .map(|comment| comment.id.clone())
+        .collect();
+
+    FollowUpCommentResolutionOutcomes {
+        addressed_comment_ids,
+        not_addressed_comment_ids,
+    }
 }
 
 pub fn derive_comment_outcomes(
@@ -223,5 +255,39 @@ mod tests {
         comment.line_number = 2;
 
         assert!(infer_addressed_by_follow_up_comments(&[comment], &[diffs]).is_empty());
+    }
+
+    #[test]
+    fn infer_follow_up_resolution_outcomes_splits_addressed_and_persistent_findings() {
+        let diffs = DiffParser::parse_text_diff(
+            "first\nsecond\nthird\n",
+            "first\nupdated second\nthird\n",
+            PathBuf::from("src/lib.rs"),
+        )
+        .unwrap();
+
+        let mut addressed = make_comment();
+        addressed.id = "comment-addressed".to_string();
+        addressed.line_number = 2;
+
+        let mut persistent = make_comment();
+        persistent.id = "comment-persistent".to_string();
+        persistent.line_number = 3;
+
+        let current_comments = vec![persistent.clone()];
+        let outcomes = infer_follow_up_comment_resolution_outcomes(
+            &[addressed, persistent],
+            &current_comments,
+            &[diffs],
+        );
+
+        assert_eq!(
+            outcomes.addressed_comment_ids,
+            HashSet::from(["comment-addressed".to_string()])
+        );
+        assert_eq!(
+            outcomes.not_addressed_comment_ids,
+            HashSet::from(["comment-persistent".to_string()])
+        );
     }
 }

@@ -1003,6 +1003,149 @@ fn pr_review_timeline_sessions(
     timeline
 }
 
+fn latest_completed_pr_review_for_outcomes(
+    reviews: &[ReviewSession],
+    repo: &str,
+    pr_number: u32,
+) -> Option<ReviewSession> {
+    let diff_source = pr_diff_source(repo, pr_number);
+
+    reviews
+        .iter()
+        .filter(|session| session.diff_source == diff_source)
+        .filter(|session| session.status == ReviewStatus::Complete)
+        .filter(|session| session.github_head_sha.is_some())
+        .max_by_key(|session| (session.started_at, session.completed_at.unwrap_or_default()))
+        .cloned()
+}
+
+pub(crate) async fn record_pr_follow_up_outcome_feedback(
+    state: &Arc<AppState>,
+    repo: &str,
+    pr_number: u32,
+    current_head_sha: &str,
+    current_comments: &[crate::core::Comment],
+    token: &str,
+) {
+    let inventory = load_review_inventory(state).await;
+    let Some(previous_review) =
+        latest_completed_pr_review_for_outcomes(&inventory, repo, pr_number)
+    else {
+        return;
+    };
+
+    let Some(previous_head_sha) = previous_review.github_head_sha.as_deref() else {
+        return;
+    };
+
+    if previous_head_sha == current_head_sha {
+        return;
+    }
+
+    let previous_open_comments = previous_review
+        .comments
+        .iter()
+        .filter(|comment| comment.status == crate::core::comment::CommentStatus::Open)
+        .cloned()
+        .collect::<Vec<_>>();
+    if previous_open_comments.is_empty() {
+        return;
+    }
+
+    let compare_url = format!(
+        "https://api.github.com/repos/{repo}/compare/{previous_head_sha}...{current_head_sha}",
+    );
+    let diff_content = match github_api_get_diff(&state.http_client, token, &compare_url).await {
+        Ok(diff_content) => diff_content,
+        Err(error) => {
+            warn!(
+                repo = %repo,
+                pr_number,
+                previous_review_id = %previous_review.id,
+                previous_head_sha,
+                current_head_sha,
+                "Failed to fetch compare diff for follow-up outcome feedback: {error}"
+            );
+            return;
+        }
+    };
+
+    let follow_up_diffs = match crate::core::DiffParser::parse_unified_diff(&diff_content) {
+        Ok(follow_up_diffs) => follow_up_diffs,
+        Err(error) => {
+            warn!(
+                repo = %repo,
+                pr_number,
+                previous_review_id = %previous_review.id,
+                previous_head_sha,
+                current_head_sha,
+                "Failed to parse compare diff for follow-up outcome feedback: {error}"
+            );
+            return;
+        }
+    };
+
+    let outcomes = crate::core::comment::infer_follow_up_comment_resolution_outcomes(
+        &previous_open_comments,
+        current_comments,
+        &follow_up_diffs,
+    );
+    if outcomes.addressed_comment_ids.is_empty() && outcomes.not_addressed_comment_ids.is_empty() {
+        return;
+    }
+
+    let config = state.config.read().await.clone();
+    let mut feedback_store = crate::review::load_feedback_store(&config);
+    let mut changed = false;
+    let mut addressed_count = 0usize;
+    let mut not_addressed_count = 0usize;
+
+    for comment in &previous_open_comments {
+        if outcomes.addressed_comment_ids.contains(&comment.id) {
+            if crate::review::apply_comment_resolution_outcome_signal(
+                &mut feedback_store,
+                comment,
+                crate::review::CommentResolutionOutcome::Addressed,
+            ) {
+                changed = true;
+                addressed_count += 1;
+            }
+        } else if outcomes.not_addressed_comment_ids.contains(&comment.id)
+            && crate::review::apply_comment_resolution_outcome_signal(
+                &mut feedback_store,
+                comment,
+                crate::review::CommentResolutionOutcome::NotAddressed,
+            )
+        {
+            changed = true;
+            not_addressed_count += 1;
+        }
+    }
+
+    if !changed {
+        return;
+    }
+
+    if let Err(error) = crate::review::save_feedback_store(&config.feedback_path, &feedback_store) {
+        warn!(
+            repo = %repo,
+            pr_number,
+            previous_review_id = %previous_review.id,
+            "Failed to persist follow-up outcome feedback: {error}"
+        );
+        return;
+    }
+
+    info!(
+        repo = %repo,
+        pr_number,
+        previous_review_id = %previous_review.id,
+        addressed_count,
+        not_addressed_count,
+        "Recorded follow-up outcome feedback from the previous PR review"
+    );
+}
+
 fn merge_readiness_rank(readiness: MergeReadiness) -> usize {
     match readiness {
         MergeReadiness::Ready => 0,
@@ -2285,7 +2428,7 @@ pub(crate) async fn run_pr_review_task(
     diff_content: String,
     repo: String,
     pr_number: u32,
-    _head_sha: String,
+    head_sha: String,
     post_results: bool,
 ) {
     let _permit = match state.review_semaphore.clone().acquire_owned().await {
@@ -2436,6 +2579,12 @@ pub(crate) async fn run_pr_review_task(
                     .github_posted(github_posted)
                     .build();
             emit_wide_event(&event);
+            if let Some(ref token) = github_token {
+                record_pr_follow_up_outcome_feedback(
+                    &state, &repo, pr_number, &head_sha, &comments, token,
+                )
+                .await;
+            }
             AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
                 .await;
             AppState::store_pr_verification_reuse_cache(&state, &pr_key, verification_reuse_cache)

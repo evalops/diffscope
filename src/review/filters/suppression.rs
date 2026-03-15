@@ -24,7 +24,8 @@ pub fn should_adaptively_suppress_with_thresholds(
         None => return false,
     };
 
-    stats.rejected >= rejected_threshold && stats.rejected >= stats.accepted.saturating_add(margin)
+    stats.negative_total() >= rejected_threshold
+        && stats.negative_total() >= stats.positive_total().saturating_add(margin)
 }
 
 pub fn apply_feedback_suppression_with_thresholds(

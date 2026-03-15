@@ -37,7 +37,10 @@ use summary::{
 use tags::extract_tags;
 
 pub use identity::compute_comment_id;
-pub use outcomes::{derive_comment_outcomes, infer_addressed_by_follow_up_comments};
+pub use outcomes::{
+    derive_comment_outcomes, infer_addressed_by_follow_up_comments,
+    infer_follow_up_comment_resolution_outcomes,
+};
 pub use types::{
     Category, CodeSuggestion, Comment, CommentOutcome, CommentOutcomeContext, CommentStatus,
     FixEffort, FixLoopTelemetry, MergeReadiness, RawComment, ReviewCompletenessSummary,

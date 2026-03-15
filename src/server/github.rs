@@ -1051,6 +1051,15 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
                     .github_posted(github_posted)
                     .build();
             emit_wide_event(&event);
+            super::api::record_pr_follow_up_outcome_feedback(
+                &state,
+                &repo,
+                pr_number,
+                &head_sha,
+                &comments,
+                &auth_token,
+            )
+            .await;
             AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
                 .await;
             AppState::store_pr_verification_reuse_cache(&state, &pr_key, verification_reuse_cache)

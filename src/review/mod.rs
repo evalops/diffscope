@@ -13,9 +13,10 @@ pub use context_helpers::{
     resolve_pattern_repositories,
 };
 pub use feedback::{
-    apply_comment_dismissal_signal, apply_comment_feedback_signal, derive_file_patterns,
-    load_feedback_store, load_feedback_store_from_path, record_semantic_feedback_examples,
-    save_feedback_store,
+    apply_comment_dismissal_signal, apply_comment_feedback_signal,
+    apply_comment_resolution_outcome_signal, derive_file_patterns, load_feedback_store,
+    load_feedback_store_from_path, record_semantic_feedback_examples, save_feedback_store,
+    CommentResolutionOutcome,
 };
 #[allow(unused_imports)]
 pub use filters::apply_review_filters;
