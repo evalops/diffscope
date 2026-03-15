@@ -46,6 +46,8 @@ pub(crate) struct StatusResponse {
 pub(crate) struct ApiComment {
     #[serde(flatten)]
     pub comment: crate::core::comment::Comment,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feedback_explanation: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outcomes: Vec<crate::core::comment::CommentOutcome>,
 }
@@ -55,6 +57,7 @@ impl ApiComment {
         comment: crate::core::comment::Comment,
         stale_review: bool,
         addressed_by_follow_up: bool,
+        feedback_explanation: Option<String>,
     ) -> Self {
         let outcomes = crate::core::comment::derive_comment_outcomes(
             &comment,
@@ -64,7 +67,11 @@ impl ApiComment {
                 auto_fixed: false,
             },
         );
-        Self { comment, outcomes }
+        Self {
+            comment,
+            feedback_explanation,
+            outcomes,
+        }
     }
 }
 
@@ -97,7 +104,10 @@ pub(crate) fn build_api_review_session(
     session: crate::server::state::ReviewSession,
     stale_review: bool,
     addressed_by_follow_up_comment_ids: &HashSet<String>,
+    feedback_store: Option<&crate::review::FeedbackStore>,
 ) -> ApiReviewSession {
+    let review_id = session.id.clone();
+
     ApiReviewSession {
         id: session.id,
         status: session.status,
@@ -112,7 +122,15 @@ pub(crate) fn build_api_review_session(
             .map(|comment| {
                 let addressed_by_follow_up =
                     addressed_by_follow_up_comment_ids.contains(&comment.id);
-                ApiComment::from_comment(comment, stale_review, addressed_by_follow_up)
+                let feedback_explanation = feedback_store
+                    .and_then(|store| store.feedback_explanation(&review_id, &comment.id))
+                    .map(|entry| entry.text.clone());
+                ApiComment::from_comment(
+                    comment,
+                    stale_review,
+                    addressed_by_follow_up,
+                    feedback_explanation,
+                )
             })
             .collect(),
         summary: session.summary,
@@ -129,6 +147,8 @@ pub(crate) fn build_api_review_session(
 pub(crate) struct FeedbackRequest {
     pub comment_id: String,
     pub action: String,
+    #[serde(default)]
+    pub explanation: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -355,6 +375,21 @@ mod tests {
 
     #[test]
     fn build_api_review_session_derives_comment_outcomes() {
+        let mut feedback_store = crate::review::FeedbackStore::default();
+        feedback_store.explanations_by_comment.insert(
+            "review-1::comment-1".to_string(),
+            crate::review::FeedbackExplanation {
+                review_id: "review-1".to_string(),
+                comment_id: "comment-1".to_string(),
+                action: "accept".to_string(),
+                category: "Bug".to_string(),
+                rule_id: None,
+                file_patterns: vec!["src/**".to_string()],
+                text: "The API contract requires this behavior.".to_string(),
+                updated_at: "2026-03-15T00:00:00Z".to_string(),
+            },
+        );
+
         let session = crate::server::state::ReviewSession {
             id: "review-1".to_string(),
             status: crate::server::state::ReviewStatus::Complete,
@@ -389,10 +424,18 @@ mod tests {
             progress: None,
         };
 
-        let api_session =
-            build_api_review_session(session, true, &HashSet::from(["comment-1".to_string()]));
+        let api_session = build_api_review_session(
+            session,
+            true,
+            &HashSet::from(["comment-1".to_string()]),
+            Some(&feedback_store),
+        );
 
         assert_eq!(api_session.comments.len(), 1);
+        assert_eq!(
+            api_session.comments[0].feedback_explanation.as_deref(),
+            Some("The API contract requires this behavior.")
+        );
         assert_eq!(
             api_session.comments[0].outcomes,
             vec![

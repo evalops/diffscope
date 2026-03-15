@@ -47,7 +47,7 @@ const outcomeBadge: Record<CommentOutcome, { label: string; className: string }>
 interface Props {
   comment: Comment
   variant?: 'card' | 'inline'
-  onFeedback?: (action: 'accept' | 'reject') => void
+  onFeedback?: (action: 'accept' | 'reject', explanation?: string) => void
   onLifecycleChange?: (status: 'open' | 'resolved' | 'dismissed') => void
   isActive?: boolean
   onActivate?: () => void
@@ -56,6 +56,8 @@ interface Props {
 export function CommentCard({ comment, variant = 'card', onFeedback, onLifecycleChange, isActive = false, onActivate }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [editingFeedbackNote, setEditingFeedbackNote] = useState(false)
+  const [feedbackNoteDraft, setFeedbackNoteDraft] = useState('')
   const accepted = comment.feedback === 'accept'
   const rejected = comment.feedback === 'reject'
   const lifecycle = comment.status ?? 'Open'
@@ -73,6 +75,27 @@ export function CommentCard({ comment, variant = 'card', onFeedback, onLifecycle
   const rootClass = isInline
     ? `mx-3 my-1.5 border border-border rounded-md bg-surface-2 border-l-2 ${severityBorder[comment.severity]}`
     : 'border border-border rounded-md bg-surface-2'
+  const feedbackNoteLabel = accepted
+    ? 'Why was this finding useful?'
+    : 'Why should similar findings be suppressed?'
+  const hasFeedbackNote = Boolean(comment.feedback_explanation?.trim())
+  const canSaveFeedbackNote = feedbackNoteDraft.trim().length > 0 || hasFeedbackNote
+
+  const startEditingFeedbackNote = () => {
+    setFeedbackNoteDraft(comment.feedback_explanation ?? '')
+    setEditingFeedbackNote(true)
+  }
+
+  const saveFeedbackNote = () => {
+    if (!comment.feedback || !onFeedback) return
+    onFeedback(comment.feedback, feedbackNoteDraft.trim())
+    setEditingFeedbackNote(false)
+  }
+
+  const cancelFeedbackNote = () => {
+    setFeedbackNoteDraft(comment.feedback_explanation ?? '')
+    setEditingFeedbackNote(false)
+  }
 
   return (
     <div
@@ -155,6 +178,56 @@ export function CommentCard({ comment, variant = 'card', onFeedback, onLifecycle
                 {tag}
               </span>
             ))}
+          </div>
+        )}
+
+        {comment.feedback && (onFeedback || hasFeedbackNote) && (
+          <div className="mt-3 rounded border border-border-subtle bg-surface/40 px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] text-text-muted font-code">Feedback note</span>
+              {!editingFeedbackNote && onFeedback && (
+                <button
+                  type="button"
+                  onClick={startEditingFeedbackNote}
+                  className="text-[10px] text-accent hover:text-accent-dim"
+                >
+                  {hasFeedbackNote ? 'Edit note' : 'Add note'}
+                </button>
+              )}
+            </div>
+
+            {editingFeedbackNote ? (
+              <div className="mt-2 space-y-2">
+                <textarea
+                  value={feedbackNoteDraft}
+                  onChange={(event) => setFeedbackNoteDraft(event.target.value)}
+                  placeholder={feedbackNoteLabel}
+                  rows={3}
+                  className="w-full rounded border border-border bg-surface-2 px-2 py-1.5 text-[11px] text-text-primary outline-none focus:border-accent"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={saveFeedbackNote}
+                    disabled={!canSaveFeedbackNote}
+                    className="rounded border border-accent/30 bg-accent/10 px-2 py-1 text-[10px] font-medium text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Save note
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelFeedbackNote}
+                    className="rounded border border-border px-2 py-1 text-[10px] text-text-muted hover:text-text-primary"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : hasFeedbackNote ? (
+              <p className="mt-2 text-[11px] leading-relaxed text-text-secondary">
+                {comment.feedback_explanation}
+              </p>
+            ) : null}
           </div>
         )}
 

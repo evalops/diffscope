@@ -489,10 +489,14 @@ mod tests {
 
     #[test]
     fn test_feedback_request_deserialize() {
-        let json = r#"{"comment_id": "cmt-1", "action": "accept"}"#;
+        let json = r#"{"comment_id": "cmt-1", "action": "accept", "explanation": "This catches a real auth regression."}"#;
         let req: FeedbackRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.comment_id, "cmt-1");
         assert_eq!(req.action, "accept");
+        assert_eq!(
+            req.explanation.as_deref(),
+            Some("This catches a real auth regression.")
+        );
     }
 
     #[test]

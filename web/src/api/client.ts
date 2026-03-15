@@ -40,10 +40,15 @@ export const api = {
 
   listReviews: () => request<import('./types').ReviewSession[]>('/reviews'),
 
-  submitFeedback: (reviewId: string, commentId: string, action: 'accept' | 'reject') =>
+  submitFeedback: (
+    reviewId: string,
+    commentId: string,
+    action: 'accept' | 'reject',
+    explanation?: string,
+  ) =>
     request<{ ok: boolean }>(`/review/${reviewId}/feedback`, {
       method: 'POST',
-      body: JSON.stringify({ comment_id: commentId, action }),
+      body: JSON.stringify({ comment_id: commentId, action, explanation }),
     }),
 
   updateCommentLifecycle: (

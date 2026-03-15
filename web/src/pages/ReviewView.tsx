@@ -407,8 +407,8 @@ export function ReviewView() {
     [review?.comments, reviewIsStale],
   )
 
-  const handleFeedback = useCallback((commentId: string, action: 'accept' | 'reject') => {
-    feedback.mutate({ commentId, action })
+  const handleFeedback = useCallback((commentId: string, action: 'accept' | 'reject', explanation?: string) => {
+    feedback.mutate({ commentId, action, explanation })
   }, [feedback])
 
   const handleLifecycleChange = useCallback((commentId: string, status: 'open' | 'resolved' | 'dismissed') => {
@@ -1041,7 +1041,7 @@ export function ReviewView() {
                               <span className="text-[10px] text-text-muted font-code">L{comment.line_number}</span>
                               <CommentCard
                                 comment={comment}
-                                onFeedback={action => handleFeedback(comment.id, action)}
+                                onFeedback={(action, explanation) => handleFeedback(comment.id, action, explanation)}
                                 onLifecycleChange={status => handleLifecycleChange(comment.id, status)}
                                 isActive={activeVisibleCommentId === comment.id}
                                 onActivate={() => setActiveCommentId(comment.id)}

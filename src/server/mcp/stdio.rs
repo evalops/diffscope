@@ -76,6 +76,8 @@ struct ReviewFeedbackInput {
     review_id: String,
     comment_id: String,
     action: String,
+    #[serde(default)]
+    explanation: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -436,6 +438,7 @@ impl StdioMcpServer {
         let request = api::FeedbackRequest {
             comment_id: input.comment_id.clone(),
             action: input.action.clone(),
+            explanation: input.explanation.clone(),
         };
 
         match api::submit_feedback(
@@ -828,6 +831,10 @@ fn tool_specs() -> Vec<ToolSpec> {
                         "type": "string",
                         "enum": ["accept", "reject"],
                         "description": "Feedback action"
+                    },
+                    "explanation": {
+                        "type": "string",
+                        "description": "Optional short note explaining why the feedback was accepted or rejected"
                     }
                 }),
                 &["review_id", "comment_id", "action"],

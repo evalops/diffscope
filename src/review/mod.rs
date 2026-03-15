@@ -12,11 +12,12 @@ pub use context_helpers::{
     inject_custom_context, inject_pattern_repository_context, rank_and_trim_context_chunks,
     resolve_pattern_repositories,
 };
+#[allow(unused_imports)]
 pub use feedback::{
     apply_comment_dismissal_signal, apply_comment_feedback_signal,
     apply_comment_resolution_outcome_signal, derive_file_patterns, load_feedback_store,
     load_feedback_store_from_path, record_semantic_feedback_examples, save_feedback_store,
-    CommentResolutionOutcome,
+    CommentResolutionOutcome, FeedbackExplanation, FeedbackStore,
 };
 #[allow(unused_imports)]
 pub use filters::apply_review_filters;
@@ -46,11 +47,11 @@ pub(crate) use verification::VerificationReuseCache;
 #[allow(unused_imports)]
 pub(crate) use context_helpers::PatternRepositoryMap;
 #[allow(unused_imports)]
+pub(crate) use feedback::FeedbackTypeStats;
+#[allow(unused_imports)]
 pub(crate) use feedback::{
     apply_comment_feedback_signal_at, apply_comment_resolution_outcome_signal_at,
 };
-#[allow(unused_imports)]
-pub(crate) use feedback::{FeedbackStore, FeedbackTypeStats};
 #[allow(unused_imports)]
 pub(crate) use filters::{
     classify_comment_type, is_vague_comment_text, is_vague_review_comment, ReviewCommentType,

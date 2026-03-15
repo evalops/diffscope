@@ -456,10 +456,15 @@ pub(crate) async fn get_review(
         current_head_sha.as_deref(),
     )
     .await;
+    let feedback_store = {
+        let config = state.config.read().await.clone();
+        crate::review::load_feedback_store(&config)
+    };
     Ok(Json(build_api_review_session(
         apply_dynamic_review_state(session, &latest_by_source, current_head_sha.as_deref()),
         stale_review,
         &addressed_by_follow_up_comment_ids,
+        Some(&feedback_store),
     )))
 }
 
@@ -714,6 +719,7 @@ pub(crate) async fn submit_feedback(
         semantic_comment,
         comment_content,
         comment_category,
+        file_patterns,
         primary_file_pattern,
         feedback_changed,
     ) = {
@@ -738,6 +744,7 @@ pub(crate) async fn submit_feedback(
             semantic_comment,
             comment_content,
             comment_category,
+            file_patterns,
             primary_file_pattern,
             feedback_changed,
         )
@@ -768,16 +775,36 @@ pub(crate) async fn submit_feedback(
         }
     }
 
-    // Record enhanced feedback pattern stats
-    if feedback_changed {
+    // Record enhanced feedback pattern stats and explanation guidance.
+    if feedback_changed || request.explanation.is_some() {
         let config = state.config.read().await.clone();
         let mut feedback_store = crate::review::load_feedback_store(&config);
-        if crate::review::apply_comment_feedback_signal(
-            &mut feedback_store,
-            &semantic_comment,
-            is_accepted,
-        ) {
+        let feedback_signal_recorded = feedback_changed
+            && crate::review::apply_comment_feedback_signal(
+                &mut feedback_store,
+                &semantic_comment,
+                is_accepted,
+            );
+        let explanation_recorded = if let Some(explanation) = request.explanation.as_deref() {
+            feedback_store.record_feedback_explanation(
+                &id,
+                &semantic_comment,
+                &file_patterns,
+                &request.action,
+                explanation,
+                &chrono::Utc::now().to_rfc3339(),
+            )
+        } else if feedback_changed {
+            feedback_store.clear_feedback_explanation(&id, &request.comment_id)
+        } else {
+            false
+        };
+
+        if feedback_signal_recorded || explanation_recorded {
             let _ = crate::review::save_feedback_store(&config.feedback_path, &feedback_store);
+        }
+
+        if feedback_signal_recorded {
             let _ = crate::review::record_semantic_feedback_examples(
                 &config,
                 std::slice::from_ref(&semantic_comment),
@@ -787,34 +814,38 @@ pub(crate) async fn submit_feedback(
         }
     }
 
-    // Record in convention store for learned patterns
-    let config = state.config.read().await;
-    let convention_path = config
-        .convention_store_path
-        .as_ref()
-        .map(std::path::PathBuf::from)
-        .or_else(|| dirs::data_local_dir().map(|d| d.join("diffscope").join("conventions.json")));
-    drop(config);
+    // Record in convention store for learned patterns.
+    if feedback_changed {
+        let config = state.config.read().await;
+        let convention_path = config
+            .convention_store_path
+            .as_ref()
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                dirs::data_local_dir().map(|d| d.join("diffscope").join("conventions.json"))
+            });
+        drop(config);
 
-    if let Some(ref cpath) = convention_path {
-        let json = std::fs::read_to_string(cpath).ok();
-        let mut cstore = json
-            .as_deref()
-            .and_then(|j| ConventionStore::from_json(j).ok())
-            .unwrap_or_default();
-        let now = chrono::Utc::now().to_rfc3339();
-        cstore.record_feedback(
-            &comment_content,
-            &comment_category,
-            is_accepted,
-            primary_file_pattern.as_deref(),
-            &now,
-        );
-        if let Ok(out_json) = cstore.to_json() {
-            if let Some(parent) = cpath.parent() {
-                let _ = std::fs::create_dir_all(parent);
+        if let Some(ref cpath) = convention_path {
+            let json = std::fs::read_to_string(cpath).ok();
+            let mut cstore = json
+                .as_deref()
+                .and_then(|j| ConventionStore::from_json(j).ok())
+                .unwrap_or_default();
+            let now = chrono::Utc::now().to_rfc3339();
+            cstore.record_feedback(
+                &comment_content,
+                &comment_category,
+                is_accepted,
+                primary_file_pattern.as_deref(),
+                &now,
+            );
+            if let Ok(out_json) = cstore.to_json() {
+                if let Some(parent) = cpath.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(cpath, out_json);
             }
-            let _ = std::fs::write(cpath, out_json);
         }
     }
 

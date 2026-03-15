@@ -28,7 +28,10 @@ pub use record::{
 #[allow(unused_imports)]
 pub use semantic::{record_semantic_feedback_example, record_semantic_feedback_examples};
 #[allow(unused_imports)]
-pub use store::{DecayedFeedbackStats, FeedbackPatternStats, FeedbackStore, FeedbackTypeStats};
+pub use store::{
+    DecayedFeedbackStats, FeedbackExplanation, FeedbackPatternStats, FeedbackStore,
+    FeedbackTypeStats,
+};
 
 #[cfg(test)]
 mod tests {
@@ -49,6 +52,7 @@ mod tests {
         assert!(store.by_category_file_pattern.is_empty());
         assert!(store.by_rule.is_empty());
         assert!(store.by_rule_file_pattern.is_empty());
+        assert!(store.explanations_by_comment.is_empty());
     }
 
     #[test]
@@ -99,6 +103,19 @@ mod tests {
                 not_addressed: 5,
             },
         );
+        store.explanations_by_comment.insert(
+            "review-1::comment-1".to_string(),
+            FeedbackExplanation {
+                review_id: "review-1".to_string(),
+                comment_id: "comment-1".to_string(),
+                action: "accept".to_string(),
+                category: "Security".to_string(),
+                rule_id: Some("sec.auth.boundary".to_string()),
+                file_patterns: vec!["src/**".to_string()],
+                text: "Tenant boundaries must stay explicit.".to_string(),
+                updated_at: "2026-03-15T00:00:00Z".to_string(),
+            },
+        );
 
         let json = serde_json::to_string(&store).unwrap();
         let deserialized: FeedbackStore = serde_json::from_str(&json).unwrap();
@@ -116,6 +133,7 @@ mod tests {
             deserialized.by_rule["style.rule"].decayed_total_at(123),
             Some(2.0)
         );
+        assert_eq!(deserialized.explanations_by_comment.len(), 1);
     }
 
     #[test]
@@ -355,6 +373,58 @@ mod tests {
         assert!(
             context.contains("*.test.ts"),
             "Should mention file pattern: {context}"
+        );
+    }
+
+    #[test]
+    fn generate_feedback_context_includes_feedback_explanation_guidance() {
+        let mut store = FeedbackStore::default();
+        let comment = crate::core::comment::Comment {
+            id: "comment-1".to_string(),
+            file_path: Path::new("src/auth.rs").to_path_buf(),
+            line_number: 10,
+            content: "Guard the tenant boundary before the query".to_string(),
+            rule_id: Some("sec.auth.boundary".to_string()),
+            severity: crate::core::comment::Severity::Error,
+            category: crate::core::comment::Category::Security,
+            suggestion: None,
+            confidence: 0.9,
+            code_suggestion: None,
+            tags: Vec::new(),
+            fix_effort: crate::core::comment::FixEffort::Medium,
+            feedback: Some("accept".to_string()),
+            status: crate::core::comment::CommentStatus::Open,
+            resolved_at: None,
+        };
+
+        assert!(store.record_feedback_explanation(
+            "review-1",
+            &comment,
+            &["src/**"],
+            "accept",
+            "This keeps tenant isolation explicit before any data access.",
+            "2026-03-15T00:00:00Z",
+        ));
+        assert!(store.record_feedback_explanation(
+            "review-2",
+            &crate::core::comment::Comment {
+                id: "comment-2".to_string(),
+                ..comment.clone()
+            },
+            &["src/**"],
+            "accept",
+            "Tenant isolation must stay explicit to avoid cross-account reads.",
+            "2026-03-15T00:01:00Z",
+        ));
+
+        let context = generate_feedback_context(&store);
+        assert!(
+            context.contains("sec.auth.boundary"),
+            "Should mention the rule: {context}"
+        );
+        assert!(
+            context.contains("tenant isolation"),
+            "Should surface explanation-derived guidance: {context}"
         );
     }
 }

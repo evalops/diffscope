@@ -44,8 +44,15 @@ export function useStartReview() {
 export function useSubmitFeedback(reviewId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ commentId, action }: { commentId: string; action: 'accept' | 'reject' }) =>
-      api.submitFeedback(reviewId, commentId, action),
+    mutationFn: ({
+      commentId,
+      action,
+      explanation,
+    }: {
+      commentId: string
+      action: 'accept' | 'reject'
+      explanation?: string
+    }) => api.submitFeedback(reviewId, commentId, action, explanation),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['review', reviewId] })
     },

@@ -151,6 +151,36 @@ describe('CommentCard', () => {
     expect(onFeedback).toHaveBeenCalledWith('reject')
   })
 
+  it('saves feedback notes for already labeled findings', async () => {
+    const user = userEvent.setup()
+    const onFeedback = vi.fn()
+    render(
+      <CommentCard
+        comment={makeComment({ feedback: 'accept' })}
+        onFeedback={onFeedback}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Add note' }))
+    await user.type(screen.getByPlaceholderText('Why was this finding useful?'), 'This blocks a real auth regression.')
+    await user.click(screen.getByRole('button', { name: 'Save note' }))
+
+    expect(onFeedback).toHaveBeenCalledWith('accept', 'This blocks a real auth regression.')
+  })
+
+  it('renders persisted feedback notes', () => {
+    render(
+      <CommentCard
+        comment={makeComment({
+          feedback: 'reject',
+          feedback_explanation: 'This is already enforced by the design system.',
+        })}
+      />,
+    )
+
+    expect(screen.getByText('This is already enforced by the design system.')).toBeInTheDocument()
+  })
+
   it('does not render feedback buttons when onFeedback is not provided', () => {
     render(<CommentCard comment={makeComment()} />)
     expect(screen.queryByTitle('Accept finding')).not.toBeInTheDocument()

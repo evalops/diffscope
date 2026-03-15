@@ -2,7 +2,25 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::core;
+
 const RULE_REINFORCEMENT_DECAY_HALF_LIFE_SECS: f64 = 30.0 * 24.0 * 60.0 * 60.0;
+const MAX_FEEDBACK_EXPLANATIONS: usize = 512;
+const MAX_FEEDBACK_EXPLANATION_CHARS: usize = 600;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FeedbackExplanation {
+    pub review_id: String,
+    pub comment_id: String,
+    pub action: String,
+    pub category: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_patterns: Vec<String>,
+    pub text: String,
+    pub updated_at: String,
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct FeedbackTypeStats {
@@ -155,6 +173,8 @@ pub struct FeedbackStore {
     /// Feedback stats keyed by composite "rule_id|*.ext".
     #[serde(default)]
     pub by_rule_file_pattern: HashMap<String, FeedbackPatternStats>,
+    #[serde(default)]
+    pub explanations_by_comment: HashMap<String, FeedbackExplanation>,
 }
 
 impl FeedbackStore {
@@ -343,6 +363,109 @@ impl FeedbackStore {
             comp_stats.record_decayed_signal(addressed, timestamp);
         }
     }
+
+    pub fn feedback_explanation(
+        &self,
+        review_id: &str,
+        comment_id: &str,
+    ) -> Option<&FeedbackExplanation> {
+        self.explanations_by_comment
+            .get(&feedback_explanation_key(review_id, comment_id))
+    }
+
+    pub fn record_feedback_explanation<S>(
+        &mut self,
+        review_id: &str,
+        comment: &core::Comment,
+        file_patterns: &[S],
+        action: &str,
+        text: &str,
+        updated_at: &str,
+    ) -> bool
+    where
+        S: AsRef<str>,
+    {
+        let Some(text) = normalize_feedback_explanation_text(text) else {
+            return self.clear_feedback_explanation(review_id, &comment.id);
+        };
+
+        let entry = FeedbackExplanation {
+            review_id: review_id.to_string(),
+            comment_id: comment.id.clone(),
+            action: action.trim().to_ascii_lowercase(),
+            category: comment.category.to_string(),
+            rule_id: comment
+                .rule_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_ascii_lowercase()),
+            file_patterns: sorted_unique_patterns(file_patterns),
+            text,
+            updated_at: updated_at.trim().to_string(),
+        };
+
+        let key = feedback_explanation_key(review_id, &comment.id);
+        if self.explanations_by_comment.get(&key) == Some(&entry) {
+            return false;
+        }
+
+        self.explanations_by_comment.insert(key, entry);
+        trim_feedback_explanations(&mut self.explanations_by_comment);
+        true
+    }
+
+    pub fn clear_feedback_explanation(&mut self, review_id: &str, comment_id: &str) -> bool {
+        self.explanations_by_comment
+            .remove(&feedback_explanation_key(review_id, comment_id))
+            .is_some()
+    }
+}
+
+fn feedback_explanation_key(review_id: &str, comment_id: &str) -> String {
+    format!("{review_id}::{comment_id}")
+}
+
+fn normalize_feedback_explanation_text(text: &str) -> Option<String> {
+    let normalized = text
+        .replace("\r\n", "\n")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+
+    if normalized.is_empty() {
+        return None;
+    }
+    if normalized.len() <= MAX_FEEDBACK_EXPLANATION_CHARS {
+        return Some(normalized);
+    }
+
+    let mut cutoff = MAX_FEEDBACK_EXPLANATION_CHARS;
+    while cutoff > 0 && !normalized.is_char_boundary(cutoff) {
+        cutoff -= 1;
+    }
+    Some(format!("{}…", normalized[..cutoff].trim_end()))
+}
+
+fn trim_feedback_explanations(explanations: &mut HashMap<String, FeedbackExplanation>) {
+    if explanations.len() <= MAX_FEEDBACK_EXPLANATIONS {
+        return;
+    }
+
+    let mut entries = explanations
+        .iter()
+        .map(|(key, value)| (key.clone(), value.updated_at.clone()))
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.1.cmp(&right.1));
+
+    let remove_count = explanations.len().saturating_sub(MAX_FEEDBACK_EXPLANATIONS);
+    for (key, _) in entries.into_iter().take(remove_count) {
+        explanations.remove(&key);
+    }
 }
 
 fn current_timestamp() -> i64 {
@@ -382,6 +505,17 @@ where
         unique_patterns.insert(pattern.to_string());
     }
     unique_patterns
+}
+
+fn sorted_unique_patterns<S>(file_patterns: &[S]) -> Vec<String>
+where
+    S: AsRef<str>,
+{
+    let mut patterns = collect_unique_patterns(file_patterns)
+        .into_iter()
+        .collect::<Vec<_>>();
+    patterns.sort();
+    patterns
 }
 
 fn normalize_feedback_key(value: &str) -> Option<String> {

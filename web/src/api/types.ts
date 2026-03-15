@@ -30,6 +30,7 @@ export interface Comment {
   tags: string[]
   fix_effort: FixEffort
   feedback?: FeedbackAction
+  feedback_explanation?: string
   status?: CommentLifecycleStatus
   resolved_at?: string | number
   outcomes?: CommentOutcome[]
