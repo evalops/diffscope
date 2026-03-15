@@ -25,6 +25,22 @@ pub enum ModelRole {
     Fast,
 }
 
+impl ModelRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Primary => "primary",
+            Self::Weak => "weak",
+            Self::Reasoning => "reasoning",
+            Self::Embedding => "embedding",
+            Self::Fast => "fast",
+        }
+    }
+
+    pub fn supports_text_generation(self) -> bool {
+        !matches!(self, Self::Embedding)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VerificationConsensusMode {
@@ -346,6 +362,20 @@ pub struct Config {
     /// Embedding model for RAG indexing.
     #[serde(default)]
     pub model_embedding: Option<String>,
+
+    /// Which configured model role should generate review findings.
+    #[serde(
+        default = "default_generation_model_role",
+        rename = "generation_model_role"
+    )]
+    pub generation_model_role: ModelRole,
+
+    /// Which configured model role should run independent auditing tasks.
+    #[serde(
+        default = "default_auditing_model_role",
+        rename = "auditing_model_role"
+    )]
+    pub auditing_model_role: ModelRole,
 
     /// Fallback models tried in order when the primary model fails.
     #[serde(default)]
@@ -689,6 +719,8 @@ impl Default for Config {
             model_fast: default_model_fast(),
             model_reasoning: default_model_reasoning(),
             model_embedding: None,
+            generation_model_role: default_generation_model_role(),
+            auditing_model_role: default_auditing_model_role(),
             fallback_models: Vec::new(),
             temperature: default_temperature(),
             max_tokens: default_max_tokens(),
@@ -974,6 +1006,29 @@ impl Config {
         if self.model.trim().is_empty() {
             self.model = default_model();
         }
+        normalize_optional_model_name(&mut self.model_weak);
+        normalize_optional_model_name(&mut self.model_fast);
+        normalize_optional_model_name(&mut self.model_reasoning);
+        normalize_optional_model_name(&mut self.model_embedding);
+        normalize_text_generation_role(
+            &mut self.generation_model_role,
+            default_generation_model_role(),
+            "generation_model_role",
+        );
+        normalize_text_generation_role(
+            &mut self.auditing_model_role,
+            default_auditing_model_role(),
+            "auditing_model_role",
+        );
+        normalize_text_generation_role(
+            &mut self.verification.model_role,
+            default_verification_model_role(),
+            "verification_model_role",
+        );
+        self.verification.additional_model_roles = normalize_text_generation_roles(
+            &self.verification.additional_model_roles,
+            Some(self.verification.model_role),
+        );
 
         if !self.temperature.is_finite() || self.temperature < 0.0 || self.temperature > 2.0 {
             warn!(
@@ -1342,11 +1397,34 @@ impl Config {
         }
     }
 
+    pub fn generation_model_name(&self) -> &str {
+        self.model_for_role(self.generation_model_role)
+    }
+
+    pub fn auditing_model_name(&self) -> &str {
+        self.model_for_role(self.auditing_model_role)
+    }
+
     /// Build a ModelConfig for a specific role.
     pub fn to_model_config_for_role(&self, role: ModelRole) -> crate::adapters::llm::ModelConfig {
         let mut config = self.to_model_config();
         config.model_name = self.model_for_role(role).to_string();
         config
+    }
+
+    pub fn set_model_for_role(&mut self, role: ModelRole, model_name: impl Into<String>) {
+        let model_name = model_name.into().trim().to_string();
+        if model_name.is_empty() {
+            return;
+        }
+
+        match role {
+            ModelRole::Primary => self.model = model_name,
+            ModelRole::Weak => self.model_weak = Some(model_name),
+            ModelRole::Reasoning => self.model_reasoning = Some(model_name),
+            ModelRole::Embedding => self.model_embedding = Some(model_name),
+            ModelRole::Fast => self.model_fast = Some(model_name),
+        }
     }
 
     /// Resolve which provider to use based on configuration.
@@ -1660,6 +1738,14 @@ fn default_false() -> bool {
     false
 }
 
+fn default_generation_model_role() -> ModelRole {
+    ModelRole::Primary
+}
+
+fn default_auditing_model_role() -> ModelRole {
+    ModelRole::Reasoning
+}
+
 fn default_agent_max_iterations() -> usize {
     10
 }
@@ -1710,6 +1796,49 @@ fn default_semantic_feedback_min_examples() -> usize {
 
 fn default_semantic_feedback_max_neighbors() -> usize {
     8
+}
+
+fn normalize_optional_model_name(value: &mut Option<String>) {
+    let Some(current) = value.as_ref() else {
+        return;
+    };
+
+    let trimmed = current.trim();
+    if trimmed.is_empty() {
+        *value = None;
+    } else if trimmed.len() != current.len() {
+        *value = Some(trimmed.to_string());
+    }
+}
+
+fn normalize_text_generation_role(role: &mut ModelRole, default_role: ModelRole, field_name: &str) {
+    if role.supports_text_generation() {
+        return;
+    }
+
+    warn!(
+        "{} does not support text generation; resetting to {}",
+        field_name,
+        default_role.as_str()
+    );
+    *role = default_role;
+}
+
+fn normalize_text_generation_roles(
+    roles: &[ModelRole],
+    exclude_role: Option<ModelRole>,
+) -> Vec<ModelRole> {
+    let mut normalized = Vec::new();
+    for role in roles.iter().copied() {
+        if !role.supports_text_generation()
+            || Some(role) == exclude_role
+            || normalized.contains(&role)
+        {
+            continue;
+        }
+        normalized.push(role);
+    }
+    normalized
 }
 
 fn normalize_comment_types(values: &[String]) -> Vec<String> {
@@ -2317,6 +2446,68 @@ mod tests {
 
         let weak_config = config.to_model_config_for_role(ModelRole::Weak);
         assert_eq!(weak_config.model_name, "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn test_generation_and_auditing_roles_default() {
+        let config = Config::default();
+        assert_eq!(config.generation_model_role, ModelRole::Primary);
+        assert_eq!(config.auditing_model_role, ModelRole::Reasoning);
+        assert_eq!(config.generation_model_name(), config.model.as_str());
+        assert_eq!(config.auditing_model_name(), "anthropic/claude-opus-4.5");
+    }
+
+    #[test]
+    fn test_config_deserialize_model_routing_roles_from_yaml() {
+        let yaml = r#"
+model: claude-sonnet-4-6
+model_reasoning: claude-opus-4-6
+generation_model_role: reasoning
+auditing_model_role: primary
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.generation_model_role, ModelRole::Reasoning);
+        assert_eq!(config.auditing_model_role, ModelRole::Primary);
+        assert_eq!(config.generation_model_name(), "claude-opus-4-6");
+        assert_eq!(config.auditing_model_name(), "claude-sonnet-4-6");
+    }
+
+    #[test]
+    fn test_set_model_for_role_updates_selected_slot() {
+        let mut config = Config::default();
+        config.set_model_for_role(ModelRole::Reasoning, "openai/o3");
+        config.set_model_for_role(ModelRole::Fast, "openai/gpt-4.1-mini");
+
+        assert_eq!(config.model_reasoning.as_deref(), Some("openai/o3"));
+        assert_eq!(config.model_fast.as_deref(), Some("openai/gpt-4.1-mini"));
+    }
+
+    #[test]
+    fn test_normalize_rejects_embedding_for_generation_verification_and_auditing() {
+        let mut config = Config {
+            generation_model_role: ModelRole::Embedding,
+            auditing_model_role: ModelRole::Embedding,
+            verification: VerificationConfig {
+                model_role: ModelRole::Embedding,
+                additional_model_roles: vec![
+                    ModelRole::Embedding,
+                    ModelRole::Reasoning,
+                    ModelRole::Reasoning,
+                ],
+                ..VerificationConfig::default()
+            },
+            ..Config::default()
+        };
+
+        config.normalize();
+
+        assert_eq!(config.generation_model_role, ModelRole::Primary);
+        assert_eq!(config.auditing_model_role, ModelRole::Reasoning);
+        assert_eq!(config.verification.model_role, ModelRole::Weak);
+        assert_eq!(
+            config.verification.additional_model_roles,
+            vec![ModelRole::Reasoning]
+        );
     }
 
     #[test]

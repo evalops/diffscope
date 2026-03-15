@@ -3210,7 +3210,7 @@ pub(crate) async fn run_pr_review_task(
     let mut config = state.config.read().await.clone();
     let repo_path = state.repo_path.clone();
     let github_token = config.github.token.clone();
-    let model = config.model.clone();
+    let model = config.generation_model_name().to_string();
     let provider = config.adapter.clone();
     let base_url = config.base_url.clone();
     let summary_config = if config.smart_review_summary {

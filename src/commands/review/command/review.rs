@@ -15,7 +15,10 @@ pub async fn review_command(
     output_path: Option<PathBuf>,
     format: OutputFormat,
 ) -> Result<()> {
-    info!("Starting diff review with model: {}", config.model);
+    info!(
+        "Starting diff review with generation model: {}",
+        config.generation_model_name()
+    );
 
     let (repo_root, diff_content) = load_review_input(diff_path).await?;
     if diff_content.trim().is_empty() {

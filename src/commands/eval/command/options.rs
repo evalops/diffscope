@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::collections::HashSet;
 
-use crate::config::{self, ModelRole};
+use crate::config;
 
 use super::super::fixtures::load_eval_report;
 use super::super::thresholds::{parse_rule_threshold_args, EvalThresholdOptions};
@@ -56,7 +56,7 @@ pub(super) fn ensure_frontier_eval_models(
 
     let mut models = Vec::new();
     let mut seen_models = HashSet::new();
-    for model in std::iter::once(config.model.clone())
+    for model in std::iter::once(config.generation_model_name().to_string())
         .chain(options.matrix_models.iter().cloned())
         .chain(
             std::iter::once(config.verification.model_role)
@@ -66,7 +66,7 @@ pub(super) fn ensure_frontier_eval_models(
         .chain(
             options
                 .repro_validate
-                .then(|| config.model_for_role(ModelRole::Fast).to_string()),
+                .then(|| config.auditing_model_name().to_string()),
         )
     {
         if seen_models.insert(model.clone()) {
@@ -111,6 +111,7 @@ fn is_frontier_review_model(model: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ModelRole;
 
     #[test]
     fn is_frontier_review_model_accepts_requested_defaults() {
@@ -123,5 +124,21 @@ mod tests {
         assert!(!is_frontier_review_model("claude-haiku-4-5"));
         assert!(!is_frontier_review_model("gpt-4o-mini"));
         assert!(!is_frontier_review_model("anthropic/claude-opus-4.1"));
+    }
+
+    #[test]
+    fn ensure_frontier_eval_models_rejects_non_frontier_auditor_when_repro_enabled() {
+        let config = config::Config {
+            model_reasoning: Some("gpt-4o-mini".to_string()),
+            auditing_model_role: ModelRole::Reasoning,
+            ..config::Config::default()
+        };
+        let options = EvalRunOptions {
+            repro_validate: true,
+            ..EvalRunOptions::default()
+        };
+
+        let error = ensure_frontier_eval_models(&config, &options).unwrap_err();
+        assert!(error.to_string().contains("gpt-4o-mini"));
     }
 }

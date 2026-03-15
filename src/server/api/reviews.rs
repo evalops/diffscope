@@ -15,7 +15,7 @@ pub(crate) async fn get_status(State(state): State<Arc<AppState>>) -> Json<Statu
     Json(StatusResponse {
         repo_path: state.repo_path.display().to_string(),
         branch,
-        model: config.model.clone(),
+        model: config.generation_model_name().to_string(),
         adapter: config.adapter.clone(),
         base_url: config.base_url.clone(),
         active_reviews: reviews
@@ -173,7 +173,7 @@ pub(crate) async fn run_review_task(
 
     // Apply per-review overrides
     if let Some(m) = overrides.model {
-        config.model = m;
+        config.set_model_for_role(config.generation_model_role, m);
     }
     if let Some(s) = overrides.strictness {
         config.strictness = s.clamp(1, 3);
@@ -182,7 +182,7 @@ pub(crate) async fn run_review_task(
         config.review_profile = Some(p);
     }
 
-    let model = config.model.clone();
+    let model = config.generation_model_name().to_string();
     let provider = config.adapter.clone();
     let base_url = config.base_url.clone();
 

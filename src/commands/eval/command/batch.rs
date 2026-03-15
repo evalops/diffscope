@@ -161,7 +161,7 @@ pub(super) async fn run_eval_batch(
         for review_mode in &review_modes {
             for repeat_index in 1..=repeat_total {
                 let mut run_config = config.clone();
-                run_config.model = model.clone();
+                run_config.set_model_for_role(run_config.generation_model_role, model.clone());
                 run_config.agent.enabled = review_mode.agent_enabled();
 
                 let mut run_options = options.clone();
@@ -272,7 +272,7 @@ fn batch_review_modes(
 
 fn matrix_models(config: &config::Config, options: &EvalRunOptions) -> Vec<String> {
     let mut models = Vec::new();
-    push_unique_model(&mut models, &config.model);
+    push_unique_model(&mut models, config.generation_model_name());
     for model in &options.matrix_models {
         let normalized = model.trim();
         if !normalized.is_empty() {

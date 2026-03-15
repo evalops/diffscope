@@ -16,8 +16,8 @@ pub async fn smart_review_command(
     output_path: Option<PathBuf>,
 ) -> Result<()> {
     info!(
-        "Starting smart review analysis with model: {}",
-        config.model
+        "Starting smart review analysis with generation model: {}",
+        config.generation_model_name()
     );
 
     let (repo_root, diff_content) = super::super::review::load_review_input(diff_path).await?;

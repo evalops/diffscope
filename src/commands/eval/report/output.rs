@@ -16,6 +16,12 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
         if let Some(label) = report.run.label.as_deref() {
             println!("Run label: {label}");
         }
+        if let Some(generation_role) = report.run.generation_model_role.as_deref() {
+            println!(
+                "Generation route: {generation_role} -> {}",
+                report.run.model
+            );
+        }
         if !report.run.review_mode.is_empty() {
             println!("Review mode: {}", report.run.review_mode);
         }
@@ -41,6 +47,12 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
         }
         if let Some(consensus_mode) = report.run.verification_consensus_mode.as_deref() {
             println!("Verification consensus: {consensus_mode}");
+        }
+        if let (Some(auditing_role), Some(auditing_model)) = (
+            report.run.auditing_model_role.as_deref(),
+            report.run.auditing_model.as_deref(),
+        ) {
+            println!("Auditing route: {auditing_role} -> {auditing_model}");
         }
         if let Some(trend_file) = report.run.trend_file.as_deref() {
             println!("Trend file: {trend_file}");

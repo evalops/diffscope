@@ -43,7 +43,7 @@ pub(super) async fn run_eval_fixtures(
             .map(|artifact_dir| EvalFixtureArtifactContext {
                 artifact_dir: artifact_dir.clone(),
                 run_label: options.label.clone(),
-                model: config.model.clone(),
+                model: config.generation_model_name().to_string(),
             });
 
     let mut results = Vec::new();

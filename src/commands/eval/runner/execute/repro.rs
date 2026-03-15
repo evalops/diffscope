@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::adapters;
 use crate::adapters::llm::{LLMRequest, StructuredOutputSchema};
-use crate::config::{self, ModelRole};
+use crate::config;
 use crate::core;
 use crate::core::agent_loop::AgentToolCallLog;
 use crate::core::agent_tools::{build_review_tools, ReviewTool, ReviewToolContext};
@@ -52,7 +52,7 @@ pub(super) async fn maybe_run_reproduction_validation(
         return Ok(None);
     }
 
-    let model_config = config.to_model_config_for_role(ModelRole::Fast);
+    let model_config = config.to_model_config_for_role(config.auditing_model_role);
     let model_name = model_config.model_name.clone();
     let adapter: Arc<dyn adapters::llm::LLMAdapter> =
         Arc::from(adapters::llm::create_adapter(&model_config)?);

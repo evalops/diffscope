@@ -15,10 +15,14 @@ pub(super) struct AdapterServices {
 }
 
 pub(super) fn build_adapter_services(config: &config::Config) -> Result<AdapterServices> {
-    let model_config = config.to_model_config();
+    let model_config = config.to_model_config_for_role(config.generation_model_role);
     let adapter: Arc<dyn adapters::llm::LLMAdapter> =
         Arc::from(adapters::llm::create_adapter(&model_config)?);
-    info!("Review adapter: {}", adapter.model_name());
+    info!(
+        "Review adapter ({} role): {}",
+        config.generation_model_role.as_str(),
+        adapter.model_name()
+    );
 
     Ok(AdapterServices {
         verification_adapters: build_verification_adapters(config, &model_config, &adapter)?,
@@ -95,7 +99,7 @@ pub(super) fn should_optimize_for_local(config: &config::Config) -> bool {
     if config.context_window.is_some() {
         return true;
     }
-    if config.model.starts_with("ollama:") {
+    if config.generation_model_name().starts_with("ollama:") {
         return true;
     }
     if config.adapter.as_deref() == Some("ollama") {

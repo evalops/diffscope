@@ -897,7 +897,7 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
 
     let config = state.config.read().await.clone();
     let repo_path = state.repo_path.clone();
-    let model = config.model.clone();
+    let model = config.generation_model_name().to_string();
     let provider = config.adapter.clone();
     let base_url = config.base_url.clone();
     let summary_config = if config.smart_review_summary {

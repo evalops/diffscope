@@ -88,6 +88,7 @@ fn build_eval_run_metadata(
         resolved_base_url.as_deref().or(config.base_url.as_deref()),
         resolved_adapter.as_deref().or(config.adapter.as_deref()),
     );
+    let generation_model = config.generation_model_name().to_string();
     let mut verification_judges = Vec::new();
     let mut seen_verification_judges = HashSet::new();
     for role in std::iter::once(config.verification.model_role)
@@ -106,7 +107,8 @@ fn build_eval_run_metadata(
         fixtures_selected: execution.selected_count,
         label: options.label.clone(),
         comparison_group: options.comparison_group.clone(),
-        model: config.model.clone(),
+        model: generation_model,
+        generation_model_role: Some(config.generation_model_role.as_str().to_string()),
         review_mode: review_mode_label(config.agent.enabled).to_string(),
         adapter: resolved_adapter.or_else(|| config.adapter.clone()),
         provider,
@@ -124,6 +126,12 @@ fn build_eval_run_metadata(
             .verification
             .enabled
             .then(|| config.verification.consensus_mode.as_str().to_string()),
+        auditing_model: options
+            .repro_validate
+            .then(|| config.auditing_model_name().to_string()),
+        auditing_model_role: options
+            .repro_validate
+            .then(|| config.auditing_model_role.as_str().to_string()),
         trend_file: options
             .trend_file
             .as_ref()

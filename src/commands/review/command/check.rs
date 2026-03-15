@@ -13,7 +13,7 @@ pub async fn check_command(
     format: OutputFormat,
 ) -> Result<()> {
     info!("Checking repository at: {}", path.display());
-    info!("Using model: {}", config.model);
+    info!("Using generation model: {}", config.generation_model_name());
 
     let git = core::GitIntegration::new(&path)?;
     let diff_content = git.get_uncommitted_diff()?;

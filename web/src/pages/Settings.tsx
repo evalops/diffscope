@@ -227,12 +227,11 @@ function setProviders(form: Record<string, unknown>, providers: ProvidersMap): R
 
 type ConnStatus = 'untested' | 'ok' | 'failed'
 
-const MODEL_ROLE_OPTIONS = [
+const TEXT_MODEL_ROLE_OPTIONS = [
   { value: 'primary', label: 'Primary' },
   { value: 'weak', label: 'Weak' },
   { value: 'fast', label: 'Fast' },
   { value: 'reasoning', label: 'Reasoning' },
-  { value: 'embedding', label: 'Embedding' },
 ]
 
 const VERIFICATION_CONSENSUS_OPTIONS = [
@@ -937,6 +936,14 @@ export function Settings() {
         </div>
       </Section>
 
+      <Section title="MODEL ROUTING" defaultOpen={false}>
+        <div className="space-y-3">
+          {selectField('Generation Role', 'generation_model_role', TEXT_MODEL_ROLE_OPTIONS, 'Which configured model role generates review findings')}
+          {selectField('Auditing Role', 'auditing_model_role', TEXT_MODEL_ROLE_OPTIONS, 'Which configured model role runs independent auditors such as replay and reproduction validators')}
+          <p className="text-[10px] text-text-muted">Verification judges are configured separately in the Verification Pass section.</p>
+        </div>
+      </Section>
+
       <Section title="LLM TUNING">
         <div className="space-y-3">
           {field('Temperature', 'temperature', 'number', '0.2', 'Creativity (0.0 = deterministic, 2.0 = max)')}
@@ -1099,11 +1106,11 @@ export function Settings() {
           onChange={v => setForm({ ...form, verification_pass: v })}
         />
         <div className="space-y-3 mt-3">
-          {selectField('Primary Judge Role', 'verification_model_role', MODEL_ROLE_OPTIONS, 'Which configured model role should run the first verification pass')}
+          {selectField('Primary Judge Role', 'verification_model_role', TEXT_MODEL_ROLE_OPTIONS, 'Which configured model role should run the first verification pass')}
           <div>
             <label className="block text-[12px] font-medium text-text-secondary mb-1">Additional Judge Roles</label>
             <div className="flex gap-2 flex-wrap">
-              {MODEL_ROLE_OPTIONS
+              {TEXT_MODEL_ROLE_OPTIONS
                 .filter(option => option.value !== String(form.verification_model_role ?? 'weak'))
                 .map(option => {
                   const active = stringArrayField('verification_additional_model_roles').includes(option.value)

@@ -88,7 +88,7 @@ pub async fn review_diff_content_raw_with_verification_reuse(
     .await
 }
 
-#[tracing::instrument(name = "review_pipeline", skip(diff_content, config, repo_path, on_progress), fields(diff_bytes = diff_content.len(), model = %config.model))]
+#[tracing::instrument(name = "review_pipeline", skip(diff_content, config, repo_path, on_progress), fields(diff_bytes = diff_content.len(), model = %config.generation_model_name()))]
 pub async fn review_diff_content_raw_with_progress(
     diff_content: &str,
     config: config::Config,

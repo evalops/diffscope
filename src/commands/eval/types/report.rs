@@ -40,6 +40,8 @@ pub struct EvalRunMetadata {
     pub comparison_group: Option<String>,
     #[serde(default)]
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_model_role: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub review_mode: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -56,6 +58,10 @@ pub struct EvalRunMetadata {
     pub verification_judges: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_consensus_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auditing_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auditing_model_role: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trend_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
