@@ -212,6 +212,7 @@ mod tests {
             fixtures,
             &EvalRunOptions {
                 baseline_report: None,
+                compare_agent_loop: false,
                 max_micro_f1_drop: None,
                 max_suite_f1_drop: None,
                 max_category_f1_drop: None,
@@ -256,6 +257,7 @@ mod tests {
             fixtures,
             &EvalRunOptions {
                 baseline_report: None,
+                compare_agent_loop: false,
                 max_micro_f1_drop: None,
                 max_suite_f1_drop: None,
                 max_category_f1_drop: None,

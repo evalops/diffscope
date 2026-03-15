@@ -143,7 +143,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 92. [x] Add eval fixtures for merge-readiness judgments and unresolved-blocker classification.
 93. [x] Add eval fixtures for addressed-vs-stale finding lifecycle inference.
 94. [x] Add eval fixtures for multi-hop graph reasoning across call chains and contract edges.
-95. [ ] Add eval runs that compare single-pass review against agentic loop review.
+95. [x] Add eval runs that compare single-pass review against agentic loop review.
 96. [ ] Add production replay evals using anonymized accepted/rejected review outcomes.
 97. [ ] Add leaderboard reporting for reviewer usefulness metrics, not just precision/recall.
 98. [x] Add regression gates for feedback coverage, verifier health, and lifecycle-state accuracy.

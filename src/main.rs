@@ -368,6 +368,13 @@ enum Commands {
 
         #[arg(
             long,
+            default_value_t = false,
+            help = "Run evals in both single-pass and agent-loop review modes and compare the results"
+        )]
+        compare_agent_loop: bool,
+
+        #[arg(
+            long,
             value_delimiter = ',',
             help = "Per-rule minimum F1 thresholds as rule_id=value (repeatable)"
         )]
@@ -776,6 +783,7 @@ async fn main() -> Result<()> {
             min_macro_f1,
             min_verification_health,
             min_lifecycle_accuracy,
+            compare_agent_loop,
             min_rule_f1,
             max_rule_f1_drop,
             matrix_model,
@@ -802,6 +810,7 @@ async fn main() -> Result<()> {
                 min_macro_f1,
                 min_verification_health,
                 min_lifecycle_accuracy,
+                compare_agent_loop,
                 min_rule_f1,
                 max_rule_f1_drop,
                 matrix_models: matrix_model,

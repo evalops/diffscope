@@ -43,7 +43,7 @@ pub async fn eval_command(
         }
     }
     ensure_frontier_eval_models(&config, &options)?;
-    if options.repeat > 1 || !options.matrix_models.is_empty() {
+    if options.compare_agent_loop || options.repeat > 1 || !options.matrix_models.is_empty() {
         return run_eval_batch(config, &fixtures_dir, output_path.as_deref(), &options).await;
     }
 
@@ -106,6 +106,7 @@ fn build_eval_run_metadata(
         fixtures_selected: execution.selected_count,
         label: options.label.clone(),
         model: config.model.clone(),
+        review_mode: review_mode_label(config.agent.enabled).to_string(),
         adapter: resolved_adapter.or_else(|| config.adapter.clone()),
         provider,
         base_url: resolved_base_url.or_else(|| config.base_url.clone()),
@@ -139,4 +140,12 @@ fn inferred_provider(base_url: Option<&str>, adapter: Option<&str>) -> Option<St
     }
 
     adapter.map(|value| value.to_string())
+}
+
+fn review_mode_label(agent_enabled: bool) -> &'static str {
+    if agent_enabled {
+        "agent-loop"
+    } else {
+        "single-pass"
+    }
 }

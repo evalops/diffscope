@@ -38,6 +38,8 @@ pub struct EvalRunMetadata {
     pub label: Option<String>,
     #[serde(default)]
     pub model: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub review_mode: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adapter: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

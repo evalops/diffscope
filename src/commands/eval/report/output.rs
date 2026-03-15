@@ -16,6 +16,9 @@ pub(in super::super) fn print_eval_report(report: &EvalReport) {
         if let Some(label) = report.run.label.as_deref() {
             println!("Run label: {label}");
         }
+        if !report.run.review_mode.is_empty() {
+            println!("Review mode: {}", report.run.review_mode);
+        }
         if !report.run.started_at.is_empty() {
             println!("Started at: {}", report.run.started_at);
         }

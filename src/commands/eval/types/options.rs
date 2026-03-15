@@ -3,6 +3,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Default)]
 pub struct EvalRunOptions {
     pub baseline_report: Option<PathBuf>,
+    pub compare_agent_loop: bool,
     pub max_micro_f1_drop: Option<f32>,
     pub max_suite_f1_drop: Option<f32>,
     pub max_category_f1_drop: Option<f32>,
