@@ -1,0 +1,28 @@
+name: repo regression - review run column added without migration
+repo_path: migration_drift_repo
+diff: |
+  diff --git a/user_repo.rs b/user_repo.rs
+  index 1111111..2222222 100644
+  --- a/user_repo.rs
+  +++ b/user_repo.rs
+  @@ -1,6 +1,6 @@
+   pub fn insert_review(db: &Db, review: &Review) {
+       db.execute(
+  -        "insert into review_runs (id, status) values ($1, $2)",
+  +        "insert into review_runs (id, status, last_reviewed_at) values ($1, $2, $3)",
+  -        &[&review.id, &review.status],
+  +        &[&review.id, &review.status, &review.last_reviewed_at],
+       );
+   }
+expect:
+  must_find:
+    - file: user_repo.rs
+      contains_any:
+        - missing migration
+        - schema drift
+        - review_runs table does not define last_reviewed_at
+        - add a database migration for the new column
+  must_not_find:
+    - contains: style
+  min_total: 1
+  max_total: 8

@@ -1,0 +1,24 @@
+name: repo regression - API status breaks documented contract
+repo_path: api_contract_repo
+diff: |
+  diff --git a/handlers.py b/handlers.py
+  index 1111111..2222222 100644
+  --- a/handlers.py
+  +++ b/handlers.py
+  @@ -1,3 +1,3 @@
+   def serialize_order(order):
+  -    status = "shipped" if order.shipped_at else "pending"
+  +    status = "fulfilled" if order.shipped_at else "pending"
+       return {"id": order.id, "status": status}
+expect:
+  must_find:
+    - file: handlers.py
+      contains_any:
+        - API contract drift
+        - openapi schema
+        - fulfilled is not part of the documented status enum
+        - documented enum only allows pending shipped or cancelled
+  must_not_find:
+    - contains: style
+  min_total: 1
+  max_total: 8

@@ -1,0 +1,24 @@
+name: repo regression - deployment env var rename not wired through charts
+repo_path: deploy_env_repo
+diff: |
+  diff --git a/settings.ts b/settings.ts
+  index 1111111..2222222 100644
+  --- a/settings.ts
+  +++ b/settings.ts
+  @@ -1,3 +1,3 @@
+   export function webhookSecret(env: NodeJS.ProcessEnv): string | undefined {
+  -  return env.AUTOMATION_WEBHOOK_SECRET
+  +  return env.REVIEW_WEBHOOK_SECRET
+   }
+expect:
+  must_find:
+    - file: settings.ts
+      contains_any:
+        - deployment configuration drift
+        - Helm chart still injects AUTOMATION_WEBHOOK_SECRET
+        - renamed environment variable is not wired through deployment manifests
+        - update charts or keep the old environment variable name
+  must_not_find:
+    - contains: style
+  min_total: 1
+  max_total: 8

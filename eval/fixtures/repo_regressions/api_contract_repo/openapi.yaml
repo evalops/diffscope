@@ -1,0 +1,17 @@
+openapi: 3.1.0
+info:
+  title: Orders API
+  version: 1.0.0
+components:
+  schemas:
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - shipped
+            - cancelled

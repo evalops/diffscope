@@ -1,0 +1,6 @@
+env:
+  - name: AUTOMATION_WEBHOOK_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: diffscope-secrets
+        key: automationWebhookSecret

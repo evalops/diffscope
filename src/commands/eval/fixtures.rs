@@ -870,4 +870,82 @@ expect:
             Some("perf.resource.file-handle-leak")
         );
     }
+
+    #[test]
+    fn test_checked_in_api_contract_alignment_fixture_loads_expected_repo_context() {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/repo_regressions/api_contract_breaking_status.yml");
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("repo regression - API status breaks documented contract")
+        );
+        assert_eq!(
+            fixtures[0].fixture.repo_path,
+            Some(std::path::PathBuf::from("api_contract_repo"))
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].file.as_deref(),
+            Some("handlers.py")
+        );
+        assert!(fixtures[0].fixture.expect.must_find[0]
+            .contains_any
+            .iter()
+            .any(|phrase| phrase.contains("openapi")));
+    }
+
+    #[test]
+    fn test_checked_in_migration_drift_fixture_loads_expected_repo_context() {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/repo_regressions/missing_review_run_migration.yml");
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("repo regression - review run column added without migration")
+        );
+        assert_eq!(
+            fixtures[0].fixture.repo_path,
+            Some(std::path::PathBuf::from("migration_drift_repo"))
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].file.as_deref(),
+            Some("user_repo.rs")
+        );
+        assert!(fixtures[0].fixture.expect.must_find[0]
+            .contains_any
+            .iter()
+            .any(|phrase| phrase.contains("migration")));
+    }
+
+    #[test]
+    fn test_checked_in_deployment_env_fixture_loads_expected_repo_context() {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/repo_regressions/deployment_env_var_drift.yml");
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("repo regression - deployment env var rename not wired through charts")
+        );
+        assert_eq!(
+            fixtures[0].fixture.repo_path,
+            Some(std::path::PathBuf::from("deploy_env_repo"))
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].file.as_deref(),
+            Some("settings.ts")
+        );
+        assert!(fixtures[0].fixture.expect.must_find[0]
+            .contains_any
+            .iter()
+            .any(|phrase| phrase.contains("Helm")));
+    }
 }
