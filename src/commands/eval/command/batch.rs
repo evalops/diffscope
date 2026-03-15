@@ -1,9 +1,11 @@
 use anyhow::Result;
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::config;
 
+use super::super::metrics::build_lifecycle_accuracy;
 use super::super::report::evaluation_failure_message;
 use super::super::{EvalReport, EvalRunOptions};
 use super::build_eval_run_metadata;
@@ -67,6 +69,24 @@ struct EvalBatchReviewModeComparison {
 }
 
 #[derive(Debug, Serialize)]
+struct EvalReviewerLeaderboardEntry {
+    rank: usize,
+    reviewer: String,
+    model: String,
+    provider: Option<String>,
+    review_mode: String,
+    runs: usize,
+    passing_runs: usize,
+    pass_rate: f32,
+    average_micro_f1: Option<f32>,
+    average_weighted_score: Option<f32>,
+    average_verification_health: Option<f32>,
+    average_lifecycle_accuracy: Option<f32>,
+    usefulness_score: f32,
+    provisional: bool,
+}
+
+#[derive(Debug, Serialize)]
 struct EvalBatchModelSummary {
     model: String,
     provider: Option<String>,
@@ -85,6 +105,7 @@ struct EvalBatchReport {
     repeat: usize,
     models: Vec<String>,
     review_modes: Vec<String>,
+    leaderboard: Vec<EvalReviewerLeaderboardEntry>,
     by_model: Vec<EvalBatchModelSummary>,
     runs: Vec<EvalReport>,
 }
@@ -383,9 +404,160 @@ fn build_batch_report(
         repeat: repeat_total,
         models,
         review_modes,
+        leaderboard: build_reviewer_leaderboard(&runs),
         by_model,
         runs,
     }
+}
+
+fn build_reviewer_leaderboard(runs: &[EvalReport]) -> Vec<EvalReviewerLeaderboardEntry> {
+    let mut grouped = BTreeMap::<(String, Option<String>, String), Vec<&EvalReport>>::new();
+    for report in runs {
+        grouped
+            .entry((
+                report.run.model.clone(),
+                report.run.provider.clone(),
+                report_review_mode(report).to_string(),
+            ))
+            .or_default()
+            .push(report);
+    }
+
+    let mut leaderboard = grouped
+        .into_iter()
+        .map(|((model, provider, review_mode), reports)| {
+            let average_micro_f1 = average_benchmark_metric(&reports, |report| {
+                report
+                    .benchmark_summary
+                    .as_ref()
+                    .map(|metrics| metrics.micro_f1)
+            });
+            let average_weighted_score = average_benchmark_metric(&reports, |report| {
+                report
+                    .benchmark_summary
+                    .as_ref()
+                    .map(|metrics| metrics.weighted_score)
+            });
+            let average_verification_health = average_report_metric(&reports, |report| {
+                report
+                    .verification_health
+                    .as_ref()
+                    .map(|health| health.verified_pct)
+            });
+            let average_lifecycle_accuracy = average_report_metric(&reports, |report| {
+                build_lifecycle_accuracy(&report.results).map(|accuracy| accuracy.rate)
+            });
+            let passing_runs = reports
+                .iter()
+                .filter(|report| evaluation_failure_message(report).is_none())
+                .count();
+            let pass_rate = pass_rate(passing_runs, reports.len());
+
+            EvalReviewerLeaderboardEntry {
+                rank: 0,
+                reviewer: reviewer_identity(&model, provider.as_deref(), &review_mode),
+                model,
+                provider,
+                review_mode,
+                runs: reports.len(),
+                passing_runs,
+                pass_rate,
+                average_micro_f1,
+                average_weighted_score,
+                average_verification_health,
+                average_lifecycle_accuracy,
+                usefulness_score: usefulness_score(
+                    average_micro_f1,
+                    average_weighted_score,
+                    pass_rate,
+                    average_verification_health,
+                    average_lifecycle_accuracy,
+                ),
+                provisional: reports.len() < 2,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    leaderboard.sort_by(|left, right| {
+        right
+            .usefulness_score
+            .total_cmp(&left.usefulness_score)
+            .then_with(|| {
+                right
+                    .average_weighted_score
+                    .unwrap_or_default()
+                    .total_cmp(&left.average_weighted_score.unwrap_or_default())
+            })
+            .then_with(|| right.pass_rate.total_cmp(&left.pass_rate))
+            .then_with(|| left.reviewer.cmp(&right.reviewer))
+    });
+
+    for (index, entry) in leaderboard.iter_mut().enumerate() {
+        entry.rank = index + 1;
+    }
+
+    leaderboard
+}
+
+fn reviewer_identity(model: &str, provider: Option<&str>, review_mode: &str) -> String {
+    match provider {
+        Some(provider) => format!("{model} via {provider} [{review_mode}]"),
+        None => format!("{model} [{review_mode}]"),
+    }
+}
+
+fn usefulness_score(
+    average_micro_f1: Option<f32>,
+    average_weighted_score: Option<f32>,
+    pass_rate: f32,
+    average_verification_health: Option<f32>,
+    average_lifecycle_accuracy: Option<f32>,
+) -> f32 {
+    const MICRO_F1_WEIGHT: f32 = 0.20;
+    const WEIGHTED_SCORE_WEIGHT: f32 = 0.35;
+    const PASS_RATE_WEIGHT: f32 = 0.25;
+    const VERIFICATION_HEALTH_WEIGHT: f32 = 0.10;
+    const LIFECYCLE_ACCURACY_WEIGHT: f32 = 0.10;
+
+    let mut weighted_sum = pass_rate * PASS_RATE_WEIGHT;
+    let mut total_weight = PASS_RATE_WEIGHT;
+
+    for (value, weight) in [
+        (average_micro_f1, MICRO_F1_WEIGHT),
+        (average_weighted_score, WEIGHTED_SCORE_WEIGHT),
+        (average_verification_health, VERIFICATION_HEALTH_WEIGHT),
+        (average_lifecycle_accuracy, LIFECYCLE_ACCURACY_WEIGHT),
+    ] {
+        if let Some(value) = value {
+            weighted_sum += value * weight;
+            total_weight += weight;
+        }
+    }
+
+    if total_weight == 0.0 {
+        0.0
+    } else {
+        weighted_sum / total_weight
+    }
+}
+
+fn average_benchmark_metric<F>(reports: &[&EvalReport], metric: F) -> Option<f32>
+where
+    F: Fn(&EvalReport) -> Option<f32>,
+{
+    average_report_metric(reports, metric)
+}
+
+fn average_report_metric<F>(reports: &[&EvalReport], metric: F) -> Option<f32>
+where
+    F: Fn(&EvalReport) -> Option<f32>,
+{
+    average(
+        &reports
+            .iter()
+            .filter_map(|report| metric(report))
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn build_review_mode_summary(
@@ -570,12 +742,33 @@ fn print_eval_batch_report(report: &EvalBatchReport) {
             );
         }
     }
+
+    if !report.leaderboard.is_empty() {
+        println!("Reviewer usefulness leaderboard:");
+        for entry in &report.leaderboard {
+            println!(
+                "  {}. {} | usefulness={} weighted={} micro F1={} pass={} verification={} lifecycle={} runs={}{}",
+                entry.rank,
+                entry.reviewer,
+                percentage(entry.usefulness_score),
+                percentage_or_na(entry.average_weighted_score),
+                percentage_or_na(entry.average_micro_f1),
+                percentage(entry.pass_rate),
+                percentage_or_na(entry.average_verification_health),
+                percentage_or_na(entry.average_lifecycle_accuracy),
+                entry.runs,
+                if entry.provisional { " provisional" } else { "" }
+            );
+        }
+    }
 }
 
 fn percentage_or_na(value: Option<f32>) -> String {
-    value
-        .map(|value| format!("{:.0}%", value * 100.0))
-        .unwrap_or_else(|| "n/a".to_string())
+    value.map(percentage).unwrap_or_else(|| "n/a".to_string())
+}
+
+fn percentage(value: f32) -> String {
+    format!("{:.0}%", value * 100.0)
 }
 
 fn signed_percentage_or_na(value: Option<f32>) -> String {
@@ -601,7 +794,8 @@ async fn write_eval_batch_report(report: &EvalBatchReport, path: &Path) -> Resul
 #[cfg(test)]
 mod tests {
     use crate::commands::eval::{
-        EvalAgentActivity, EvalAgentToolCall, EvalFixtureResult, EvalRunMetadata,
+        EvalAgentActivity, EvalAgentToolCall, EvalFixtureResult, EvalRuleMetrics, EvalRunMetadata,
+        EvalVerificationHealth,
     };
     use crate::core::eval_benchmarks::AggregateMetrics;
 
@@ -637,31 +831,35 @@ mod tests {
         }
     }
 
-    fn sample_report(
-        model: &str,
-        review_mode: &str,
+    struct SampleReportInput<'a> {
+        model: &'a str,
+        review_mode: &'a str,
         micro_f1: f32,
         weighted_score: f32,
         passing: bool,
         agent_iterations: Option<usize>,
         tool_calls: usize,
-    ) -> EvalReport {
+        verification_health: Option<f32>,
+        lifecycle_passed: Option<bool>,
+    }
+
+    fn sample_report(input: SampleReportInput<'_>) -> EvalReport {
         EvalReport {
             run: EvalRunMetadata {
-                model: model.to_string(),
+                model: input.model.to_string(),
                 provider: Some("openrouter".to_string()),
-                review_mode: review_mode.to_string(),
+                review_mode: input.review_mode.to_string(),
                 ..Default::default()
             },
             fixtures_total: 1,
-            fixtures_passed: usize::from(passing),
-            fixtures_failed: usize::from(!passing),
+            fixtures_passed: usize::from(input.passing),
+            fixtures_failed: usize::from(!input.passing),
             rule_metrics: vec![],
             rule_summary: None,
             benchmark_summary: Some(AggregateMetrics {
                 fixture_count: 1,
-                micro_f1,
-                weighted_score,
+                micro_f1: input.micro_f1,
+                weighted_score: input.weighted_score,
                 ..Default::default()
             }),
             suite_results: vec![],
@@ -671,24 +869,53 @@ mod tests {
             suite_comparisons: vec![],
             category_comparisons: vec![],
             language_comparisons: vec![],
-            verification_health: None,
+            verification_health: input.verification_health.map(|verified_pct| {
+                EvalVerificationHealth {
+                    verified_checks: 1,
+                    total_checks: 1,
+                    verified_pct,
+                    warnings_total: 0,
+                    fixtures_with_warnings: 0,
+                    fail_open_warning_count: 0,
+                    parse_failure_count: 0,
+                    request_failure_count: 0,
+                }
+            }),
             warnings: vec![],
-            threshold_failures: if passing {
+            threshold_failures: if input.passing {
                 vec![]
             } else {
                 vec!["threshold failed".to_string()]
             },
             results: vec![EvalFixtureResult {
-                agent_activity: agent_iterations.map(|total_iterations| EvalAgentActivity {
-                    total_iterations,
-                    tool_calls: (0..tool_calls)
-                        .map(|index| EvalAgentToolCall {
-                            iteration: 1,
-                            tool_name: format!("tool-{index}"),
-                            duration_ms: 1,
-                        })
-                        .collect(),
-                }),
+                passed: input.passing,
+                agent_activity: input
+                    .agent_iterations
+                    .map(|total_iterations| EvalAgentActivity {
+                        total_iterations,
+                        tool_calls: (0..input.tool_calls)
+                            .map(|index| EvalAgentToolCall {
+                                iteration: 1,
+                                tool_name: format!("tool-{index}"),
+                                duration_ms: 1,
+                            })
+                            .collect(),
+                    }),
+                rule_metrics: input
+                    .lifecycle_passed
+                    .map(|passed| EvalRuleMetrics {
+                        rule_id: "bug.lifecycle.context-only-addressed".to_string(),
+                        expected: 1,
+                        predicted: usize::from(passed),
+                        true_positives: usize::from(passed),
+                        false_positives: 0,
+                        false_negatives: usize::from(!passed),
+                        precision: if passed { 1.0 } else { 0.0 },
+                        recall: if passed { 1.0 } else { 0.0 },
+                        f1: if passed { 1.0 } else { 0.0 },
+                    })
+                    .into_iter()
+                    .collect(),
                 ..Default::default()
             }],
         }
@@ -790,30 +1017,39 @@ mod tests {
                 review_mode_label(true).to_string(),
             ],
             vec![
-                sample_report(
-                    "anthropic/claude-opus-4.5",
-                    review_mode_label(false),
-                    0.6,
-                    0.5,
-                    false,
-                    None,
-                    0,
-                ),
-                sample_report(
-                    "anthropic/claude-opus-4.5",
-                    review_mode_label(true),
-                    0.8,
-                    0.7,
-                    true,
-                    Some(4),
-                    3,
-                ),
+                sample_report(SampleReportInput {
+                    model: "anthropic/claude-opus-4.5",
+                    review_mode: review_mode_label(false),
+                    micro_f1: 0.6,
+                    weighted_score: 0.5,
+                    passing: false,
+                    agent_iterations: None,
+                    tool_calls: 0,
+                    verification_health: Some(0.7),
+                    lifecycle_passed: Some(false),
+                }),
+                sample_report(SampleReportInput {
+                    model: "anthropic/claude-opus-4.5",
+                    review_mode: review_mode_label(true),
+                    micro_f1: 0.8,
+                    weighted_score: 0.7,
+                    passing: true,
+                    agent_iterations: Some(4),
+                    tool_calls: 3,
+                    verification_health: Some(0.9),
+                    lifecycle_passed: Some(true),
+                }),
             ],
         );
 
         assert_eq!(report.by_model.len(), 1);
         assert_eq!(report.by_model[0].by_review_mode.len(), 2);
         assert_eq!(report.by_model[0].review_mode_comparisons.len(), 1);
+        assert_eq!(report.leaderboard.len(), 2);
+        assert_eq!(report.leaderboard[0].review_mode, review_mode_label(true));
+        assert!(report.leaderboard[0].usefulness_score > report.leaderboard[1].usefulness_score);
+        assert_eq!(report.leaderboard[0].average_verification_health, Some(0.9));
+        assert_eq!(report.leaderboard[0].average_lifecycle_accuracy, Some(1.0));
         assert!(
             (report.by_model[0].review_mode_comparisons[0]
                 .micro_f1_delta
@@ -838,5 +1074,24 @@ mod tests {
             report.by_model[0].by_review_mode[1].average_tool_calls,
             Some(3.0)
         );
+    }
+
+    #[test]
+    fn reviewer_leaderboard_marks_single_run_entries_provisional() {
+        let leaderboard = build_reviewer_leaderboard(&[sample_report(SampleReportInput {
+            model: "openai/o3",
+            review_mode: review_mode_label(false),
+            micro_f1: 0.75,
+            weighted_score: 0.7,
+            passing: true,
+            agent_iterations: None,
+            tool_calls: 0,
+            verification_health: None,
+            lifecycle_passed: None,
+        })]);
+
+        assert_eq!(leaderboard.len(), 1);
+        assert!(leaderboard[0].provisional);
+        assert_eq!(leaderboard[0].rank, 1);
     }
 }
