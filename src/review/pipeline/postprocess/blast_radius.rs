@@ -45,7 +45,7 @@ fn format_blast_radius_summary(dependents: &[PathBuf]) -> String {
     let listed = dependents
         .iter()
         .take(MAX_LISTED_DEPENDENTS)
-        .map(|path| path.display().to_string())
+        .map(|path| path.display().to_string().replace('\\', "/"))
         .collect::<Vec<_>>();
     let remaining = dependents.len().saturating_sub(listed.len());
 
@@ -138,6 +138,35 @@ mod tests {
         assert!(comments[0].content.contains("src/a.rs"));
         assert!(comments[0].tags.iter().any(|tag| tag == "blast-radius"));
         assert!(comments[0].tags.iter().any(|tag| tag == "blast-radius:3"));
+    }
+
+    #[test]
+    fn format_blast_radius_summary_normalizes_backslash_paths() {
+        use super::format_blast_radius_summary;
+
+        let dependents = vec![
+            PathBuf::from("src\\a.rs"),
+            PathBuf::from("src\\b.rs"),
+            PathBuf::from("src\\c.rs"),
+        ];
+
+        let summary = format_blast_radius_summary(&dependents);
+        assert!(
+            summary.contains("src/a.rs"),
+            "expected forward slashes in summary, got: {summary}"
+        );
+        assert!(
+            summary.contains("src/b.rs"),
+            "expected forward slashes in summary, got: {summary}"
+        );
+        assert!(
+            summary.contains("src/c.rs"),
+            "expected forward slashes in summary, got: {summary}"
+        );
+        assert!(
+            !summary.contains('\\'),
+            "summary should not contain backslashes: {summary}"
+        );
     }
 
     #[test]
