@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 
+use crate::commands::eval::metrics::{build_report_usefulness_signals, compute_usefulness_score};
 use crate::core::eval_benchmarks::{BenchmarkResult, QualityTrend, TrendEntry};
 
 use super::super::EvalReport;
@@ -47,6 +48,7 @@ fn trim_trend_entries(entries: &mut Vec<TrendEntry>, max_entries: usize) {
 fn trend_entry_for_report(report: &EvalReport) -> Option<TrendEntry> {
     let result = benchmark_result_for_report(report)?;
     let verification_health = report.verification_health.as_ref();
+    let usefulness_signals = build_report_usefulness_signals(report);
 
     Some(TrendEntry {
         timestamp: result.timestamp.clone(),
@@ -58,6 +60,11 @@ fn trend_entry_for_report(report: &EvalReport) -> Option<TrendEntry> {
         weighted_score: Some(result.aggregate.weighted_score),
         model: (!report.run.model.is_empty()).then(|| report.run.model.clone()),
         provider: report.run.provider.clone(),
+        review_mode: (!report.run.review_mode.is_empty()).then(|| report.run.review_mode.clone()),
+        comparison_group: report.run.comparison_group.clone(),
+        pass_rate: Some(usefulness_signals.pass_rate),
+        lifecycle_accuracy: usefulness_signals.lifecycle_accuracy,
+        usefulness_score: Some(compute_usefulness_score(usefulness_signals)),
         suite_micro_f1: report
             .suite_results
             .iter()
@@ -118,7 +125,8 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::commands::eval::{
-        EvalFixtureResult, EvalReport, EvalRunMetadata, EvalSuiteResult, EvalVerificationHealth,
+        EvalFixtureResult, EvalReport, EvalRuleMetrics, EvalRunMetadata, EvalSuiteResult,
+        EvalVerificationHealth,
     };
     use crate::core::eval_benchmarks::{AggregateMetrics, FixtureResult};
 
@@ -129,8 +137,10 @@ mod tests {
             run: EvalRunMetadata {
                 started_at: timestamp.to_string(),
                 label: label.map(|value| value.to_string()),
+                comparison_group: Some("smoke".to_string()),
                 model: "anthropic/claude-opus-4.1".to_string(),
                 provider: Some("openrouter".to_string()),
+                review_mode: "agent-loop".to_string(),
                 ..Default::default()
             },
             fixtures_total: 1,
@@ -204,7 +214,17 @@ mod tests {
                 suite_thresholds: None,
                 difficulty: None,
                 metadata: None,
-                rule_metrics: vec![],
+                rule_metrics: vec![EvalRuleMetrics {
+                    rule_id: "bug.lifecycle.context-only-addressed".to_string(),
+                    expected: 1,
+                    predicted: 1,
+                    true_positives: 1,
+                    false_positives: 0,
+                    false_negatives: 0,
+                    precision: 1.0,
+                    recall: 1.0,
+                    f1: 1.0,
+                }],
                 rule_summary: None,
                 warnings: vec![],
                 verification_report: None,
@@ -243,6 +263,8 @@ mod tests {
         assert_eq!(trend.entries[0].label.as_deref(), Some("first"));
         assert_eq!(trend.entries[1].label.as_deref(), Some("second"));
         assert_eq!(trend.entries[0].provider.as_deref(), Some("openrouter"));
+        assert_eq!(trend.entries[0].review_mode.as_deref(), Some("agent-loop"));
+        assert_eq!(trend.entries[0].comparison_group.as_deref(), Some("smoke"));
         assert_eq!(
             trend.entries[0].suite_micro_f1.get("deep-review").copied(),
             Some(1.0)
@@ -271,6 +293,9 @@ mod tests {
                 .unwrap_or_default(),
             0.8
         );
+        assert_eq!(trend.entries[0].pass_rate, Some(1.0));
+        assert_eq!(trend.entries[0].lifecycle_accuracy, Some(1.0));
+        assert!(trend.entries[0].usefulness_score.is_some());
     }
 
     #[tokio::test]

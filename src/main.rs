@@ -821,6 +821,7 @@ async fn main() -> Result<()> {
                 fixture_name_filters: fixture_name,
                 max_fixtures,
                 label,
+                comparison_group: None,
                 trend_file,
                 artifact_dir,
                 allow_subfrontier_models,

@@ -6,6 +6,7 @@ import {
   buildAnalyticsCsv,
   buildAnalyticsExportReport,
   computeAnalytics,
+  computeTrendAnalytics,
   formatDurationHours,
 } from '../../lib/analytics'
 
@@ -97,12 +98,42 @@ function makeTrends(): AnalyticsTrendsResponse {
           micro_recall: 0.8,
           fixture_count: 12,
           weighted_score: 0.79,
+          model: 'anthropic/claude-opus-4.1',
+          provider: 'openrouter',
+          review_mode: 'single-pass',
+          comparison_group: 'smoke',
+          pass_rate: 0.67,
+          lifecycle_accuracy: 0.5,
+          usefulness_score: 0.72,
           suite_micro_f1: {},
           category_micro_f1: {},
           language_micro_f1: {},
           verification_warning_count: 1,
           verification_parse_failure_count: 0,
           verification_request_failure_count: 0,
+          verification_verified_pct: 0.8,
+        },
+        {
+          timestamp: '2026-03-12T00:01:00Z',
+          micro_f1: 0.88,
+          micro_precision: 0.9,
+          micro_recall: 0.86,
+          fixture_count: 12,
+          weighted_score: 0.84,
+          model: 'anthropic/claude-opus-4.1',
+          provider: 'openrouter',
+          review_mode: 'agent-loop',
+          comparison_group: 'smoke',
+          pass_rate: 0.83,
+          lifecycle_accuracy: 0.75,
+          usefulness_score: 0.81,
+          suite_micro_f1: {},
+          category_micro_f1: {},
+          language_micro_f1: {},
+          verification_warning_count: 0,
+          verification_parse_failure_count: 0,
+          verification_request_failure_count: 0,
+          verification_verified_pct: 0.92,
         },
       ],
     },
@@ -190,6 +221,19 @@ describe('Analytics exports', () => {
     expect(analytics.stats.meanTimeToResolutionHours).toBeCloseTo(1.5)
     expect(analytics.stats.resolvedWithTimestampCount).toBe(1)
     expect(formatDurationHours(analytics.stats.meanTimeToResolutionHours)).toBe('1.5h')
+  })
+
+  it('builds an independent-auditor benchmark story from eval trend entries', () => {
+    const trends = computeTrendAnalytics(makeTrends())
+
+    expect(trends.independentAuditorStory?.benchmarkLabel).toBe('smoke')
+    expect(trends.independentAuditorStory?.winnerReviewMode).toBe('agent-loop')
+    expect(trends.independentAuditorStory?.winnerReviewer).toBe(
+      'anthropic/claude-opus-4.1 via openrouter [agent-loop]',
+    )
+    expect(trends.independentAuditorStory?.comparison?.microF1Delta).toBeCloseTo(0.06)
+    expect(trends.independentAuditorStory?.comparison?.weightedScoreDelta).toBeCloseTo(0.05)
+    expect(trends.independentAuditorStory?.comparison?.passRateDelta).toBeCloseTo(0.16)
   })
 
   it('computes feedback-learning effectiveness metrics from tagged findings', () => {

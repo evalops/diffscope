@@ -105,6 +105,7 @@ fn build_eval_run_metadata(
         fixtures_discovered: execution.discovered_count,
         fixtures_selected: execution.selected_count,
         label: options.label.clone(),
+        comparison_group: options.comparison_group.clone(),
         model: config.model.clone(),
         review_mode: review_mode_label(config.agent.enabled).to_string(),
         adapter: resolved_adapter.or_else(|| config.adapter.clone()),

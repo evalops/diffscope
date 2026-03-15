@@ -22,6 +22,7 @@ pub struct EvalRunOptions {
     pub fixture_name_filters: Vec<String>,
     pub max_fixtures: Option<usize>,
     pub label: Option<String>,
+    pub comparison_group: Option<String>,
     pub trend_file: Option<PathBuf>,
     pub artifact_dir: Option<PathBuf>,
     pub allow_subfrontier_models: bool,

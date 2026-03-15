@@ -440,6 +440,16 @@ pub struct TrendEntry {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comparison_group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pass_rate: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_accuracy: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usefulness_score: Option<f32>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub suite_micro_f1: HashMap<String, f32>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]

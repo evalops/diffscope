@@ -1,5 +1,6 @@
 import type {
   AnalyticsTrendsResponse,
+  EvalTrendEntry,
   FeedbackEvalTrendGap,
   ReviewSession,
   Severity,
@@ -693,6 +694,141 @@ export function formatDurationHours(value: number | null | undefined): string {
   return `${Math.round(value * 60)}m`
 }
 
+function formatReviewerIdentity(entry: EvalTrendEntry): string {
+  const model = entry.model?.trim() || 'unknown reviewer'
+  const provider = entry.provider?.trim()
+  const reviewMode = entry.review_mode?.trim()
+
+  if (provider && reviewMode) {
+    return `${model} via ${provider} [${reviewMode}]`
+  }
+  if (provider) {
+    return `${model} via ${provider}`
+  }
+  if (reviewMode) {
+    return `${model} [${reviewMode}]`
+  }
+  return model
+}
+
+function delta(current: number | undefined, baseline: number | undefined): number | undefined {
+  if (current == null || baseline == null) {
+    return undefined
+  }
+  return current - baseline
+}
+
+type IndependentAuditorStoryComparison = {
+  baselineReviewMode: string
+  compareReviewMode: string
+  microF1Delta?: number
+  weightedScoreDelta?: number
+  passRateDelta?: number
+  usefulnessScoreDelta?: number
+}
+
+type IndependentAuditorStory = {
+  timestamp: string
+  benchmarkLabel: string
+  winnerReviewer: string
+  winnerReviewMode?: string
+  winnerModel?: string
+  winnerProvider?: string
+  winnerUsefulnessScore?: number
+  winnerWeightedScore?: number
+  winnerMicroF1?: number
+  winnerPassRate?: number
+  winnerVerificationHealth?: number
+  winnerLifecycleAccuracy?: number
+  comparison?: IndependentAuditorStoryComparison
+}
+
+function buildIndependentAuditorStory(evalEntries: EvalTrendEntry[]): IndependentAuditorStory | undefined {
+  const grouped = new Map<string, EvalTrendEntry[]>()
+  for (const entry of evalEntries) {
+    if (!entry.review_mode || !entry.comparison_group) {
+      continue
+    }
+
+    const key = [
+      entry.comparison_group,
+      entry.model ?? '',
+      entry.provider ?? '',
+    ].join('::')
+    const current = grouped.get(key) ?? []
+    current.push(entry)
+    grouped.set(key, current)
+  }
+
+  let latestStory: IndependentAuditorStory | undefined
+
+  for (const entries of grouped.values()) {
+    const ordered = [...entries].sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+    const singlePass = ordered.find(entry => entry.review_mode === 'single-pass')
+    const agentLoop = ordered.find(entry => entry.review_mode === 'agent-loop')
+    if (!singlePass || !agentLoop) {
+      continue
+    }
+
+    const winner = (agentLoop.usefulness_score ?? -1) >= (singlePass.usefulness_score ?? -1)
+      ? agentLoop
+      : singlePass
+    const story = {
+      timestamp: agentLoop.timestamp > singlePass.timestamp ? agentLoop.timestamp : singlePass.timestamp,
+      benchmarkLabel: winner.comparison_group ?? winner.label ?? 'eval',
+      winnerReviewer: formatReviewerIdentity(winner),
+      winnerReviewMode: winner.review_mode,
+      winnerModel: winner.model,
+      winnerProvider: winner.provider,
+      winnerUsefulnessScore: winner.usefulness_score,
+      winnerWeightedScore: winner.weighted_score,
+      winnerMicroF1: winner.micro_f1,
+      winnerPassRate: winner.pass_rate,
+      winnerVerificationHealth: winner.verification_verified_pct,
+      winnerLifecycleAccuracy: winner.lifecycle_accuracy,
+      comparison: {
+        baselineReviewMode: 'single-pass',
+        compareReviewMode: 'agent-loop',
+        microF1Delta: delta(agentLoop.micro_f1, singlePass.micro_f1),
+        weightedScoreDelta: delta(agentLoop.weighted_score, singlePass.weighted_score),
+        passRateDelta: delta(agentLoop.pass_rate, singlePass.pass_rate),
+        usefulnessScoreDelta: delta(agentLoop.usefulness_score, singlePass.usefulness_score),
+      },
+    }
+
+    if (!latestStory || story.timestamp > latestStory.timestamp) {
+      latestStory = story
+    }
+  }
+
+  if (latestStory) {
+    return latestStory
+  }
+
+  const latestEntry = [...evalEntries]
+    .reverse()
+    .find(entry => entry.usefulness_score != null || entry.review_mode || entry.model)
+  if (!latestEntry) {
+    return undefined
+  }
+
+  return {
+    timestamp: latestEntry.timestamp,
+    benchmarkLabel: latestEntry.comparison_group ?? latestEntry.label ?? 'eval',
+    winnerReviewer: formatReviewerIdentity(latestEntry),
+    winnerReviewMode: latestEntry.review_mode,
+    winnerModel: latestEntry.model,
+    winnerProvider: latestEntry.provider,
+    winnerUsefulnessScore: latestEntry.usefulness_score,
+    winnerWeightedScore: latestEntry.weighted_score,
+    winnerMicroF1: latestEntry.micro_f1,
+    winnerPassRate: latestEntry.pass_rate,
+    winnerVerificationHealth: latestEntry.verification_verified_pct,
+    winnerLifecycleAccuracy: latestEntry.lifecycle_accuracy,
+    comparison: undefined,
+  }
+}
+
 export function computeTrendAnalytics(trends: AnalyticsTrendsResponse | undefined) {
   const evalEntries = trends?.eval_trend.entries ?? []
   const feedbackEntries = trends?.feedback_eval_trend.entries ?? []
@@ -723,6 +859,7 @@ export function computeTrendAnalytics(trends: AnalyticsTrendsResponse | undefine
     feedbackEntries,
     evalSeries,
     feedbackSeries,
+    independentAuditorStory: buildIndependentAuditorStory(evalEntries),
     latestEval: evalEntries[evalEntries.length - 1],
     latestFeedback: feedbackEntries[feedbackEntries.length - 1],
     evalTrendPath: trends?.eval_trend_path ?? '.diffscope.eval-trend.json',

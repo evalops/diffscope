@@ -206,6 +206,11 @@ export interface EvalTrendEntry {
   weighted_score?: number
   model?: string
   provider?: string
+  review_mode?: string
+  comparison_group?: string
+  pass_rate?: number
+  lifecycle_accuracy?: number
+  usefulness_score?: number
   suite_micro_f1: Record<string, number>
   category_micro_f1: Record<string, number>
   language_micro_f1: Record<string, number>
@@ -213,6 +218,9 @@ export interface EvalTrendEntry {
   verification_fail_open_count?: number
   verification_parse_failure_count?: number
   verification_request_failure_count?: number
+  verification_verified_checks?: number
+  verification_total_checks?: number
+  verification_verified_pct?: number
 }
 
 export interface EvalQualityTrend {

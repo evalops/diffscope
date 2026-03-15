@@ -36,6 +36,8 @@ pub struct EvalRunMetadata {
     pub fixtures_selected: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comparison_group: Option<String>,
     #[serde(default)]
     pub model: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]

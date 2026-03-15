@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 
 use crate::config;
 
-use super::super::metrics::build_lifecycle_accuracy;
+use super::super::metrics::{
+    build_report_usefulness_signals, compute_usefulness_score, EvalUsefulnessSignals,
+};
 use super::super::report::evaluation_failure_message;
 use super::super::{EvalReport, EvalRunOptions};
 use super::build_eval_run_metadata;
@@ -87,6 +89,33 @@ struct EvalReviewerLeaderboardEntry {
 }
 
 #[derive(Debug, Serialize)]
+struct EvalIndependentAuditorStory {
+    benchmark_label: String,
+    winning_reviewer: String,
+    winning_model: String,
+    winning_provider: Option<String>,
+    winning_review_mode: String,
+    winning_usefulness_score: f32,
+    winning_weighted_score: Option<f32>,
+    winning_micro_f1: Option<f32>,
+    winning_pass_rate: f32,
+    winning_verification_health: Option<f32>,
+    winning_lifecycle_accuracy: Option<f32>,
+    winning_provisional: bool,
+    review_mode_comparison: Option<EvalIndependentAuditorStoryComparison>,
+}
+
+#[derive(Debug, Serialize)]
+struct EvalIndependentAuditorStoryComparison {
+    baseline_review_mode: String,
+    compare_review_mode: String,
+    micro_f1_delta: Option<f32>,
+    weighted_score_delta: Option<f32>,
+    pass_rate_delta: f32,
+    usefulness_score_delta: f32,
+}
+
+#[derive(Debug, Serialize)]
 struct EvalBatchModelSummary {
     model: String,
     provider: Option<String>,
@@ -106,6 +135,7 @@ struct EvalBatchReport {
     models: Vec<String>,
     review_modes: Vec<String>,
     leaderboard: Vec<EvalReviewerLeaderboardEntry>,
+    independent_auditor_story: Option<EvalIndependentAuditorStory>,
     by_model: Vec<EvalBatchModelSummary>,
     runs: Vec<EvalReport>,
 }
@@ -138,6 +168,8 @@ pub(super) async fn run_eval_batch(
                 run_options.compare_agent_loop = false;
                 run_options.matrix_models.clear();
                 run_options.repeat = 1;
+                run_options.comparison_group =
+                    Some(options.label.clone().unwrap_or_else(|| "eval".to_string()));
                 run_options.label = Some(build_run_label(
                     options.label.as_deref(),
                     model,
@@ -343,6 +375,7 @@ fn build_batch_report(
     review_modes: Vec<String>,
     runs: Vec<EvalReport>,
 ) -> EvalBatchReport {
+    let leaderboard = build_reviewer_leaderboard(&runs);
     let by_model = models
         .iter()
         .map(|model| {
@@ -404,7 +437,8 @@ fn build_batch_report(
         repeat: repeat_total,
         models,
         review_modes,
-        leaderboard: build_reviewer_leaderboard(&runs),
+        independent_auditor_story: build_independent_auditor_story(options, &leaderboard),
+        leaderboard,
         by_model,
         runs,
     }
@@ -426,27 +460,7 @@ fn build_reviewer_leaderboard(runs: &[EvalReport]) -> Vec<EvalReviewerLeaderboar
     let mut leaderboard = grouped
         .into_iter()
         .map(|((model, provider, review_mode), reports)| {
-            let average_micro_f1 = average_benchmark_metric(&reports, |report| {
-                report
-                    .benchmark_summary
-                    .as_ref()
-                    .map(|metrics| metrics.micro_f1)
-            });
-            let average_weighted_score = average_benchmark_metric(&reports, |report| {
-                report
-                    .benchmark_summary
-                    .as_ref()
-                    .map(|metrics| metrics.weighted_score)
-            });
-            let average_verification_health = average_report_metric(&reports, |report| {
-                report
-                    .verification_health
-                    .as_ref()
-                    .map(|health| health.verified_pct)
-            });
-            let average_lifecycle_accuracy = average_report_metric(&reports, |report| {
-                build_lifecycle_accuracy(&report.results).map(|accuracy| accuracy.rate)
-            });
+            let average_signals = average_usefulness_signals(&reports);
             let passing_runs = reports
                 .iter()
                 .filter(|report| evaluation_failure_message(report).is_none())
@@ -462,17 +476,14 @@ fn build_reviewer_leaderboard(runs: &[EvalReport]) -> Vec<EvalReviewerLeaderboar
                 runs: reports.len(),
                 passing_runs,
                 pass_rate,
-                average_micro_f1,
-                average_weighted_score,
-                average_verification_health,
-                average_lifecycle_accuracy,
-                usefulness_score: usefulness_score(
-                    average_micro_f1,
-                    average_weighted_score,
+                average_micro_f1: average_signals.micro_f1,
+                average_weighted_score: average_signals.weighted_score,
+                average_verification_health: average_signals.verification_health,
+                average_lifecycle_accuracy: average_signals.lifecycle_accuracy,
+                usefulness_score: compute_usefulness_score(EvalUsefulnessSignals {
                     pass_rate,
-                    average_verification_health,
-                    average_lifecycle_accuracy,
-                ),
+                    ..average_signals
+                }),
                 provisional: reports.len() < 2,
             }
         })
@@ -506,58 +517,86 @@ fn reviewer_identity(model: &str, provider: Option<&str>, review_mode: &str) -> 
     }
 }
 
-fn usefulness_score(
-    average_micro_f1: Option<f32>,
-    average_weighted_score: Option<f32>,
-    pass_rate: f32,
-    average_verification_health: Option<f32>,
-    average_lifecycle_accuracy: Option<f32>,
-) -> f32 {
-    const MICRO_F1_WEIGHT: f32 = 0.20;
-    const WEIGHTED_SCORE_WEIGHT: f32 = 0.35;
-    const PASS_RATE_WEIGHT: f32 = 0.25;
-    const VERIFICATION_HEALTH_WEIGHT: f32 = 0.10;
-    const LIFECYCLE_ACCURACY_WEIGHT: f32 = 0.10;
+fn build_independent_auditor_story(
+    options: &EvalRunOptions,
+    leaderboard: &[EvalReviewerLeaderboardEntry],
+) -> Option<EvalIndependentAuditorStory> {
+    let winner = leaderboard.first()?;
+    let single_pass = leaderboard.iter().find(|entry| {
+        entry.model == winner.model
+            && entry.provider == winner.provider
+            && entry.review_mode == review_mode_label(false)
+    });
+    let agent_loop = leaderboard.iter().find(|entry| {
+        entry.model == winner.model
+            && entry.provider == winner.provider
+            && entry.review_mode == review_mode_label(true)
+    });
 
-    let mut weighted_sum = pass_rate * PASS_RATE_WEIGHT;
-    let mut total_weight = PASS_RATE_WEIGHT;
+    Some(EvalIndependentAuditorStory {
+        benchmark_label: options.label.clone().unwrap_or_else(|| "eval".to_string()),
+        winning_reviewer: winner.reviewer.clone(),
+        winning_model: winner.model.clone(),
+        winning_provider: winner.provider.clone(),
+        winning_review_mode: winner.review_mode.clone(),
+        winning_usefulness_score: winner.usefulness_score,
+        winning_weighted_score: winner.average_weighted_score,
+        winning_micro_f1: winner.average_micro_f1,
+        winning_pass_rate: winner.pass_rate,
+        winning_verification_health: winner.average_verification_health,
+        winning_lifecycle_accuracy: winner.average_lifecycle_accuracy,
+        winning_provisional: winner.provisional,
+        review_mode_comparison: single_pass
+            .zip(agent_loop)
+            .map(
+                |(single_pass, agent_loop)| EvalIndependentAuditorStoryComparison {
+                    baseline_review_mode: single_pass.review_mode.clone(),
+                    compare_review_mode: agent_loop.review_mode.clone(),
+                    micro_f1_delta: delta(
+                        agent_loop.average_micro_f1,
+                        single_pass.average_micro_f1,
+                    ),
+                    weighted_score_delta: delta(
+                        agent_loop.average_weighted_score,
+                        single_pass.average_weighted_score,
+                    ),
+                    pass_rate_delta: agent_loop.pass_rate - single_pass.pass_rate,
+                    usefulness_score_delta: agent_loop.usefulness_score
+                        - single_pass.usefulness_score,
+                },
+            ),
+    })
+}
 
-    for (value, weight) in [
-        (average_micro_f1, MICRO_F1_WEIGHT),
-        (average_weighted_score, WEIGHTED_SCORE_WEIGHT),
-        (average_verification_health, VERIFICATION_HEALTH_WEIGHT),
-        (average_lifecycle_accuracy, LIFECYCLE_ACCURACY_WEIGHT),
-    ] {
-        if let Some(value) = value {
-            weighted_sum += value * weight;
-            total_weight += weight;
+fn average_usefulness_signals(reports: &[&EvalReport]) -> EvalUsefulnessSignals {
+    let mut micro_f1 = Vec::new();
+    let mut weighted_score = Vec::new();
+    let mut verification_health = Vec::new();
+    let mut lifecycle_accuracy = Vec::new();
+
+    for report in reports {
+        let signals = build_report_usefulness_signals(report);
+        if let Some(value) = signals.micro_f1 {
+            micro_f1.push(value);
+        }
+        if let Some(value) = signals.weighted_score {
+            weighted_score.push(value);
+        }
+        if let Some(value) = signals.verification_health {
+            verification_health.push(value);
+        }
+        if let Some(value) = signals.lifecycle_accuracy {
+            lifecycle_accuracy.push(value);
         }
     }
 
-    if total_weight == 0.0 {
-        0.0
-    } else {
-        weighted_sum / total_weight
+    EvalUsefulnessSignals {
+        micro_f1: average(&micro_f1),
+        weighted_score: average(&weighted_score),
+        verification_health: average(&verification_health),
+        lifecycle_accuracy: average(&lifecycle_accuracy),
+        ..Default::default()
     }
-}
-
-fn average_benchmark_metric<F>(reports: &[&EvalReport], metric: F) -> Option<f32>
-where
-    F: Fn(&EvalReport) -> Option<f32>,
-{
-    average_report_metric(reports, metric)
-}
-
-fn average_report_metric<F>(reports: &[&EvalReport], metric: F) -> Option<f32>
-where
-    F: Fn(&EvalReport) -> Option<f32>,
-{
-    average(
-        &reports
-            .iter()
-            .filter_map(|report| metric(report))
-            .collect::<Vec<_>>(),
-    )
 }
 
 fn build_review_mode_summary(
@@ -761,6 +800,36 @@ fn print_eval_batch_report(report: &EvalBatchReport) {
             );
         }
     }
+
+    if let Some(story) = report.independent_auditor_story.as_ref() {
+        println!("Independent auditor benchmark ({}):", story.benchmark_label);
+        println!(
+            "  winner: {} | usefulness={} weighted={} micro F1={} pass={} verification={} lifecycle={}{}",
+            story.winning_reviewer,
+            percentage(story.winning_usefulness_score),
+            percentage_or_na(story.winning_weighted_score),
+            percentage_or_na(story.winning_micro_f1),
+            percentage(story.winning_pass_rate),
+            percentage_or_na(story.winning_verification_health),
+            percentage_or_na(story.winning_lifecycle_accuracy),
+            if story.winning_provisional {
+                " provisional"
+            } else {
+                ""
+            }
+        );
+        if let Some(comparison) = story.review_mode_comparison.as_ref() {
+            println!(
+                "  {} vs {}: usefulness {} weighted {} micro F1 {} pass rate {:+.0}%",
+                comparison.compare_review_mode,
+                comparison.baseline_review_mode,
+                format_args!("{:+.0}%", comparison.usefulness_score_delta * 100.0),
+                signed_percentage_or_na(comparison.weighted_score_delta),
+                signed_percentage_or_na(comparison.micro_f1_delta),
+                comparison.pass_rate_delta * 100.0
+            );
+        }
+    }
 }
 
 fn percentage_or_na(value: Option<f32>) -> String {
@@ -823,6 +892,7 @@ mod tests {
             fixture_name_filters: vec![],
             max_fixtures: None,
             label: Some("smoke".to_string()),
+            comparison_group: None,
             trend_file: None,
             artifact_dir: None,
             allow_subfrontier_models: false,
@@ -1050,6 +1120,21 @@ mod tests {
         assert!(report.leaderboard[0].usefulness_score > report.leaderboard[1].usefulness_score);
         assert_eq!(report.leaderboard[0].average_verification_health, Some(0.9));
         assert_eq!(report.leaderboard[0].average_lifecycle_accuracy, Some(1.0));
+        assert_eq!(
+            report
+                .independent_auditor_story
+                .as_ref()
+                .map(|story| story.winning_review_mode.as_str()),
+            Some(review_mode_label(true))
+        );
+        assert_eq!(
+            report
+                .independent_auditor_story
+                .as_ref()
+                .and_then(|story| story.review_mode_comparison.as_ref())
+                .map(|comparison| comparison.usefulness_score_delta > 0.0),
+            Some(true)
+        );
         assert!(
             (report.by_model[0].review_mode_comparisons[0]
                 .micro_f1_delta

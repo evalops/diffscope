@@ -305,6 +305,7 @@ export function Analytics() {
     feedbackEntries,
     evalSeries,
     feedbackSeries,
+    independentAuditorStory,
     latestEval,
     latestFeedback,
     evalTrendPath,
@@ -1107,6 +1108,72 @@ export function Analytics() {
               <div className={`text-lg font-bold font-code mt-1 ${card.valueColor}`}>{card.value}</div>
             </div>
           ))}
+        </div>
+
+        <div className="bg-surface-1 border border-border rounded-lg p-4 mb-6">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="text-[10px] font-semibold text-text-muted tracking-[0.08em] font-code">
+              INDEPENDENT AUDITOR BENCHMARK
+            </div>
+            {independentAuditorStory?.winnerReviewMode && (
+              <div className="text-[10px] font-code text-accent">
+                {independentAuditorStory.winnerReviewMode}
+              </div>
+            )}
+          </div>
+          {independentAuditorStory ? (
+            <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] gap-4">
+              <div>
+                <div className="text-sm font-medium text-text-primary">{independentAuditorStory.benchmarkLabel}</div>
+                <div className="text-[11px] text-text-secondary mt-1">{independentAuditorStory.winnerReviewer}</div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+                  {[
+                    { label: 'USEFULNESS', value: formatPercent(independentAuditorStory.winnerUsefulnessScore), valueColor: 'text-accent' },
+                    { label: 'WEIGHTED', value: formatPercent(independentAuditorStory.winnerWeightedScore), valueColor: 'text-text-primary' },
+                    { label: 'VERIFY', value: formatPercent(independentAuditorStory.winnerVerificationHealth), valueColor: 'text-sev-warning' },
+                    { label: 'LIFECYCLE', value: formatPercent(independentAuditorStory.winnerLifecycleAccuracy), valueColor: 'text-sev-suggestion' },
+                  ].map(card => (
+                    <div key={card.label} className="rounded border border-border-subtle bg-surface-0 px-3 py-2">
+                      <div className="text-[10px] font-semibold text-text-muted tracking-[0.05em] font-code">{card.label}</div>
+                      <div className={`mt-1 text-sm font-bold font-code ${card.valueColor}`}>{card.value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded border border-border-subtle bg-surface-0 px-3 py-3">
+                <div className="text-[10px] font-semibold text-text-muted tracking-[0.05em] font-code mb-3">
+                  REVIEW MODE DELTA
+                </div>
+                {independentAuditorStory.comparison ? (
+                  <div className="space-y-2 text-[11px]">
+                    <div className="text-text-secondary">
+                      {independentAuditorStory.comparison.compareReviewMode} vs {independentAuditorStory.comparison.baselineReviewMode}
+                    </div>
+                    {[
+                      { label: 'USEFULNESS', value: formatSignedPercent(independentAuditorStory.comparison.usefulnessScoreDelta), valueColor: 'text-accent' },
+                      { label: 'WEIGHTED', value: formatSignedPercent(independentAuditorStory.comparison.weightedScoreDelta), valueColor: 'text-text-primary' },
+                      { label: 'MICRO F1', value: formatSignedPercent(independentAuditorStory.comparison.microF1Delta), valueColor: 'text-sev-warning' },
+                      { label: 'PASS RATE', value: formatSignedPercent(independentAuditorStory.comparison.passRateDelta), valueColor: 'text-sev-suggestion' },
+                    ].map(item => (
+                      <div key={item.label} className="flex items-center justify-between gap-3">
+                        <div className="text-text-muted font-code">{item.label}</div>
+                        <div className={`font-code ${item.valueColor}`}>{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-text-muted">
+                    Run `diffscope eval --compare-agent-loop` to append a side-by-side benchmark story.
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="text-[11px] text-text-muted">
+              No independent-auditor benchmark published yet. Eval trend history will surface it here.
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
