@@ -172,7 +172,7 @@ pub enum ReviewStatus {
 }
 
 /// Maximum number of concurrent reviews.
-const MAX_CONCURRENT_REVIEWS: usize = 5;
+pub(crate) const MAX_CONCURRENT_REVIEWS: usize = 5;
 
 pub struct AppState {
     pub config: Arc<RwLock<Config>>,
