@@ -48,7 +48,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 
 ## 3. Agentic Validation Loops
 
-21. [ ] Build a first-class `fix until clean` loop that can run review, apply fixes, rerun review, and stop on convergence.
+21. [x] Build a first-class `fix until clean` loop that can run review, apply fixes, rerun review, and stop on convergence.
 22. [ ] Reuse the existing DAG runtime to model iterative review/fix loops as resumable workflow nodes.
 23. [x] Add a max-iteration policy and loop budget controls for autonomous review convergence.
 24. [x] Add "issue replay" prompts that hand unresolved findings back to a coding agent with file-local context.

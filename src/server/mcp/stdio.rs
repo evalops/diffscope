@@ -279,6 +279,7 @@ impl StdioMcpServer {
             "get_pr_readiness" => self.get_pr_readiness(arguments).await,
             "get_pr_comments" => self.get_pr_comments(arguments).await,
             "get_pr_findings" => self.get_pr_findings(arguments).await,
+            "run_fix_until_clean" => self.run_fix_until_clean(arguments).await,
             "get_fix_handoff" => self.get_fix_handoff(arguments).await,
             "list_events" => self.list_events(arguments).await,
             "get_event_stats" => self.get_event_stats(arguments).await,
@@ -363,6 +364,14 @@ impl StdioMcpServer {
     async fn get_pr_findings(&self, arguments: Value) -> Result<Value> {
         let params: api::PrFindingsParams = parse_arguments(arguments)?;
         match api::get_gh_pr_findings(State(self.state.clone()), Query(params)).await {
+            Ok(response) => to_value(response.0),
+            Err((_, message)) => anyhow::bail!(message),
+        }
+    }
+
+    async fn run_fix_until_clean(&self, arguments: Value) -> Result<Value> {
+        let request: api::PrFixLoopRequest = parse_arguments(arguments)?;
+        match api::run_gh_pr_fix_loop(State(self.state.clone()), Json(request)).await {
             Ok(response) => to_value(response.0),
             Err((_, message)) => anyhow::bail!(message),
         }
@@ -732,6 +741,33 @@ fn tool_specs() -> Vec<ToolSpec> {
             ),
         },
         ToolSpec {
+            name: "run_fix_until_clean",
+            description: "Drive a first-class PR fix loop by starting or rerunning DiffScope reviews, detecting convergence, and returning replay candidates for unresolved findings.",
+            input_schema: object_schema(
+                json!({
+                    "repo": { "type": "string", "description": "GitHub repo in owner/repo format" },
+                    "pr_number": { "type": "integer", "description": "GitHub pull request number" },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": "Maximum completed review iterations before the loop stops"
+                    },
+                    "replay_limit": {
+                        "type": "integer",
+                        "description": "Maximum unresolved findings to surface as replay candidates"
+                    },
+                    "auto_start_review": {
+                        "type": "boolean",
+                        "description": "Whether to automatically start a PR review when no completed review exists"
+                    },
+                    "auto_rerun_stale": {
+                        "type": "boolean",
+                        "description": "Whether to automatically rerun when the latest review is stale against the current PR head"
+                    }
+                }),
+                &["repo", "pr_number"],
+            ),
+        },
+        ToolSpec {
             name: "get_fix_handoff",
             description: "Return a machine-friendly fix-agent handoff contract with rule IDs, evidence, and suggested diffs for the latest PR review.",
             input_schema: object_schema(
@@ -996,7 +1032,8 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(text.contains("iteration budget of 4"));
-        assert!(text.contains("rerun_pr_review"));
+        assert!(text.contains("run_fix_until_clean"));
+        assert!(text.contains("replay_issue"));
         assert!(text.contains("owner/repo#42"));
     }
 
@@ -1065,6 +1102,7 @@ mod tests {
         let tool_names: Vec<&str> = tool_specs().iter().map(|tool| tool.name).collect();
         assert!(tool_names.contains(&"review_pr"));
         assert!(tool_names.contains(&"get_event_stats"));
+        assert!(tool_names.contains(&"run_fix_until_clean"));
         assert!(tool_names.contains(&"get_fix_handoff"));
         assert!(tool_names.contains(&"get_learned_rules"));
         assert!(tool_names.contains(&"submit_comment_feedback"));
@@ -1135,6 +1173,46 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("missing input"));
+    }
+
+    #[tokio::test]
+    async fn run_fix_until_clean_tool_returns_replay_plan() {
+        let dir = tempdir().unwrap();
+        let state = test_state(dir.path().to_path_buf());
+        let mut review = make_review("review-fix-loop", make_comment("comment-fix-loop"));
+        review.summary.as_mut().unwrap().open_blockers = 1;
+        state
+            .reviews
+            .write()
+            .await
+            .insert(review.id.clone(), review);
+
+        let mut server = StdioMcpServer::new(state);
+        initialize_server(&mut server).await;
+
+        let response = server
+            .handle_message(json!({
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {
+                    "name": "run_fix_until_clean",
+                    "arguments": {
+                        "repo": "owner/repo",
+                        "pr_number": 42,
+                        "max_iterations": 3,
+                        "replay_limit": 2
+                    }
+                }
+            }))
+            .await
+            .unwrap();
+
+        let plan = &response["result"]["structuredContent"];
+        assert_eq!(plan["status"], "needs_fixes");
+        assert_eq!(plan["next_action"], "apply_fixes");
+        assert_eq!(plan["replay_candidates"][0]["prompt_name"], "replay_issue");
+        assert_eq!(plan["fix_handoff"]["contract_version"], 1);
     }
 
     #[tokio::test]

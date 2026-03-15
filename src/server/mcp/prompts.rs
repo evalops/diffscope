@@ -191,7 +191,7 @@ fn render_fix_until_clean(arguments: Value) -> Result<PromptResult> {
             content: PromptTextContent {
                 kind: "text",
                 text: format!(
-                    "You are driving a DiffScope fix loop for GitHub PR `{repo}#{pr_number}` with an iteration budget of {max_iterations}.\n\nLoop instructions:\n1. Start by calling `get_pr_readiness`. If there is no completed review, call `review_pr` with `post_results=false`; otherwise reuse the freshest review id.\n2. If the latest review is stale or incomplete, call `rerun_pr_review` and poll `get_review` until the rerun completes.\n3. Call `get_fix_handoff` to obtain the machine-friendly handoff contract for unresolved findings, then use `get_pr_findings` (`group_by=file`) and `get_pr_comments` (`status=open`) when you need additional grouping or lifecycle detail. Treat each handoff item as the edit contract: `rule_id`, `file_path`, `line_number`, `evidence`, and `suggested_diff` are the primary fields for your fix plan.\n4. Use your normal workspace edit/test tools to fix the highest-signal unresolved blockers first. Run the repository validators after each meaningful edit batch.\n5. Call `rerun_pr_review` on the freshest review id, wait for completion with `get_review`, and compare blocker counts and readiness against the previous iteration.\n6. Stop early when `merge_readiness` is `Ready`, `open_blockers` is `0`, there are no unresolved comments, the review fails, or two consecutive iterations show no improvement.\n\nEvery loop summary must include the review id, validator outcome, blocker delta, and the remaining files/rules still preventing merge readiness.",
+                    "You are driving a DiffScope fix loop for GitHub PR `{repo}#{pr_number}` with an iteration budget of {max_iterations}.\n\nLoop instructions:\n1. Start by calling `run_fix_until_clean` with `repo={repo}`, `pr_number={pr_number}`, and `max_iterations={max_iterations}`.\n2. If the loop returns `review_pending`, wait for the referenced review id to finish and call `run_fix_until_clean` again.\n3. If the loop returns `needs_review`, follow the suggested `next_action` (`start_review` or `rerun_review`) or rerun the tool with `auto_start_review=true` / `auto_rerun_stale=true`.\n4. If the loop returns `needs_fixes`, use `fix_handoff` as the machine-friendly edit contract and use each `replay_candidates[*]` entry with the `replay_issue` prompt when you want a file-local handoff for a specific finding.\n5. Use your normal workspace edit/test tools to fix the highest-signal unresolved blockers first. Run the repository validators after each meaningful edit batch, push the updated PR head, and call `run_fix_until_clean` again to measure blocker deltas.\n6. Stop when the loop returns `converged`, `failed`, `exhausted`, or `stalled`. `stalled` means two consecutive review iterations showed no improvement.\n\nEvery loop summary must include the review id, validator outcome, blocker delta, and the remaining files/rules still preventing merge readiness.",
                     repo = args.repo,
                     pr_number = args.pr_number,
                     max_iterations = max_iterations,
@@ -526,10 +526,10 @@ mod tests {
 
         let text = &prompt.messages[0].content.text;
         assert!(text.contains("iteration budget of 5"));
-        assert!(text.contains("get_fix_handoff"));
-        assert!(text.contains("rerun_pr_review"));
-        assert!(text.contains("merge_readiness"));
-        assert!(text.contains("no improvement"));
+        assert!(text.contains("run_fix_until_clean"));
+        assert!(text.contains("fix_handoff"));
+        assert!(text.contains("replay_issue"));
+        assert!(text.contains("stalled"));
     }
 
     #[tokio::test]

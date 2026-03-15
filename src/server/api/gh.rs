@@ -508,6 +508,16 @@ pub(crate) struct PrFixHandoffParams {
     pub include_resolved: Option<bool>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct PrFixLoopRequest {
+    pub repo: String,
+    pub pr_number: u32,
+    pub max_iterations: Option<usize>,
+    pub replay_limit: Option<usize>,
+    pub auto_start_review: Option<bool>,
+    pub auto_rerun_stale: Option<bool>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommentSearchFilter {
     All,
@@ -666,6 +676,82 @@ pub(crate) struct PrFixHandoffResponse {
     pub findings_included: usize,
     #[serde(default)]
     pub findings: Vec<FixAgentFinding>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FixLoopStatus {
+    NeedsReview,
+    ReviewPending,
+    NeedsFixes,
+    Converged,
+    Failed,
+    Exhausted,
+    Stalled,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FixLoopStopReason {
+    Ready,
+    ReviewFailed,
+    MaxIterations,
+    NoImprovement,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct FixLoopReplayCandidate {
+    pub comment_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
+    pub file_path: String,
+    pub line_number: usize,
+    pub prompt_name: &'static str,
+    pub prompt_arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct PrFixLoopResponse {
+    pub contract_version: u32,
+    pub repo: String,
+    pub pr_number: u32,
+    pub diff_source: String,
+    pub status: FixLoopStatus,
+    pub next_action: String,
+    pub status_message: String,
+    pub max_iterations: usize,
+    pub completed_reviews: usize,
+    pub remaining_reviews: usize,
+    pub stalled_iterations: usize,
+    pub latest_review_stale: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_review_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_review_status: Option<ReviewStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triggered_review_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_head_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed_head_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_readiness: Option<MergeReadiness>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_blockers: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_open_blockers: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker_delta: Option<isize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub improvement_detected: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub readiness_reasons: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<FixLoopStopReason>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replay_candidates: Vec<FixLoopReplayCandidate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix_handoff: Option<PrFixHandoffResponse>,
 }
 
 pub(crate) fn filter_comments_by_search_filter(
@@ -833,6 +919,169 @@ pub(crate) fn build_pr_fix_handoff_response(
         total_findings,
         findings_included: findings.len(),
         findings,
+    }
+}
+
+fn latest_pr_review_session_any(
+    reviews: &[ReviewSession],
+    repo: &str,
+    pr_number: u32,
+) -> Option<ReviewSession> {
+    let diff_source = pr_diff_source(repo, pr_number);
+
+    reviews
+        .iter()
+        .filter(|session| session.diff_source == diff_source)
+        .max_by_key(|session| (session.started_at, session.completed_at.unwrap_or_default()))
+        .cloned()
+}
+
+fn pr_review_timeline_sessions(
+    reviews: &[ReviewSession],
+    repo: &str,
+    pr_number: u32,
+) -> Vec<ReviewSession> {
+    let diff_source = pr_diff_source(repo, pr_number);
+    let mut timeline = reviews
+        .iter()
+        .filter(|session| session.diff_source == diff_source && session.summary.is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    timeline.sort_by_key(|session| (session.started_at, session.completed_at.unwrap_or_default()));
+    timeline
+}
+
+fn merge_readiness_rank(readiness: MergeReadiness) -> usize {
+    match readiness {
+        MergeReadiness::Ready => 0,
+        MergeReadiness::NeedsAttention => 1,
+        MergeReadiness::NeedsReReview => 2,
+    }
+}
+
+pub(crate) fn review_summary_improved(
+    current: &crate::core::comment::ReviewSummary,
+    previous: &crate::core::comment::ReviewSummary,
+) -> bool {
+    current.open_blockers < previous.open_blockers
+        || current.open_comments < previous.open_comments
+        || merge_readiness_rank(current.merge_readiness)
+            < merge_readiness_rank(previous.merge_readiness)
+}
+
+pub(crate) fn count_consecutive_non_improving_iterations(reviews: &[ReviewSession]) -> usize {
+    let mut count = 0;
+
+    for window in reviews.windows(2).rev() {
+        let Some(previous_summary) = window[0].summary.as_ref() else {
+            continue;
+        };
+        let Some(current_summary) = window[1].summary.as_ref() else {
+            continue;
+        };
+
+        if review_summary_improved(current_summary, previous_summary) {
+            break;
+        }
+
+        count += 1;
+    }
+
+    count
+}
+
+pub(crate) fn build_fix_loop_replay_candidates(
+    repo: &str,
+    pr_number: u32,
+    latest_review: &ReviewSession,
+    replay_limit: usize,
+) -> Vec<FixLoopReplayCandidate> {
+    build_fix_agent_findings(&latest_review.comments, false)
+        .into_iter()
+        .take(replay_limit)
+        .map(|finding| {
+            let comment_id = finding.comment_id;
+            let prompt_comment_id = comment_id.clone();
+            FixLoopReplayCandidate {
+                rule_id: finding.rule_id,
+                file_path: finding.file_path,
+                line_number: finding.line_number,
+                prompt_name: "replay_issue",
+                prompt_arguments: serde_json::json!({
+                    "repo": repo,
+                    "pr_number": pr_number,
+                    "comment_id": prompt_comment_id,
+                }),
+                comment_id,
+            }
+        })
+        .collect()
+}
+
+pub(crate) struct PrFixLoopResponseArgs {
+    pub repo: String,
+    pub pr_number: u32,
+    pub max_iterations: usize,
+    pub completed_reviews: usize,
+    pub status: FixLoopStatus,
+    pub next_action: String,
+    pub status_message: String,
+    pub latest_review_id: Option<String>,
+    pub latest_review_status: Option<ReviewStatus>,
+    pub triggered_review_id: Option<String>,
+    pub current_head_sha: Option<String>,
+    pub reviewed_head_sha: Option<String>,
+    pub latest_review_stale: bool,
+    pub summary: Option<crate::core::comment::ReviewSummary>,
+    pub previous_summary: Option<crate::core::comment::ReviewSummary>,
+    pub improvement_detected: Option<bool>,
+    pub stalled_iterations: usize,
+    pub stop_reason: Option<FixLoopStopReason>,
+    pub replay_candidates: Vec<FixLoopReplayCandidate>,
+    pub fix_handoff: Option<PrFixHandoffResponse>,
+}
+
+pub(crate) fn build_pr_fix_loop_response(args: PrFixLoopResponseArgs) -> PrFixLoopResponse {
+    let previous_open_blockers = args
+        .previous_summary
+        .as_ref()
+        .map(|summary| summary.open_blockers);
+    let open_blockers = args.summary.as_ref().map(|summary| summary.open_blockers);
+    let blocker_delta = open_blockers
+        .zip(previous_open_blockers)
+        .map(|(current, previous)| current as isize - previous as isize);
+
+    PrFixLoopResponse {
+        contract_version: 1,
+        diff_source: pr_diff_source(&args.repo, args.pr_number),
+        repo: args.repo,
+        pr_number: args.pr_number,
+        status: args.status,
+        next_action: args.next_action,
+        status_message: args.status_message,
+        max_iterations: args.max_iterations,
+        completed_reviews: args.completed_reviews,
+        remaining_reviews: args.max_iterations.saturating_sub(args.completed_reviews),
+        stalled_iterations: args.stalled_iterations,
+        latest_review_stale: args.latest_review_stale,
+        latest_review_id: args.latest_review_id,
+        latest_review_status: args.latest_review_status,
+        triggered_review_id: args.triggered_review_id,
+        current_head_sha: args.current_head_sha,
+        reviewed_head_sha: args.reviewed_head_sha,
+        merge_readiness: args.summary.as_ref().map(|summary| summary.merge_readiness),
+        open_blockers,
+        previous_open_blockers,
+        blocker_delta,
+        improvement_detected: args.improvement_detected,
+        readiness_reasons: args
+            .summary
+            .as_ref()
+            .map(|summary| summary.readiness_reasons.clone())
+            .unwrap_or_default(),
+        stop_reason: args.stop_reason,
+        replay_candidates: args.replay_candidates,
+        fix_handoff: args.fix_handoff,
     }
 }
 
@@ -1192,6 +1441,453 @@ pub(crate) async fn get_gh_pr_fix_handoff(
         latest_review.as_ref(),
         include_resolved,
     )))
+}
+
+async fn fetch_current_pr_head_sha_for_fix_loop(
+    state: &Arc<AppState>,
+    repo: &str,
+    pr_number: u32,
+) -> Result<Option<String>, (StatusCode, String)> {
+    let token = state
+        .config
+        .read()
+        .await
+        .github
+        .token
+        .clone()
+        .filter(|token| !token.trim().is_empty());
+
+    let Some(token) = token else {
+        return Ok(None);
+    };
+
+    fetch_github_pr_head_sha(&state.http_client, &token, repo, pr_number)
+        .await
+        .map(Some)
+        .map_err(|error| (StatusCode::BAD_GATEWAY, error))
+}
+
+pub(crate) async fn run_gh_pr_fix_loop(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<PrFixLoopRequest>,
+) -> Result<Json<PrFixLoopResponse>, (StatusCode, String)> {
+    if !is_valid_repo_name(&request.repo) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid repo format. Expected 'owner/repo'.".to_string(),
+        ));
+    }
+
+    if request.pr_number == 0 || request.pr_number > 999_999_999 {
+        return Err((StatusCode::BAD_REQUEST, "Invalid PR number.".to_string()));
+    }
+
+    let configured_max_iterations = state.config.read().await.agent.max_iterations.max(1);
+    let max_iterations = request.max_iterations.unwrap_or(configured_max_iterations);
+    if max_iterations == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "max_iterations must be greater than zero.".to_string(),
+        ));
+    }
+
+    let replay_limit = request.replay_limit.unwrap_or(3);
+    if replay_limit == 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "replay_limit must be greater than zero.".to_string(),
+        ));
+    }
+
+    let auto_start_review = request.auto_start_review.unwrap_or(true);
+    let auto_rerun_stale = request.auto_rerun_stale.unwrap_or(true);
+    let current_head_sha =
+        fetch_current_pr_head_sha_for_fix_loop(&state, &request.repo, request.pr_number).await?;
+    let inventory = load_review_inventory(&state).await;
+    let latest_review = latest_pr_review_session_any(&inventory, &request.repo, request.pr_number);
+    let latest_heads = latest_review_head_by_source(&inventory);
+    let timeline = pr_review_timeline_sessions(&inventory, &request.repo, request.pr_number);
+    let completed_reviews = timeline.len();
+    let stalled_iterations = count_consecutive_non_improving_iterations(&timeline);
+    let previous_summary = timeline
+        .iter()
+        .rev()
+        .nth(1)
+        .and_then(|review| review.summary.clone());
+    let latest_completed_review = timeline.last().cloned();
+
+    if let Some(latest_review) = latest_review.as_ref() {
+        if matches!(
+            latest_review.status,
+            ReviewStatus::Pending | ReviewStatus::Running
+        ) {
+            return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+                repo: request.repo.clone(),
+                pr_number: request.pr_number,
+                max_iterations,
+                completed_reviews,
+                status: FixLoopStatus::ReviewPending,
+                next_action: "wait_for_review".to_string(),
+                status_message: format!(
+                    "Waiting for DiffScope review '{}' to finish before continuing the fix loop.",
+                    latest_review.id
+                ),
+                latest_review_id: Some(latest_review.id.clone()),
+                latest_review_status: Some(latest_review.status.clone()),
+                triggered_review_id: None,
+                current_head_sha,
+                reviewed_head_sha: latest_review.github_head_sha.clone(),
+                latest_review_stale: false,
+                summary: None,
+                previous_summary,
+                improvement_detected: None,
+                stalled_iterations,
+                stop_reason: None,
+                replay_candidates: Vec::new(),
+                fix_handoff: None,
+            })));
+        }
+
+        if latest_review.status == ReviewStatus::Failed
+            && latest_completed_review
+                .as_ref()
+                .is_none_or(|completed| latest_review.started_at >= completed.started_at)
+        {
+            return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+                repo: request.repo.clone(),
+                pr_number: request.pr_number,
+                max_iterations,
+                completed_reviews,
+                status: FixLoopStatus::Failed,
+                next_action: "stop".to_string(),
+                status_message: latest_review
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "The latest DiffScope review failed.".to_string()),
+                latest_review_id: Some(latest_review.id.clone()),
+                latest_review_status: Some(latest_review.status.clone()),
+                triggered_review_id: None,
+                current_head_sha,
+                reviewed_head_sha: latest_review.github_head_sha.clone(),
+                latest_review_stale: false,
+                summary: None,
+                previous_summary,
+                improvement_detected: None,
+                stalled_iterations,
+                stop_reason: Some(FixLoopStopReason::ReviewFailed),
+                replay_candidates: Vec::new(),
+                fix_handoff: None,
+            })));
+        }
+    }
+
+    let Some(latest_completed_review) = latest_completed_review else {
+        if auto_start_review {
+            let started = dispatch_pr_review(
+                &state,
+                StartPrReviewRequest {
+                    repo: request.repo.clone(),
+                    pr_number: request.pr_number,
+                    post_results: false,
+                },
+            )
+            .await?;
+
+            return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+                repo: request.repo.clone(),
+                pr_number: request.pr_number,
+                max_iterations,
+                completed_reviews: 0,
+                status: FixLoopStatus::ReviewPending,
+                next_action: "wait_for_review".to_string(),
+                status_message: format!(
+                    "Started DiffScope review '{}' to begin the fix loop.",
+                    started.id
+                ),
+                latest_review_id: Some(started.id.clone()),
+                latest_review_status: Some(started.status),
+                triggered_review_id: Some(started.id),
+                current_head_sha: current_head_sha.clone(),
+                reviewed_head_sha: current_head_sha,
+                latest_review_stale: false,
+                summary: None,
+                previous_summary: None,
+                improvement_detected: None,
+                stalled_iterations: 0,
+                stop_reason: None,
+                replay_candidates: Vec::new(),
+                fix_handoff: None,
+            })));
+        }
+
+        return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+            repo: request.repo.clone(),
+            pr_number: request.pr_number,
+            max_iterations,
+            completed_reviews: 0,
+            status: FixLoopStatus::NeedsReview,
+            next_action: "start_review".to_string(),
+            status_message:
+                "No completed DiffScope review exists for this PR. Start a review to begin the fix loop."
+                    .to_string(),
+            latest_review_id: None,
+            latest_review_status: None,
+            triggered_review_id: None,
+            current_head_sha,
+            reviewed_head_sha: None,
+            latest_review_stale: false,
+            summary: None,
+            previous_summary: None,
+            improvement_detected: None,
+            stalled_iterations: 0,
+            stop_reason: None,
+            replay_candidates: Vec::new(),
+            fix_handoff: None,
+        })));
+    };
+
+    let latest_review_stale = crate::server::pr_readiness::is_review_stale(
+        &latest_completed_review,
+        &latest_heads,
+        current_head_sha.as_deref(),
+    );
+    let latest_completed_review = apply_dynamic_review_state(
+        latest_completed_review,
+        &latest_heads,
+        current_head_sha.as_deref(),
+    );
+    let latest_summary = latest_completed_review.summary.clone();
+    let improvement_detected = previous_summary
+        .as_ref()
+        .zip(latest_summary.as_ref())
+        .map(|(previous, current)| review_summary_improved(current, previous));
+
+    if latest_review_stale {
+        if completed_reviews >= max_iterations {
+            let fix_handoff = Some(build_pr_fix_handoff_response(
+                &request.repo,
+                request.pr_number,
+                Some(&latest_completed_review),
+                false,
+            ));
+            let replay_candidates = build_fix_loop_replay_candidates(
+                &request.repo,
+                request.pr_number,
+                &latest_completed_review,
+                replay_limit,
+            );
+
+            return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+                repo: request.repo.clone(),
+                pr_number: request.pr_number,
+                max_iterations,
+                completed_reviews,
+                status: FixLoopStatus::Exhausted,
+                next_action: "stop".to_string(),
+                status_message:
+                    "Fix loop budget exhausted before DiffScope could review the latest PR head."
+                        .to_string(),
+                latest_review_id: Some(latest_completed_review.id.clone()),
+                latest_review_status: Some(latest_completed_review.status.clone()),
+                triggered_review_id: None,
+                current_head_sha,
+                reviewed_head_sha: latest_completed_review.github_head_sha.clone(),
+                latest_review_stale: true,
+                summary: latest_summary,
+                previous_summary,
+                improvement_detected,
+                stalled_iterations,
+                stop_reason: Some(FixLoopStopReason::MaxIterations),
+                replay_candidates,
+                fix_handoff,
+            })));
+        }
+
+        if auto_rerun_stale {
+            let rerun_request =
+                build_rerun_pr_review_request(&latest_completed_review, Some(false))?;
+            let started = dispatch_pr_review(&state, rerun_request).await?;
+
+            return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+                repo: request.repo.clone(),
+                pr_number: request.pr_number,
+                max_iterations,
+                completed_reviews,
+                status: FixLoopStatus::ReviewPending,
+                next_action: "wait_for_review".to_string(),
+                status_message: format!(
+                    "Started DiffScope rerun '{}' for the latest PR head.",
+                    started.id
+                ),
+                latest_review_id: Some(started.id.clone()),
+                latest_review_status: Some(started.status),
+                triggered_review_id: Some(started.id),
+                current_head_sha: current_head_sha.clone(),
+                reviewed_head_sha: current_head_sha,
+                latest_review_stale: false,
+                summary: None,
+                previous_summary,
+                improvement_detected: None,
+                stalled_iterations,
+                stop_reason: None,
+                replay_candidates: Vec::new(),
+                fix_handoff: None,
+            })));
+        }
+
+        return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+            repo: request.repo.clone(),
+            pr_number: request.pr_number,
+            max_iterations,
+            completed_reviews,
+            status: FixLoopStatus::NeedsReview,
+            next_action: "rerun_review".to_string(),
+            status_message:
+                "The latest DiffScope review is stale against the current PR head. Rerun the review before applying more fixes."
+                    .to_string(),
+            latest_review_id: Some(latest_completed_review.id.clone()),
+            latest_review_status: Some(latest_completed_review.status.clone()),
+            triggered_review_id: None,
+            current_head_sha,
+            reviewed_head_sha: latest_completed_review.github_head_sha.clone(),
+            latest_review_stale: true,
+            summary: latest_summary,
+            previous_summary,
+            improvement_detected,
+            stalled_iterations,
+            stop_reason: None,
+            replay_candidates: Vec::new(),
+            fix_handoff: None,
+        })));
+    }
+
+    let latest_summary_ref = latest_completed_review.summary.as_ref().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Latest completed review is missing a readiness summary.".to_string(),
+        )
+    })?;
+
+    if latest_summary_ref.merge_readiness == MergeReadiness::Ready
+        && latest_summary_ref.open_blockers == 0
+        && latest_summary_ref.open_comments == 0
+    {
+        return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+            repo: request.repo.clone(),
+            pr_number: request.pr_number,
+            max_iterations,
+            completed_reviews,
+            status: FixLoopStatus::Converged,
+            next_action: "stop".to_string(),
+            status_message: "PR is ready and the fix loop converged with no unresolved findings."
+                .to_string(),
+            latest_review_id: Some(latest_completed_review.id.clone()),
+            latest_review_status: Some(latest_completed_review.status.clone()),
+            triggered_review_id: None,
+            current_head_sha,
+            reviewed_head_sha: latest_completed_review.github_head_sha.clone(),
+            latest_review_stale: false,
+            summary: latest_summary.clone(),
+            previous_summary,
+            improvement_detected,
+            stalled_iterations,
+            stop_reason: Some(FixLoopStopReason::Ready),
+            replay_candidates: Vec::new(),
+            fix_handoff: None,
+        })));
+    }
+
+    let fix_handoff = Some(build_pr_fix_handoff_response(
+        &request.repo,
+        request.pr_number,
+        Some(&latest_completed_review),
+        false,
+    ));
+    let replay_candidates = build_fix_loop_replay_candidates(
+        &request.repo,
+        request.pr_number,
+        &latest_completed_review,
+        replay_limit,
+    );
+
+    if completed_reviews >= max_iterations {
+        return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+            repo: request.repo.clone(),
+            pr_number: request.pr_number,
+            max_iterations,
+            completed_reviews,
+            status: FixLoopStatus::Exhausted,
+            next_action: "stop".to_string(),
+            status_message: format!(
+                "Fix loop reached its review budget of {} completed review(s) with blockers still open.",
+                max_iterations
+            ),
+            latest_review_id: Some(latest_completed_review.id.clone()),
+            latest_review_status: Some(latest_completed_review.status.clone()),
+            triggered_review_id: None,
+            current_head_sha,
+            reviewed_head_sha: latest_completed_review.github_head_sha.clone(),
+            latest_review_stale: false,
+            summary: latest_summary.clone(),
+            previous_summary,
+            improvement_detected,
+            stalled_iterations,
+            stop_reason: Some(FixLoopStopReason::MaxIterations),
+            replay_candidates,
+            fix_handoff,
+        })));
+    }
+
+    if stalled_iterations >= 2 {
+        return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+            repo: request.repo.clone(),
+            pr_number: request.pr_number,
+            max_iterations,
+            completed_reviews,
+            status: FixLoopStatus::Stalled,
+            next_action: "stop".to_string(),
+            status_message:
+                "Fix loop stopped after two consecutive review iterations showed no improvement."
+                    .to_string(),
+            latest_review_id: Some(latest_completed_review.id.clone()),
+            latest_review_status: Some(latest_completed_review.status.clone()),
+            triggered_review_id: None,
+            current_head_sha,
+            reviewed_head_sha: latest_completed_review.github_head_sha.clone(),
+            latest_review_stale: false,
+            summary: latest_summary,
+            previous_summary,
+            improvement_detected,
+            stalled_iterations,
+            stop_reason: Some(FixLoopStopReason::NoImprovement),
+            replay_candidates,
+            fix_handoff,
+        })));
+    }
+
+    Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+        repo: request.repo.clone(),
+        pr_number: request.pr_number,
+        max_iterations,
+        completed_reviews,
+        status: FixLoopStatus::NeedsFixes,
+        next_action: "apply_fixes".to_string(),
+        status_message: "Apply the unresolved fixes, push the changes, and call run_fix_until_clean again to assess the new head."
+            .to_string(),
+        latest_review_id: Some(latest_completed_review.id.clone()),
+        latest_review_status: Some(latest_completed_review.status.clone()),
+        triggered_review_id: None,
+        current_head_sha,
+        reviewed_head_sha: latest_completed_review.github_head_sha.clone(),
+        latest_review_stale: false,
+        summary: latest_summary,
+        previous_summary,
+        improvement_detected,
+        stalled_iterations,
+        stop_reason: None,
+        replay_candidates,
+        fix_handoff,
+    })))
 }
 
 // === GitHub PR Review ===
@@ -1787,5 +2483,220 @@ pub(crate) async fn post_pr_review_comments(
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         Err(format!("GitHub API returned {status}: {body}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::comment::{Category, CommentStatus, FixEffort, Severity};
+    use crate::core::CommentSynthesizer;
+    use std::path::PathBuf;
+
+    fn make_fix_loop_comment(
+        id: &str,
+        file_path: &str,
+        line_number: usize,
+        severity: Severity,
+    ) -> crate::core::Comment {
+        crate::core::Comment {
+            id: id.to_string(),
+            file_path: PathBuf::from(file_path),
+            line_number,
+            content: format!("Fix {id} before merge"),
+            rule_id: Some(format!("rule.{id}")),
+            severity,
+            category: Category::Bug,
+            suggestion: Some("Add a guard".to_string()),
+            confidence: 0.9,
+            code_suggestion: None,
+            tags: vec!["fix-loop".to_string()],
+            fix_effort: FixEffort::Low,
+            feedback: None,
+            status: CommentStatus::Open,
+            resolved_at: None,
+        }
+    }
+
+    fn make_fix_loop_review(
+        id: &str,
+        started_at: i64,
+        head_sha: &str,
+        open_blockers: usize,
+        open_comments: usize,
+        readiness: MergeReadiness,
+    ) -> ReviewSession {
+        let comments = (0..open_comments.max(1))
+            .map(|index| {
+                make_fix_loop_comment(
+                    &format!("{id}-{index}"),
+                    "src/lib.rs",
+                    10 + index,
+                    Severity::Warning,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut summary = CommentSynthesizer::generate_summary(&comments);
+        summary.open_blockers = open_blockers;
+        summary.open_comments = open_comments;
+        summary.merge_readiness = readiness;
+
+        ReviewSession {
+            id: id.to_string(),
+            status: ReviewStatus::Complete,
+            diff_source: "pr:owner/repo#42".to_string(),
+            github_head_sha: Some(head_sha.to_string()),
+            github_post_results_requested: Some(false),
+            started_at,
+            completed_at: Some(started_at + 1),
+            comments,
+            summary: Some(summary),
+            files_reviewed: 1,
+            error: None,
+            pr_summary_text: None,
+            diff_content: None,
+            event: None,
+            progress: None,
+        }
+    }
+
+    #[test]
+    fn review_summary_improved_detects_lower_blockers_and_better_readiness() {
+        let previous = make_fix_loop_review(
+            "review-1",
+            10,
+            "sha-1",
+            3,
+            3,
+            MergeReadiness::NeedsAttention,
+        );
+        let current = make_fix_loop_review("review-2", 20, "sha-2", 1, 1, MergeReadiness::Ready);
+
+        assert!(review_summary_improved(
+            current.summary.as_ref().unwrap(),
+            previous.summary.as_ref().unwrap()
+        ));
+    }
+
+    #[test]
+    fn consecutive_non_improving_iterations_counts_only_tail_sequence() {
+        let improved = make_fix_loop_review(
+            "review-1",
+            10,
+            "sha-1",
+            4,
+            4,
+            MergeReadiness::NeedsAttention,
+        );
+        let plateau_one = make_fix_loop_review(
+            "review-2",
+            20,
+            "sha-2",
+            2,
+            2,
+            MergeReadiness::NeedsAttention,
+        );
+        let plateau_two = make_fix_loop_review(
+            "review-3",
+            30,
+            "sha-3",
+            2,
+            2,
+            MergeReadiness::NeedsAttention,
+        );
+        let plateau_three = make_fix_loop_review(
+            "review-4",
+            40,
+            "sha-4",
+            2,
+            2,
+            MergeReadiness::NeedsAttention,
+        );
+
+        let count = count_consecutive_non_improving_iterations(&[
+            improved,
+            plateau_one,
+            plateau_two,
+            plateau_three,
+        ]);
+
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn build_fix_loop_replay_candidates_uses_replay_issue_prompt_args() {
+        let review = make_fix_loop_review(
+            "review-1",
+            10,
+            "sha-1",
+            2,
+            2,
+            MergeReadiness::NeedsAttention,
+        );
+
+        let candidates = build_fix_loop_replay_candidates("owner/repo", 42, &review, 1);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].prompt_name, "replay_issue");
+        assert_eq!(candidates[0].prompt_arguments["repo"], "owner/repo");
+        assert_eq!(candidates[0].prompt_arguments["pr_number"], 42);
+        assert_eq!(
+            candidates[0].prompt_arguments["comment_id"],
+            serde_json::json!(candidates[0].comment_id.clone())
+        );
+    }
+
+    #[test]
+    fn build_pr_fix_loop_response_tracks_budget_and_blocker_delta() {
+        let previous = make_fix_loop_review(
+            "review-1",
+            10,
+            "sha-1",
+            3,
+            3,
+            MergeReadiness::NeedsAttention,
+        );
+        let current = make_fix_loop_review(
+            "review-2",
+            20,
+            "sha-2",
+            2,
+            2,
+            MergeReadiness::NeedsAttention,
+        );
+
+        let response = build_pr_fix_loop_response(PrFixLoopResponseArgs {
+            repo: "owner/repo".to_string(),
+            pr_number: 42,
+            max_iterations: 4,
+            completed_reviews: 2,
+            status: FixLoopStatus::NeedsFixes,
+            next_action: "apply_fixes".to_string(),
+            status_message: "continue".to_string(),
+            latest_review_id: Some(current.id.clone()),
+            latest_review_status: Some(current.status.clone()),
+            triggered_review_id: None,
+            current_head_sha: Some("sha-current".to_string()),
+            reviewed_head_sha: current.github_head_sha.clone(),
+            latest_review_stale: false,
+            summary: current.summary.clone(),
+            previous_summary: previous.summary.clone(),
+            improvement_detected: Some(true),
+            stalled_iterations: 0,
+            stop_reason: None,
+            replay_candidates: build_fix_loop_replay_candidates("owner/repo", 42, &current, 1),
+            fix_handoff: Some(build_pr_fix_handoff_response(
+                "owner/repo",
+                42,
+                Some(&current),
+                false,
+            )),
+        });
+
+        assert_eq!(response.remaining_reviews, 2);
+        assert_eq!(response.previous_open_blockers, Some(3));
+        assert_eq!(response.open_blockers, Some(2));
+        assert_eq!(response.blocker_delta, Some(-1));
+        assert_eq!(response.improvement_detected, Some(true));
     }
 }

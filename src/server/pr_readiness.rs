@@ -124,6 +124,23 @@ pub(crate) fn apply_dynamic_review_state(
     latest_by_source: &HashMap<String, LatestGitHubHead>,
     current_head_sha: Option<&str>,
 ) -> ReviewSession {
+    let stale_review = is_review_stale(&session, latest_by_source, current_head_sha);
+
+    if let Some(summary) = session.summary.take() {
+        session.summary = Some(CommentSynthesizer::apply_runtime_review_state(
+            summary,
+            stale_review,
+        ));
+    }
+
+    session
+}
+
+pub(crate) fn is_review_stale(
+    session: &ReviewSession,
+    latest_by_source: &HashMap<String, LatestGitHubHead>,
+    current_head_sha: Option<&str>,
+) -> bool {
     let latest_known_head_stale = session
         .github_head_sha
         .as_ref()
@@ -134,16 +151,8 @@ pub(crate) fn apply_dynamic_review_state(
         .as_deref()
         .zip(current_head_sha)
         .is_some_and(|(reviewed_head, current_head)| reviewed_head != current_head);
-    let stale_review = latest_known_head_stale || current_head_stale;
 
-    if let Some(summary) = session.summary.take() {
-        session.summary = Some(CommentSynthesizer::apply_runtime_review_state(
-            summary,
-            stale_review,
-        ));
-    }
-
-    session
+    latest_known_head_stale || current_head_stale
 }
 
 fn latest_summarized_reviews_by_source(
