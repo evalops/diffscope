@@ -7,6 +7,7 @@ pub mod storage;
 pub mod storage_json;
 pub mod storage_pg;
 
+pub mod mcp;
 pub mod metrics;
 
 use axum::{

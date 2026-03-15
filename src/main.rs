@@ -306,6 +306,8 @@ enum Commands {
         #[arg(long, default_value = "3000")]
         port: u16,
     },
+    #[command(about = "Start a stdio MCP server for DiffScope review and analytics tools")]
+    Mcp,
     #[command(about = "Evaluate review quality against fixture expectations")]
     Eval {
         #[arg(long, default_value = "eval/fixtures")]
@@ -737,6 +739,9 @@ async fn main() -> Result<()> {
         }
         Commands::Serve { host, port } => {
             server::start_server(config, &host, port).await?;
+        }
+        Commands::Mcp => {
+            server::mcp::start_mcp_server(config).await?;
         }
         Commands::Eval {
             fixtures,
