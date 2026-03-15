@@ -512,10 +512,56 @@ pub(crate) struct PrFixHandoffParams {
 pub(crate) struct PrFixLoopRequest {
     pub repo: String,
     pub pr_number: u32,
+    pub profile: Option<FixLoopProfile>,
     pub max_iterations: Option<usize>,
     pub replay_limit: Option<usize>,
     pub auto_start_review: Option<bool>,
     pub auto_rerun_stale: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FixLoopProfile {
+    ConservativeAuditor,
+    #[default]
+    HighAutonomyFixer,
+    ReportOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FixLoopPolicyDefaults {
+    max_iterations: usize,
+    replay_limit: usize,
+    auto_start_review: bool,
+    auto_rerun_stale: bool,
+}
+
+fn fix_loop_profile_defaults(
+    profile: FixLoopProfile,
+    configured_max_iterations: usize,
+) -> FixLoopPolicyDefaults {
+    let configured_max_iterations = configured_max_iterations.max(1);
+
+    match profile {
+        FixLoopProfile::ConservativeAuditor => FixLoopPolicyDefaults {
+            max_iterations: configured_max_iterations.clamp(1, 2),
+            replay_limit: 1,
+            auto_start_review: true,
+            auto_rerun_stale: false,
+        },
+        FixLoopProfile::HighAutonomyFixer => FixLoopPolicyDefaults {
+            max_iterations: configured_max_iterations,
+            replay_limit: 3,
+            auto_start_review: true,
+            auto_rerun_stale: true,
+        },
+        FixLoopProfile::ReportOnly => FixLoopPolicyDefaults {
+            max_iterations: configured_max_iterations,
+            replay_limit: 1,
+            auto_start_review: false,
+            auto_rerun_stale: false,
+        },
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -716,10 +762,14 @@ pub(crate) struct PrFixLoopResponse {
     pub repo: String,
     pub pr_number: u32,
     pub diff_source: String,
+    pub profile: FixLoopProfile,
     pub status: FixLoopStatus,
     pub next_action: String,
     pub status_message: String,
     pub max_iterations: usize,
+    pub replay_limit: usize,
+    pub auto_start_review: bool,
+    pub auto_rerun_stale: bool,
     pub completed_reviews: usize,
     pub remaining_reviews: usize,
     pub stalled_iterations: usize,
@@ -1093,7 +1143,11 @@ pub(crate) fn build_fix_loop_replay_candidates(
 pub(crate) struct PrFixLoopResponseArgs {
     pub repo: String,
     pub pr_number: u32,
+    pub profile: FixLoopProfile,
     pub max_iterations: usize,
+    pub replay_limit: usize,
+    pub auto_start_review: bool,
+    pub auto_rerun_stale: bool,
     pub completed_reviews: usize,
     pub status: FixLoopStatus,
     pub next_action: String,
@@ -1129,10 +1183,14 @@ pub(crate) fn build_pr_fix_loop_response(args: PrFixLoopResponseArgs) -> PrFixLo
         diff_source: pr_diff_source(&args.repo, args.pr_number),
         repo: args.repo,
         pr_number: args.pr_number,
+        profile: args.profile,
         status: args.status,
         next_action: args.next_action,
         status_message: args.status_message,
         max_iterations: args.max_iterations,
+        replay_limit: args.replay_limit,
+        auto_start_review: args.auto_start_review,
+        auto_rerun_stale: args.auto_rerun_stale,
         completed_reviews: args.completed_reviews,
         remaining_reviews: args.max_iterations.saturating_sub(args.completed_reviews),
         stalled_iterations: args.stalled_iterations,
@@ -1557,7 +1615,12 @@ pub(crate) async fn run_gh_pr_fix_loop(
     }
 
     let configured_max_iterations = state.config.read().await.agent.max_iterations.max(1);
-    let max_iterations = request.max_iterations.unwrap_or(configured_max_iterations);
+    let profile = request.profile.unwrap_or_default();
+    let profile_defaults = fix_loop_profile_defaults(profile, configured_max_iterations);
+
+    let max_iterations = request
+        .max_iterations
+        .unwrap_or(profile_defaults.max_iterations);
     if max_iterations == 0 {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -1565,7 +1628,9 @@ pub(crate) async fn run_gh_pr_fix_loop(
         ));
     }
 
-    let replay_limit = request.replay_limit.unwrap_or(3);
+    let replay_limit = request
+        .replay_limit
+        .unwrap_or(profile_defaults.replay_limit);
     if replay_limit == 0 {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -1573,8 +1638,12 @@ pub(crate) async fn run_gh_pr_fix_loop(
         ));
     }
 
-    let auto_start_review = request.auto_start_review.unwrap_or(true);
-    let auto_rerun_stale = request.auto_rerun_stale.unwrap_or(true);
+    let auto_start_review = request
+        .auto_start_review
+        .unwrap_or(profile_defaults.auto_start_review);
+    let auto_rerun_stale = request
+        .auto_rerun_stale
+        .unwrap_or(profile_defaults.auto_rerun_stale);
     let current_head_sha =
         fetch_current_pr_head_sha_for_fix_loop(&state, &request.repo, request.pr_number).await?;
     let inventory = load_review_inventory(&state).await;
@@ -1603,7 +1672,11 @@ pub(crate) async fn run_gh_pr_fix_loop(
             return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
                 repo: request.repo.clone(),
                 pr_number: request.pr_number,
+                profile,
                 max_iterations,
+                replay_limit,
+                auto_start_review,
+                auto_rerun_stale,
                 completed_reviews,
                 status: FixLoopStatus::ReviewPending,
                 next_action: "wait_for_review".to_string(),
@@ -1636,7 +1709,11 @@ pub(crate) async fn run_gh_pr_fix_loop(
             return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
                 repo: request.repo.clone(),
                 pr_number: request.pr_number,
+                profile,
                 max_iterations,
+                replay_limit,
+                auto_start_review,
+                auto_rerun_stale,
                 completed_reviews,
                 status: FixLoopStatus::Failed,
                 next_action: "stop".to_string(),
@@ -1677,7 +1754,11 @@ pub(crate) async fn run_gh_pr_fix_loop(
             return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
                 repo: request.repo.clone(),
                 pr_number: request.pr_number,
+                profile,
                 max_iterations,
+                replay_limit,
+                auto_start_review,
+                auto_rerun_stale,
                 completed_reviews: 0,
                 status: FixLoopStatus::ReviewPending,
                 next_action: "wait_for_review".to_string(),
@@ -1705,7 +1786,11 @@ pub(crate) async fn run_gh_pr_fix_loop(
         return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
             repo: request.repo.clone(),
             pr_number: request.pr_number,
+            profile,
             max_iterations,
+            replay_limit,
+            auto_start_review,
+            auto_rerun_stale,
             completed_reviews: 0,
             status: FixLoopStatus::NeedsReview,
             next_action: "start_review".to_string(),
@@ -1763,7 +1848,11 @@ pub(crate) async fn run_gh_pr_fix_loop(
             return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
                 repo: request.repo.clone(),
                 pr_number: request.pr_number,
+                profile,
                 max_iterations,
+                replay_limit,
+                auto_start_review,
+                auto_rerun_stale,
                 completed_reviews,
                 status: FixLoopStatus::Exhausted,
                 next_action: "stop".to_string(),
@@ -1795,7 +1884,11 @@ pub(crate) async fn run_gh_pr_fix_loop(
             return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
                 repo: request.repo.clone(),
                 pr_number: request.pr_number,
+                profile,
                 max_iterations,
+                replay_limit,
+                auto_start_review,
+                auto_rerun_stale,
                 completed_reviews,
                 status: FixLoopStatus::ReviewPending,
                 next_action: "wait_for_review".to_string(),
@@ -1823,7 +1916,11 @@ pub(crate) async fn run_gh_pr_fix_loop(
         return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
             repo: request.repo.clone(),
             pr_number: request.pr_number,
+            profile,
             max_iterations,
+            replay_limit,
+            auto_start_review,
+            auto_rerun_stale,
             completed_reviews,
             status: FixLoopStatus::NeedsReview,
             next_action: "rerun_review".to_string(),
@@ -1861,7 +1958,11 @@ pub(crate) async fn run_gh_pr_fix_loop(
         return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
             repo: request.repo.clone(),
             pr_number: request.pr_number,
+            profile,
             max_iterations,
+            replay_limit,
+            auto_start_review,
+            auto_rerun_stale,
             completed_reviews,
             status: FixLoopStatus::Converged,
             next_action: "stop".to_string(),
@@ -1901,7 +2002,11 @@ pub(crate) async fn run_gh_pr_fix_loop(
         return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
             repo: request.repo.clone(),
             pr_number: request.pr_number,
+            profile,
             max_iterations,
+            replay_limit,
+            auto_start_review,
+            auto_rerun_stale,
             completed_reviews,
             status: FixLoopStatus::Exhausted,
             next_action: "stop".to_string(),
@@ -1930,7 +2035,11 @@ pub(crate) async fn run_gh_pr_fix_loop(
         return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
             repo: request.repo.clone(),
             pr_number: request.pr_number,
+            profile,
             max_iterations,
+            replay_limit,
+            auto_start_review,
+            auto_rerun_stale,
             completed_reviews,
             status: FixLoopStatus::Stalled,
             next_action: "stop".to_string(),
@@ -1957,7 +2066,11 @@ pub(crate) async fn run_gh_pr_fix_loop(
     Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
         repo: request.repo.clone(),
         pr_number: request.pr_number,
+        profile,
         max_iterations,
+        replay_limit,
+        auto_start_review,
+        auto_rerun_stale,
         completed_reviews,
         status: FixLoopStatus::NeedsFixes,
         next_action: "apply_fixes".to_string(),
@@ -2733,6 +2846,27 @@ mod tests {
     }
 
     #[test]
+    fn fix_loop_profile_defaults_match_expected_autonomy_levels() {
+        let conservative = fix_loop_profile_defaults(FixLoopProfile::ConservativeAuditor, 6);
+        assert_eq!(conservative.max_iterations, 2);
+        assert_eq!(conservative.replay_limit, 1);
+        assert!(conservative.auto_start_review);
+        assert!(!conservative.auto_rerun_stale);
+
+        let high_autonomy = fix_loop_profile_defaults(FixLoopProfile::HighAutonomyFixer, 6);
+        assert_eq!(high_autonomy.max_iterations, 6);
+        assert_eq!(high_autonomy.replay_limit, 3);
+        assert!(high_autonomy.auto_start_review);
+        assert!(high_autonomy.auto_rerun_stale);
+
+        let report_only = fix_loop_profile_defaults(FixLoopProfile::ReportOnly, 6);
+        assert_eq!(report_only.max_iterations, 6);
+        assert_eq!(report_only.replay_limit, 1);
+        assert!(!report_only.auto_start_review);
+        assert!(!report_only.auto_rerun_stale);
+    }
+
+    #[test]
     fn consecutive_non_improving_iterations_counts_only_tail_sequence() {
         let improved = make_fix_loop_review(
             "review-1",
@@ -2908,7 +3042,11 @@ mod tests {
         let response = build_pr_fix_loop_response(PrFixLoopResponseArgs {
             repo: "owner/repo".to_string(),
             pr_number: 42,
+            profile: FixLoopProfile::HighAutonomyFixer,
             max_iterations: 4,
+            replay_limit: 3,
+            auto_start_review: true,
+            auto_rerun_stale: true,
             completed_reviews: 2,
             status: FixLoopStatus::NeedsFixes,
             next_action: "apply_fixes".to_string(),
@@ -2935,6 +3073,10 @@ mod tests {
         });
 
         assert_eq!(response.remaining_reviews, 2);
+        assert_eq!(response.profile, FixLoopProfile::HighAutonomyFixer);
+        assert_eq!(response.replay_limit, 3);
+        assert!(response.auto_start_review);
+        assert!(response.auto_rerun_stale);
         assert_eq!(response.previous_open_blockers, Some(3));
         assert_eq!(response.open_blockers, Some(2));
         assert_eq!(response.blocker_delta, Some(-1));

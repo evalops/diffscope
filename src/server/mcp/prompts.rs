@@ -56,6 +56,8 @@ struct CheckPrReadinessArgs {
 struct FixUntilCleanArgs {
     repo: String,
     pr_number: u32,
+    #[serde(default)]
+    profile: Option<String>,
     #[serde(default = "default_max_iterations")]
     max_iterations: usize,
 }
@@ -111,6 +113,11 @@ pub(super) fn prompt_specs() -> Vec<PromptSpec> {
                 PromptArgumentSpec {
                     name: "max_iterations",
                     description: "Maximum fix-loop iterations before stopping.",
+                    required: false,
+                },
+                PromptArgumentSpec {
+                    name: "profile",
+                    description: "Optional loop policy profile (`conservative_auditor`, `high_autonomy_fixer`, or `report_only`).",
                     required: false,
                 },
             ],
@@ -183,6 +190,11 @@ fn render_check_pr_readiness(arguments: Value) -> Result<PromptResult> {
 fn render_fix_until_clean(arguments: Value) -> Result<PromptResult> {
     let args: FixUntilCleanArgs = parse_arguments(arguments)?;
     let max_iterations = args.max_iterations.max(1);
+    let profile_argument = args
+        .profile
+        .as_deref()
+        .map(|profile| format!(", `profile={profile}`"))
+        .unwrap_or_default();
 
     Ok(PromptResult {
         description: "Run a reusable DiffScope fix loop workflow.",
@@ -191,10 +203,11 @@ fn render_fix_until_clean(arguments: Value) -> Result<PromptResult> {
             content: PromptTextContent {
                 kind: "text",
                 text: format!(
-                    "You are driving a DiffScope fix loop for GitHub PR `{repo}#{pr_number}` with an iteration budget of {max_iterations}.\n\nLoop instructions:\n1. Start by calling `run_fix_until_clean` with `repo={repo}`, `pr_number={pr_number}`, and `max_iterations={max_iterations}`.\n2. If the loop returns `review_pending`, wait for the referenced review id to finish and call `run_fix_until_clean` again.\n3. If the loop returns `needs_review`, follow the suggested `next_action` (`start_review` or `rerun_review`) or rerun the tool with `auto_start_review=true` / `auto_rerun_stale=true`.\n4. If the loop returns `needs_fixes`, use `fix_handoff` as the machine-friendly edit contract and use each `replay_candidates[*]` entry with the `replay_issue` prompt when you want a file-local handoff for a specific finding.\n5. Use your normal workspace edit/test tools to fix the highest-signal unresolved blockers first. Run the repository validators after each meaningful edit batch, push the updated PR head, and call `run_fix_until_clean` again to measure blocker deltas.\n6. Stop when the loop returns `converged`, `failed`, `exhausted`, or `stalled`. `stalled` means two consecutive review iterations showed no improvement.\n\nEvery loop summary must include the review id, validator outcome, blocker delta, and the remaining files/rules still preventing merge readiness.",
+                    "You are driving a DiffScope fix loop for GitHub PR `{repo}#{pr_number}` with an iteration budget of {max_iterations}.\n\nProfiles:\n- `conservative_auditor`: tighter replay surface, no automatic stale reruns.\n- `high_autonomy_fixer`: current autonomous defaults with automatic review starts and stale reruns.\n- `report_only`: never auto-start or auto-rerun reviews; only report the current state.\n\nLoop instructions:\n1. Start by calling `run_fix_until_clean` with `repo={repo}`, `pr_number={pr_number}`, and `max_iterations={max_iterations}`{profile_argument}.\n2. If the loop returns `review_pending`, wait for the referenced review id to finish and call `run_fix_until_clean` again.\n3. If the loop returns `needs_review`, follow the suggested `next_action` (`start_review` or `rerun_review`) or rerun the tool with `auto_start_review=true` / `auto_rerun_stale=true` when your chosen profile allows extra automation.\n4. If the loop returns `needs_fixes`, use `fix_handoff` as the machine-friendly edit contract and use each `replay_candidates[*]` entry with the `replay_issue` prompt when you want a file-local handoff for a specific finding.\n5. Use your normal workspace edit/test tools to fix the highest-signal unresolved blockers first. Run the repository validators after each meaningful edit batch, push the updated PR head, and call `run_fix_until_clean` again to measure blocker deltas.\n6. Stop when the loop returns `converged`, `failed`, `exhausted`, or `stalled`. `stalled` means two consecutive review iterations showed no improvement.\n\nEvery loop summary must include the review id, validator outcome, blocker delta, and the remaining files/rules still preventing merge readiness.",
                     repo = args.repo,
                     pr_number = args.pr_number,
                     max_iterations = max_iterations,
+                    profile_argument = profile_argument,
                 ),
             },
         }],
@@ -519,6 +532,7 @@ mod tests {
                 "repo": "owner/repo",
                 "pr_number": 7,
                 "max_iterations": 5,
+                "profile": "conservative_auditor",
             }),
         )
         .await
@@ -527,6 +541,9 @@ mod tests {
         let text = &prompt.messages[0].content.text;
         assert!(text.contains("iteration budget of 5"));
         assert!(text.contains("run_fix_until_clean"));
+        assert!(text.contains("conservative_auditor"));
+        assert!(text.contains("high_autonomy_fixer"));
+        assert!(text.contains("report_only"));
         assert!(text.contains("fix_handoff"));
         assert!(text.contains("replay_issue"));
         assert!(text.contains("stalled"));

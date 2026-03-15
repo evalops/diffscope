@@ -747,6 +747,11 @@ fn tool_specs() -> Vec<ToolSpec> {
                 json!({
                     "repo": { "type": "string", "description": "GitHub repo in owner/repo format" },
                     "pr_number": { "type": "integer", "description": "GitHub pull request number" },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["conservative_auditor", "high_autonomy_fixer", "report_only"],
+                        "description": "Optional loop policy profile"
+                    },
                     "max_iterations": {
                         "type": "integer",
                         "description": "Maximum completed review iterations before the loop stops"
@@ -1201,7 +1206,7 @@ mod tests {
                         "repo": "owner/repo",
                         "pr_number": 42,
                         "max_iterations": 3,
-                        "replay_limit": 2
+                        "profile": "conservative_auditor"
                     }
                 }
             }))
@@ -1209,6 +1214,9 @@ mod tests {
             .unwrap();
 
         let plan = &response["result"]["structuredContent"];
+        assert_eq!(plan["profile"], "conservative_auditor");
+        assert_eq!(plan["replay_limit"], 1);
+        assert_eq!(plan["auto_rerun_stale"], false);
         assert_eq!(plan["status"], "needs_fixes");
         assert_eq!(plan["next_action"], "apply_fixes");
         assert_eq!(plan["loop_telemetry"]["iterations"], 1);
