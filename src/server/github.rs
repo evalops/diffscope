@@ -925,6 +925,7 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
             event,
         )
         .await;
+        super::api::persist_pr_fix_loop_telemetry(&state, &review_id, &repo, pr_number).await;
         // Record the reviewed SHA for future incremental reviews
         let pr_key = format!("{repo}#{pr_number}");
         AppState::record_reviewed_sha(&state, &pr_key, &head_sha).await;
@@ -1049,6 +1050,7 @@ async fn run_webhook_review(state: Arc<AppState>, params: WebhookReviewParams) {
             emit_wide_event(&event);
             AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
                 .await;
+            super::api::persist_pr_fix_loop_telemetry(&state, &review_id, &repo, pr_number).await;
 
             // Record the reviewed SHA for future incremental reviews
             let pr_key = format!("{repo}#{pr_number}");

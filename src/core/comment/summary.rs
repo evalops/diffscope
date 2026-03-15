@@ -74,6 +74,7 @@ pub(super) fn generate_summary(comments: &[Comment]) -> ReviewSummary {
         merge_readiness: default_merge_readiness(open_blockers),
         verification: ReviewVerificationSummary::default(),
         readiness_reasons: Vec::new(),
+        loop_telemetry: None,
     }
 }
 
@@ -83,6 +84,7 @@ pub(super) fn inherit_review_state(
 ) -> ReviewSummary {
     if let Some(previous) = previous {
         summary.verification = previous.verification.clone();
+        summary.loop_telemetry = previous.loop_telemetry.clone();
     }
     apply_review_runtime_state(summary, false)
 }
@@ -211,7 +213,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::core::comment::{Category, FixEffort};
+    use crate::core::comment::{Category, FixEffort, FixLoopTelemetry};
 
     fn make_comment(
         id: &str,
@@ -408,5 +410,27 @@ mod tests {
         assert_eq!(summary.completeness.acknowledged_findings, 1);
         assert_eq!(summary.completeness.fixed_findings, 1);
         assert_eq!(summary.completeness.stale_findings, 1);
+    }
+
+    #[test]
+    fn inherit_review_state_preserves_fix_loop_telemetry() {
+        let previous = ReviewSummary {
+            loop_telemetry: Some(FixLoopTelemetry {
+                iterations: 3,
+                fixes_attempted: 2,
+                findings_cleared: 4,
+                findings_reopened: 1,
+            }),
+            ..generate_summary(&[make_comment(
+                "open-warning",
+                Severity::Warning,
+                Category::Bug,
+                CommentStatus::Open,
+            )])
+        };
+
+        let inherited = inherit_review_state(generate_summary(&[]), Some(&previous));
+
+        assert_eq!(inherited.loop_telemetry, previous.loop_telemetry);
     }
 }

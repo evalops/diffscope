@@ -943,6 +943,7 @@ mod tests {
             merge_readiness: crate::core::comment::MergeReadiness::NeedsAttention,
             verification: crate::core::comment::ReviewVerificationSummary::default(),
             readiness_reasons: Vec::new(),
+            loop_telemetry: None,
         };
         let comments = vec![
             build_test_comment(

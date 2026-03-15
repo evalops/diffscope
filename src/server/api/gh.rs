@@ -744,6 +744,8 @@ pub(crate) struct PrFixLoopResponse {
     pub blocker_delta: Option<isize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub improvement_detected: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_telemetry: Option<crate::core::comment::FixLoopTelemetry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub readiness_reasons: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -990,6 +992,76 @@ pub(crate) fn count_consecutive_non_improving_iterations(reviews: &[ReviewSessio
     count
 }
 
+fn fix_loop_finding_id(comment: &crate::core::Comment) -> String {
+    if comment.id.trim().is_empty() {
+        crate::core::comment::compute_comment_id(
+            &comment.file_path,
+            &comment.content,
+            &comment.category,
+        )
+    } else {
+        comment.id.clone()
+    }
+}
+
+fn fix_loop_finding_ids(review: &ReviewSession) -> std::collections::HashSet<String> {
+    review.comments.iter().map(fix_loop_finding_id).collect()
+}
+
+fn is_fix_loop_fix_attempt(previous: &ReviewSession, current: &ReviewSession) -> bool {
+    match (
+        previous.github_head_sha.as_deref(),
+        current.github_head_sha.as_deref(),
+    ) {
+        (Some(previous_head), Some(current_head)) => previous_head != current_head,
+        _ => true,
+    }
+}
+
+pub(crate) fn build_fix_loop_telemetry(
+    reviews: &[ReviewSession],
+) -> Option<crate::core::comment::FixLoopTelemetry> {
+    let summarized = reviews
+        .iter()
+        .filter(|review| review.summary.is_some())
+        .collect::<Vec<_>>();
+
+    if summarized.is_empty() {
+        return None;
+    }
+
+    let mut fixes_attempted = 0;
+    let mut findings_cleared = 0;
+    let mut findings_reopened = 0;
+    let mut historical_findings = fix_loop_finding_ids(summarized[0]);
+
+    for window in summarized.windows(2) {
+        let previous = window[0];
+        let current = window[1];
+        let previous_findings = fix_loop_finding_ids(previous);
+        let current_findings = fix_loop_finding_ids(current);
+
+        if is_fix_loop_fix_attempt(previous, current) {
+            fixes_attempted += 1;
+        }
+
+        findings_cleared += previous_findings.difference(&current_findings).count();
+        findings_reopened += current_findings
+            .difference(&previous_findings)
+            .filter(|finding_id| historical_findings.contains(*finding_id))
+            .count();
+
+        historical_findings.extend(current_findings);
+    }
+
+    Some(crate::core::comment::FixLoopTelemetry {
+        iterations: summarized.len(),
+        fixes_attempted,
+        findings_cleared,
+        findings_reopened,
+    })
+}
+
 pub(crate) fn build_fix_loop_replay_candidates(
     repo: &str,
     pr_number: u32,
@@ -1035,6 +1107,7 @@ pub(crate) struct PrFixLoopResponseArgs {
     pub summary: Option<crate::core::comment::ReviewSummary>,
     pub previous_summary: Option<crate::core::comment::ReviewSummary>,
     pub improvement_detected: Option<bool>,
+    pub loop_telemetry: Option<crate::core::comment::FixLoopTelemetry>,
     pub stalled_iterations: usize,
     pub stop_reason: Option<FixLoopStopReason>,
     pub replay_candidates: Vec<FixLoopReplayCandidate>,
@@ -1074,6 +1147,7 @@ pub(crate) fn build_pr_fix_loop_response(args: PrFixLoopResponseArgs) -> PrFixLo
         previous_open_blockers,
         blocker_delta,
         improvement_detected: args.improvement_detected,
+        loop_telemetry: args.loop_telemetry,
         readiness_reasons: args
             .summary
             .as_ref()
@@ -1514,6 +1588,11 @@ pub(crate) async fn run_gh_pr_fix_loop(
         .rev()
         .nth(1)
         .and_then(|review| review.summary.clone());
+    let loop_telemetry = timeline
+        .last()
+        .and_then(|review| review.summary.as_ref())
+        .and_then(|summary| summary.loop_telemetry.clone())
+        .or_else(|| build_fix_loop_telemetry(&timeline));
     let latest_completed_review = timeline.last().cloned();
 
     if let Some(latest_review) = latest_review.as_ref() {
@@ -1541,6 +1620,7 @@ pub(crate) async fn run_gh_pr_fix_loop(
                 summary: None,
                 previous_summary,
                 improvement_detected: None,
+                loop_telemetry: loop_telemetry.clone(),
                 stalled_iterations,
                 stop_reason: None,
                 replay_candidates: Vec::new(),
@@ -1573,6 +1653,7 @@ pub(crate) async fn run_gh_pr_fix_loop(
                 summary: None,
                 previous_summary,
                 improvement_detected: None,
+                loop_telemetry: loop_telemetry.clone(),
                 stalled_iterations,
                 stop_reason: Some(FixLoopStopReason::ReviewFailed),
                 replay_candidates: Vec::new(),
@@ -1613,6 +1694,7 @@ pub(crate) async fn run_gh_pr_fix_loop(
                 summary: None,
                 previous_summary: None,
                 improvement_detected: None,
+                loop_telemetry: None,
                 stalled_iterations: 0,
                 stop_reason: None,
                 replay_candidates: Vec::new(),
@@ -1639,6 +1721,7 @@ pub(crate) async fn run_gh_pr_fix_loop(
             summary: None,
             previous_summary: None,
             improvement_detected: None,
+            loop_telemetry: None,
             stalled_iterations: 0,
             stop_reason: None,
             replay_candidates: Vec::new(),
@@ -1696,6 +1779,7 @@ pub(crate) async fn run_gh_pr_fix_loop(
                 summary: latest_summary,
                 previous_summary,
                 improvement_detected,
+                loop_telemetry: loop_telemetry.clone(),
                 stalled_iterations,
                 stop_reason: Some(FixLoopStopReason::MaxIterations),
                 replay_candidates,
@@ -1728,6 +1812,7 @@ pub(crate) async fn run_gh_pr_fix_loop(
                 summary: None,
                 previous_summary,
                 improvement_detected: None,
+                loop_telemetry: loop_telemetry.clone(),
                 stalled_iterations,
                 stop_reason: None,
                 replay_candidates: Vec::new(),
@@ -1754,6 +1839,7 @@ pub(crate) async fn run_gh_pr_fix_loop(
             summary: latest_summary,
             previous_summary,
             improvement_detected,
+            loop_telemetry: loop_telemetry.clone(),
             stalled_iterations,
             stop_reason: None,
             replay_candidates: Vec::new(),
@@ -1790,6 +1876,7 @@ pub(crate) async fn run_gh_pr_fix_loop(
             summary: latest_summary.clone(),
             previous_summary,
             improvement_detected,
+            loop_telemetry: loop_telemetry.clone(),
             stalled_iterations,
             stop_reason: Some(FixLoopStopReason::Ready),
             replay_candidates: Vec::new(),
@@ -1831,6 +1918,7 @@ pub(crate) async fn run_gh_pr_fix_loop(
             summary: latest_summary.clone(),
             previous_summary,
             improvement_detected,
+            loop_telemetry: loop_telemetry.clone(),
             stalled_iterations,
             stop_reason: Some(FixLoopStopReason::MaxIterations),
             replay_candidates,
@@ -1858,6 +1946,7 @@ pub(crate) async fn run_gh_pr_fix_loop(
             summary: latest_summary,
             previous_summary,
             improvement_detected,
+            loop_telemetry: loop_telemetry.clone(),
             stalled_iterations,
             stop_reason: Some(FixLoopStopReason::NoImprovement),
             replay_candidates,
@@ -1883,6 +1972,7 @@ pub(crate) async fn run_gh_pr_fix_loop(
         summary: latest_summary,
         previous_summary,
         improvement_detected,
+        loop_telemetry,
         stalled_iterations,
         stop_reason: None,
         replay_candidates,
@@ -2055,6 +2145,27 @@ pub(crate) async fn rerun_pr_review(
     Ok(Json(dispatch_pr_review(&state, start_request).await?))
 }
 
+pub(crate) async fn persist_pr_fix_loop_telemetry(
+    state: &Arc<AppState>,
+    review_id: &str,
+    repo: &str,
+    pr_number: u32,
+) {
+    let timeline = {
+        let reviews = state.reviews.read().await;
+        let review_sessions = reviews.values().cloned().collect::<Vec<_>>();
+        pr_review_timeline_sessions(&review_sessions, repo, pr_number)
+    };
+    let telemetry = build_fix_loop_telemetry(&timeline);
+
+    let mut reviews = state.reviews.write().await;
+    if let Some(session) = reviews.get_mut(review_id) {
+        if let Some(summary) = session.summary.as_mut() {
+            summary.loop_telemetry = telemetry;
+        }
+    }
+}
+
 pub(crate) async fn run_pr_review_task(
     state: Arc<AppState>,
     review_id: String,
@@ -2114,6 +2225,7 @@ pub(crate) async fn run_pr_review_task(
             event,
         )
         .await;
+        persist_pr_fix_loop_telemetry(&state, &review_id, &repo, pr_number).await;
         AppState::save_reviews_async(&state);
         return;
     }
@@ -2205,6 +2317,7 @@ pub(crate) async fn run_pr_review_task(
             emit_wide_event(&event);
             AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
                 .await;
+            persist_pr_fix_loop_telemetry(&state, &review_id, &repo, pr_number).await;
 
             // Generate AI-powered PR summary if enabled
             if let Some(ref cfg) = summary_config {
@@ -2560,6 +2673,47 @@ mod tests {
         }
     }
 
+    fn make_fix_loop_review_with_comments(
+        id: &str,
+        started_at: i64,
+        head_sha: &str,
+        comments: Vec<crate::core::Comment>,
+        readiness: MergeReadiness,
+    ) -> ReviewSession {
+        let open_blockers = comments
+            .iter()
+            .filter(|comment| {
+                comment.status == CommentStatus::Open && comment.severity.is_blocking()
+            })
+            .count();
+        let open_comments = comments
+            .iter()
+            .filter(|comment| comment.status == CommentStatus::Open)
+            .count();
+        let mut summary = CommentSynthesizer::generate_summary(&comments);
+        summary.open_blockers = open_blockers;
+        summary.open_comments = open_comments;
+        summary.merge_readiness = readiness;
+
+        ReviewSession {
+            id: id.to_string(),
+            status: ReviewStatus::Complete,
+            diff_source: "pr:owner/repo#42".to_string(),
+            github_head_sha: Some(head_sha.to_string()),
+            github_post_results_requested: Some(false),
+            started_at,
+            completed_at: Some(started_at + 1),
+            comments,
+            summary: Some(summary),
+            files_reviewed: 1,
+            error: None,
+            pr_summary_text: None,
+            diff_content: None,
+            event: None,
+            progress: None,
+        }
+    }
+
     #[test]
     fn review_summary_improved_detects_lower_blockers_and_better_readiness() {
         let previous = make_fix_loop_review(
@@ -2624,6 +2778,91 @@ mod tests {
     }
 
     #[test]
+    fn build_fix_loop_telemetry_counts_cleared_and_reopened_findings() {
+        let initial = make_fix_loop_review_with_comments(
+            "review-1",
+            10,
+            "sha-1",
+            vec![
+                make_fix_loop_comment("shared-a", "src/lib.rs", 10, Severity::Warning),
+                make_fix_loop_comment("shared-b", "src/lib.rs", 20, Severity::Warning),
+            ],
+            MergeReadiness::NeedsAttention,
+        );
+        let improved = make_fix_loop_review_with_comments(
+            "review-2",
+            20,
+            "sha-2",
+            vec![make_fix_loop_comment(
+                "shared-b",
+                "src/lib.rs",
+                20,
+                Severity::Warning,
+            )],
+            MergeReadiness::NeedsAttention,
+        );
+        let reopened = make_fix_loop_review_with_comments(
+            "review-3",
+            30,
+            "sha-3",
+            vec![
+                make_fix_loop_comment("shared-a", "src/lib.rs", 10, Severity::Warning),
+                make_fix_loop_comment("shared-b", "src/lib.rs", 20, Severity::Warning),
+            ],
+            MergeReadiness::NeedsAttention,
+        );
+
+        let telemetry = build_fix_loop_telemetry(&[initial, improved, reopened]).unwrap();
+
+        assert_eq!(telemetry.iterations, 3);
+        assert_eq!(telemetry.fixes_attempted, 2);
+        assert_eq!(telemetry.findings_cleared, 1);
+        assert_eq!(telemetry.findings_reopened, 1);
+    }
+
+    #[test]
+    fn build_fix_loop_telemetry_ignores_same_head_reruns_for_fix_attempts() {
+        let first = make_fix_loop_review_with_comments(
+            "review-1",
+            10,
+            "sha-1",
+            vec![make_fix_loop_comment(
+                "shared-a",
+                "src/lib.rs",
+                10,
+                Severity::Warning,
+            )],
+            MergeReadiness::NeedsAttention,
+        );
+        let rerun = make_fix_loop_review_with_comments(
+            "review-2",
+            20,
+            "sha-1",
+            vec![make_fix_loop_comment(
+                "shared-a",
+                "src/lib.rs",
+                10,
+                Severity::Warning,
+            )],
+            MergeReadiness::NeedsAttention,
+        );
+        let fix = make_fix_loop_review_with_comments(
+            "review-3",
+            30,
+            "sha-2",
+            vec![],
+            MergeReadiness::Ready,
+        );
+
+        let telemetry = build_fix_loop_telemetry(&[first, rerun, fix]).unwrap();
+
+        assert_eq!(telemetry.iterations, 3);
+        assert_eq!(telemetry.fixes_attempted, 1);
+        assert_eq!(telemetry.findings_cleared, 1);
+        assert_eq!(telemetry.findings_reopened, 0);
+    }
+
+    #[test]
     fn build_fix_loop_replay_candidates_uses_replay_issue_prompt_args() {
         let review = make_fix_loop_review(
             "review-1",
@@ -2664,6 +2903,7 @@ mod tests {
             2,
             MergeReadiness::NeedsAttention,
         );
+        let loop_telemetry = build_fix_loop_telemetry(&[previous.clone(), current.clone()]);
 
         let response = build_pr_fix_loop_response(PrFixLoopResponseArgs {
             repo: "owner/repo".to_string(),
@@ -2682,6 +2922,7 @@ mod tests {
             summary: current.summary.clone(),
             previous_summary: previous.summary.clone(),
             improvement_detected: Some(true),
+            loop_telemetry: loop_telemetry.clone(),
             stalled_iterations: 0,
             stop_reason: None,
             replay_candidates: build_fix_loop_replay_candidates("owner/repo", 42, &current, 1),
@@ -2698,5 +2939,6 @@ mod tests {
         assert_eq!(response.open_blockers, Some(2));
         assert_eq!(response.blocker_delta, Some(-1));
         assert_eq!(response.improvement_detected, Some(true));
+        assert_eq!(response.loop_telemetry, loop_telemetry);
     }
 }

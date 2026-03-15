@@ -36,9 +36,9 @@ use tags::extract_tags;
 
 pub use identity::compute_comment_id;
 pub use types::{
-    Category, CodeSuggestion, Comment, CommentStatus, FixEffort, MergeReadiness, RawComment,
-    ReviewCompletenessSummary, ReviewSummary, ReviewVerificationState, ReviewVerificationSummary,
-    Severity,
+    Category, CodeSuggestion, Comment, CommentStatus, FixEffort, FixLoopTelemetry, MergeReadiness,
+    RawComment, ReviewCompletenessSummary, ReviewSummary, ReviewVerificationState,
+    ReviewVerificationSummary, Severity,
 };
 
 pub struct CommentSynthesizer;

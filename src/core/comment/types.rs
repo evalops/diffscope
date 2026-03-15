@@ -65,6 +65,20 @@ pub struct ReviewSummary {
     pub verification: ReviewVerificationSummary,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub readiness_reasons: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_telemetry: Option<FixLoopTelemetry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct FixLoopTelemetry {
+    #[serde(default)]
+    pub iterations: usize,
+    #[serde(default)]
+    pub fixes_attempted: usize,
+    #[serde(default)]
+    pub findings_cleared: usize,
+    #[serde(default)]
+    pub findings_reopened: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

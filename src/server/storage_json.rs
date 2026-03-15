@@ -589,6 +589,12 @@ mod tests {
             merge_readiness: crate::core::comment::MergeReadiness::NeedsAttention,
             verification: crate::core::comment::ReviewVerificationSummary::default(),
             readiness_reasons: Vec::new(),
+            loop_telemetry: Some(crate::core::comment::FixLoopTelemetry {
+                iterations: 2,
+                fixes_attempted: 1,
+                findings_cleared: 1,
+                findings_reopened: 0,
+            }),
         });
 
         backend.save_review(&session).await.unwrap();
@@ -596,7 +602,9 @@ mod tests {
         assert_eq!(loaded.comments.len(), 2);
         assert_eq!(loaded.comments[1].resolved_at, Some(123));
         assert!(loaded.summary.is_some());
-        assert_eq!(loaded.summary.unwrap().overall_score, 8.0);
+        let summary = loaded.summary.unwrap();
+        assert_eq!(summary.overall_score, 8.0);
+        assert_eq!(summary.loop_telemetry.unwrap().iterations, 2);
     }
 
     // ---------------------------------------------------------------

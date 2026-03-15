@@ -1211,6 +1211,7 @@ mod tests {
         let plan = &response["result"]["structuredContent"];
         assert_eq!(plan["status"], "needs_fixes");
         assert_eq!(plan["next_action"], "apply_fixes");
+        assert_eq!(plan["loop_telemetry"]["iterations"], 1);
         assert_eq!(plan["replay_candidates"][0]["prompt_name"], "replay_issue");
         assert_eq!(plan["fix_handoff"]["contract_version"], 1);
     }

@@ -64,6 +64,12 @@ export interface ReviewSummary {
     abstained_comments: number
   }
   readiness_reasons: string[]
+  loop_telemetry?: {
+    iterations: number
+    fixes_attempted: number
+    findings_cleared: number
+    findings_reopened: number
+  }
 }
 
 export interface FileMetricEvent {
