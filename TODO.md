@@ -31,7 +31,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 7. [x] Add path-scoped reinforcement buckets so teams can prefer different standards in `tests/`, `scripts/`, and production code.
 8. [ ] Persist explanation text from follow-up feedback replies and mine it into reusable review guidance.
 9. [ ] Learn "preferred phrasing" for accepted comments so comment tone and specificity improve over time.
-10. [ ] Backfill existing stored reviews into the new outcome-aware feedback store for cold-start reduction.
+10. [x] Backfill existing stored reviews into the new outcome-aware feedback store for cold-start reduction.
 
 ## 2. Review Lifecycle and Merge Readiness
 

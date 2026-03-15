@@ -6,6 +6,7 @@ mod git;
 mod misc;
 mod pr;
 mod review;
+mod review_session_input;
 mod smart_review;
 
 pub(crate) use dag::{build_dag_catalog, describe_dag_graph, plan_dag_graph, DagGraphSelection};
@@ -18,4 +19,9 @@ pub use misc::{
 };
 pub use pr::pr_command;
 pub use review::{check_command, compare_command, review_command};
+#[cfg(test)]
+pub(crate) use review_session_input::load_review_sessions_input_from_str;
+pub(crate) use review_session_input::{
+    load_review_sessions_input, load_review_sessions_input_from_value,
+};
 pub use smart_review::smart_review_command;

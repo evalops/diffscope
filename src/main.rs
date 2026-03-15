@@ -254,6 +254,14 @@ enum Commands {
         )]
         reject: Option<PathBuf>,
 
+        #[arg(
+            long,
+            value_name = "FILE",
+            conflicts_with_all = ["accept", "reject"],
+            help = "Rebuild the feedback store from stored reviews.json history"
+        )]
+        backfill: Option<PathBuf>,
+
         #[arg(long, help = "Override feedback file path")]
         feedback_path: Option<PathBuf>,
     },
@@ -702,9 +710,10 @@ async fn main() -> Result<()> {
         Commands::Feedback {
             accept,
             reject,
+            backfill,
             feedback_path,
         } => {
-            commands::feedback_command(config, accept, reject, feedback_path).await?;
+            commands::feedback_command(config, accept, reject, feedback_path, backfill).await?;
         }
         Commands::Discuss {
             review,

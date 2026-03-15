@@ -1,6 +1,5 @@
 use anyhow::Result;
 use serde_json::Value;
-use std::collections::HashMap;
 
 use crate::core;
 use crate::server::state::ReviewSession;
@@ -14,11 +13,10 @@ pub(super) fn load_feedback_eval_input_from_value(
     input_format: FeedbackEvalInputFormat,
 ) -> Result<LoadedFeedbackEvalInput> {
     match input_format {
-        FeedbackEvalInputFormat::ReviewMap => {
-            load_feedback_eval_input_from_review_map(serde_json::from_value(value)?)
-        }
-        FeedbackEvalInputFormat::ReviewList => {
-            load_feedback_eval_input_from_review_list(serde_json::from_value(value)?)
+        FeedbackEvalInputFormat::ReviewMap | FeedbackEvalInputFormat::ReviewList => {
+            load_feedback_eval_input_from_review_sessions(
+                crate::commands::load_review_sessions_input_from_value(value)?,
+            )
         }
         FeedbackEvalInputFormat::SemanticStore => {
             load_feedback_eval_input_from_semantic_store(serde_json::from_value(value)?)
@@ -29,21 +27,11 @@ pub(super) fn load_feedback_eval_input_from_value(
     }
 }
 
-fn load_feedback_eval_input_from_review_map(
-    review_map: HashMap<String, ReviewSession>,
+fn load_feedback_eval_input_from_review_sessions(
+    review_sessions: Vec<ReviewSession>,
 ) -> Result<LoadedFeedbackEvalInput> {
     let mut loaded = LoadedFeedbackEvalInput::default();
-    for (review_id, session) in review_map {
-        extend_from_review_session(&mut loaded, Some(review_id), session);
-    }
-    Ok(loaded)
-}
-
-fn load_feedback_eval_input_from_review_list(
-    review_list: Vec<ReviewSession>,
-) -> Result<LoadedFeedbackEvalInput> {
-    let mut loaded = LoadedFeedbackEvalInput::default();
-    for session in review_list {
+    for session in review_sessions {
         let review_id = session.id.clone();
         extend_from_review_session(&mut loaded, Some(review_id), session);
     }
