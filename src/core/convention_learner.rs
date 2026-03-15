@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::HashMap;
+
+const MAX_PREFERRED_PHRASING_EXAMPLES: usize = 5;
+const MIN_PREFERRED_PHRASING_SCORE: usize = 6;
 
 /// A learned pattern from review feedback (accepted/rejected comments).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +55,41 @@ impl ConventionPattern {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreferredPhrasingPattern {
+    pub example_text: String,
+    pub category: String,
+    pub accepted_count: usize,
+    pub rejected_count: usize,
+    pub first_seen: String,
+    pub last_seen: String,
+}
+
+impl PreferredPhrasingPattern {
+    pub fn acceptance_rate(&self) -> f32 {
+        let total = self.accepted_count + self.rejected_count;
+        if total == 0 {
+            return 0.0;
+        }
+        self.accepted_count as f32 / total as f32
+    }
+
+    pub fn total_observations(&self) -> usize {
+        self.accepted_count + self.rejected_count
+    }
+
+    fn specificity_score(&self) -> usize {
+        phrasing_specificity_score(&self.example_text)
+    }
+
+    fn should_surface(&self) -> bool {
+        self.accepted_count >= 2
+            && self.acceptance_rate() >= 0.6
+            && !crate::review::is_vague_comment_text(&self.example_text)
+            && self.specificity_score() >= MIN_PREFERRED_PHRASING_SCORE
+    }
+}
+
 /// Persistent store of learned conventions from review feedback.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ConventionStore {
@@ -59,6 +98,8 @@ pub struct ConventionStore {
     accepted_tokens: HashMap<String, usize>,
     /// Token frequency across rejected comments.
     rejected_tokens: HashMap<String, usize>,
+    #[serde(default)]
+    preferred_phrasing: HashMap<String, PreferredPhrasingPattern>,
     version: u32,
 }
 
@@ -68,6 +109,7 @@ impl ConventionStore {
             patterns: HashMap::new(),
             accepted_tokens: HashMap::new(),
             rejected_tokens: HashMap::new(),
+            preferred_phrasing: HashMap::new(),
             version: 1,
         }
     }
@@ -122,6 +164,8 @@ impl ConventionStore {
         for token in tokens {
             *token_map.entry(token).or_insert(0) += 1;
         }
+
+        self.record_preferred_phrasing(comment_content, category, accepted, timestamp);
     }
 
     /// Get patterns that match the given category and file extension.
@@ -158,6 +202,26 @@ impl ConventionStore {
             .values()
             .filter(|p| p.should_boost())
             .collect()
+    }
+
+    pub fn preferred_phrasing_examples(
+        &self,
+        categories: &[&str],
+    ) -> Vec<&PreferredPhrasingPattern> {
+        let mut examples = self
+            .preferred_phrasing
+            .values()
+            .filter(|pattern| {
+                (categories.is_empty()
+                    || categories
+                        .iter()
+                        .any(|category| *category == pattern.category))
+                    && pattern.should_surface()
+            })
+            .collect::<Vec<_>>();
+        examples.sort_by(|left, right| compare_preferred_phrasing_patterns(left, right));
+        examples.truncate(MAX_PREFERRED_PHRASING_EXAMPLES);
+        examples
     }
 
     /// Score a new comment based on learned conventions.
@@ -244,6 +308,18 @@ impl ConventionStore {
             }
         }
 
+        let preferred_phrasing = self.preferred_phrasing_examples(categories);
+        if !preferred_phrasing.is_empty() {
+            guidance.push_str("\nPreferred phrasing for accepted comments:\n");
+            guidance.push_str("- Use direct, concrete wording that states the issue and impact.\n");
+            for example in preferred_phrasing {
+                guidance.push_str(&format!(
+                    "- [{}] {}\n",
+                    example.category, example.example_text
+                ));
+            }
+        }
+
         guidance
     }
 
@@ -257,6 +333,41 @@ impl ConventionStore {
 
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
+    }
+
+    fn record_preferred_phrasing(
+        &mut self,
+        comment_content: &str,
+        category: &str,
+        accepted: bool,
+        timestamp: &str,
+    ) {
+        let Some(key) = normalize_preferred_phrasing_key(comment_content) else {
+            return;
+        };
+
+        let example_text = collapse_whitespace(comment_content);
+        let phrasing =
+            self.preferred_phrasing
+                .entry(key)
+                .or_insert_with(|| PreferredPhrasingPattern {
+                    example_text: example_text.clone(),
+                    category: category.to_string(),
+                    accepted_count: 0,
+                    rejected_count: 0,
+                    first_seen: timestamp.to_string(),
+                    last_seen: timestamp.to_string(),
+                });
+
+        if accepted {
+            phrasing.accepted_count += 1;
+            if phrasing_specificity_score(&example_text) > phrasing.specificity_score() {
+                phrasing.example_text = example_text;
+            }
+        } else {
+            phrasing.rejected_count += 1;
+        }
+        phrasing.last_seen = timestamp.to_string();
     }
 }
 
@@ -278,6 +389,75 @@ fn extract_tokens(text: &str) -> Vec<String> {
         .filter(|w| w.len() > 2 && !STOPWORDS.contains(w))
         .map(|w| w.to_string())
         .collect()
+}
+
+fn normalize_preferred_phrasing_key(text: &str) -> Option<String> {
+    let collapsed = collapse_whitespace(text);
+    let word_count = collapsed.split_whitespace().count();
+    if collapsed.is_empty() || collapsed.len() > 280 || word_count < 5 {
+        return None;
+    }
+    Some(collapsed.to_ascii_lowercase())
+}
+
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn phrasing_specificity_score(text: &str) -> usize {
+    let collapsed = collapse_whitespace(text);
+    if collapsed.is_empty() {
+        return 0;
+    }
+
+    let lower = collapsed.to_ascii_lowercase();
+    let token_count = extract_tokens(&collapsed).len().min(12);
+    let word_count = collapsed.split_whitespace().count();
+    let mut score = token_count;
+
+    if (8..=32).contains(&word_count) {
+        score += 4;
+    }
+    if [
+        " because ",
+        " so ",
+        " can ",
+        " will ",
+        " causes ",
+        " breaks ",
+        " leaks ",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+    {
+        score += 3;
+    }
+    if ["`", "()", "::", "->", "/"]
+        .iter()
+        .any(|marker| collapsed.contains(marker))
+    {
+        score += 2;
+    }
+
+    score
+}
+
+fn compare_preferred_phrasing_patterns(
+    left: &PreferredPhrasingPattern,
+    right: &PreferredPhrasingPattern,
+) -> Ordering {
+    right
+        .accepted_count
+        .cmp(&left.accepted_count)
+        .then_with(|| right.total_observations().cmp(&left.total_observations()))
+        .then_with(|| {
+            right
+                .acceptance_rate()
+                .partial_cmp(&left.acceptance_rate())
+                .unwrap_or(Ordering::Equal)
+        })
+        .then_with(|| right.specificity_score().cmp(&left.specificity_score()))
+        .then_with(|| left.example_text.cmp(&right.example_text))
 }
 
 const STOPWORDS: &[&str] = &[
@@ -457,16 +637,78 @@ mod tests {
         let guidance = store.generate_guidance(&["Security", "Style"]);
         assert!(guidance.contains("High-value Security"));
         assert!(guidance.contains("Low-value Style"));
+        assert!(guidance.contains("Preferred phrasing"));
     }
 
     #[test]
     fn test_serialization_roundtrip() {
         let mut store = ConventionStore::new();
-        store.record_feedback("test pattern", "Bug", true, Some("*.rs"), "2024-01-01");
+        store.record_feedback(
+            "The cache key omits locale, so translated responses can leak between users.",
+            "Bug",
+            true,
+            Some("*.rs"),
+            "2024-01-01",
+        );
+        store.record_feedback(
+            "The cache key omits locale, so translated responses can leak between users.",
+            "Bug",
+            true,
+            Some("*.rs"),
+            "2024-01-02",
+        );
 
         let json = store.to_json().unwrap();
         let restored = ConventionStore::from_json(&json).unwrap();
         assert_eq!(restored.pattern_count(), 1);
+        assert_eq!(restored.preferred_phrasing_examples(&["Bug"]).len(), 1);
+    }
+
+    #[test]
+    fn test_preferred_phrasing_examples_ignore_vague_and_rejected_examples() {
+        let mut store = ConventionStore::new();
+        for _ in 0..3 {
+            store.record_feedback(
+                "Consider adding more comments here.",
+                "Style",
+                true,
+                None,
+                "2024-01-01",
+            );
+            store.record_feedback(
+                "The cache key omits locale, so translated responses can leak between users.",
+                "Bug",
+                true,
+                None,
+                "2024-01-01",
+            );
+            store.record_feedback(
+                "This helper should probably be renamed.",
+                "Style",
+                false,
+                None,
+                "2024-01-01",
+            );
+        }
+
+        let examples = store.preferred_phrasing_examples(&["Bug", "Style"]);
+        assert_eq!(examples.len(), 1);
+        assert!(examples[0].example_text.contains("cache key omits locale"));
+    }
+
+    #[test]
+    fn test_preferred_phrasing_examples_respect_cap() {
+        let mut store = ConventionStore::new();
+        for index in 0..8 {
+            let content = format!(
+                "The branch misses validation path {index}, so invalid data can still reach persistence."
+            );
+            store.record_feedback(&content, "Bug", true, None, "2024-01-01");
+            store.record_feedback(&content, "Bug", true, None, "2024-01-02");
+        }
+
+        let examples = store.preferred_phrasing_examples(&["Bug"]);
+        assert_eq!(examples.len(), MAX_PREFERRED_PHRASING_EXAMPLES);
     }
 
     #[test]

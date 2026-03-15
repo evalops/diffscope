@@ -1101,4 +1101,32 @@ mod tests {
         let guidance = generate_enhanced_guidance(&ctx, "rs");
         assert!(guidance.contains("Symbol graph"));
     }
+
+    #[test]
+    fn test_generate_enhanced_guidance_includes_preferred_phrasing() {
+        let mut store = ConventionStore::new();
+        for _ in 0..2 {
+            store.record_feedback(
+                "The cache key omits locale, so translated responses can leak between users.",
+                "Bug",
+                true,
+                None,
+                "2026-03-14T00:00:00Z",
+            );
+        }
+
+        let convention_json = store.to_json().unwrap();
+        let ctx = build_enhanced_context(
+            &[],
+            &HashMap::new(),
+            None,
+            None,
+            Some(&convention_json),
+            None,
+        );
+
+        let guidance = generate_enhanced_guidance(&ctx, "rs");
+        assert!(guidance.contains("Preferred phrasing"));
+        assert!(guidance.contains("cache key omits locale"));
+    }
 }
