@@ -14,4 +14,27 @@ impl AppState {
         let shas = state.last_reviewed_shas.read().await;
         shas.get(pr_key).cloned()
     }
+
+    /// Look up the in-memory verification reuse cache for a PR.
+    pub async fn get_pr_verification_reuse_cache(
+        state: &Arc<AppState>,
+        pr_key: &str,
+    ) -> crate::review::verification::VerificationReuseCache {
+        let caches = state.pr_verification_reuse_caches.read().await;
+        caches.get(pr_key).cloned().unwrap_or_default()
+    }
+
+    /// Replace the in-memory verification reuse cache for a PR.
+    pub async fn store_pr_verification_reuse_cache(
+        state: &Arc<AppState>,
+        pr_key: &str,
+        cache: crate::review::verification::VerificationReuseCache,
+    ) {
+        let mut caches = state.pr_verification_reuse_caches.write().await;
+        if cache.is_empty() {
+            caches.remove(pr_key);
+        } else {
+            caches.insert(pr_key.to_string(), cache);
+        }
+    }
 }

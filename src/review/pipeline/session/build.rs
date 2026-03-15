@@ -16,6 +16,7 @@ pub(super) async fn build_review_session(
     diff_content: &str,
     services: &PipelineServices,
     on_progress: Option<ProgressCallback>,
+    verification_reuse_cache: crate::review::verification::VerificationReuseCache,
 ) -> Result<ReviewSession> {
     let diffs = parse_review_diffs(diff_content, services)?;
     let source_files = load_source_files(&diffs, services);
@@ -41,6 +42,7 @@ pub(super) async fn build_review_session(
         enhanced_ctx,
         enhanced_guidance,
         verification_context: HashMap::new(),
+        verification_reuse_cache,
         graph_query_traces: Vec::new(),
     })
 }

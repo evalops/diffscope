@@ -62,6 +62,7 @@ impl AppState {
             http_client,
             review_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_REVIEWS)),
             last_reviewed_shas: Arc::new(RwLock::new(HashMap::new())),
+            pr_verification_reuse_caches: Arc::new(RwLock::new(HashMap::new())),
         };
 
         Ok(state)

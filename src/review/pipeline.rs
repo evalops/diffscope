@@ -69,7 +69,23 @@ pub async fn review_diff_content_raw(
     config: config::Config,
     repo_path: &Path,
 ) -> Result<ReviewResult> {
-    review_diff_content_raw_with_progress(diff_content, config, repo_path, None).await
+    review_diff_content_raw_internal(diff_content, config, repo_path, None, None).await
+}
+
+pub async fn review_diff_content_raw_with_verification_reuse(
+    diff_content: &str,
+    config: config::Config,
+    repo_path: &Path,
+    verification_reuse_cache: crate::review::verification::VerificationReuseCache,
+) -> Result<ReviewResult> {
+    review_diff_content_raw_internal(
+        diff_content,
+        config,
+        repo_path,
+        None,
+        Some(verification_reuse_cache),
+    )
+    .await
 }
 
 #[tracing::instrument(name = "review_pipeline", skip(diff_content, config, repo_path, on_progress), fields(diff_bytes = diff_content.len(), model = %config.model))]
@@ -79,16 +95,53 @@ pub async fn review_diff_content_raw_with_progress(
     repo_path: &Path,
     on_progress: Option<ProgressCallback>,
 ) -> Result<ReviewResult> {
+    review_diff_content_raw_internal(diff_content, config, repo_path, on_progress, None).await
+}
+
+pub async fn review_diff_content_raw_with_progress_and_verification_reuse(
+    diff_content: &str,
+    config: config::Config,
+    repo_path: &Path,
+    on_progress: Option<ProgressCallback>,
+    verification_reuse_cache: crate::review::verification::VerificationReuseCache,
+) -> Result<ReviewResult> {
+    review_diff_content_raw_internal(
+        diff_content,
+        config,
+        repo_path,
+        on_progress,
+        Some(verification_reuse_cache),
+    )
+    .await
+}
+
+async fn review_diff_content_raw_internal(
+    diff_content: &str,
+    config: config::Config,
+    repo_path: &Path,
+    on_progress: Option<ProgressCallback>,
+    verification_reuse_cache: Option<crate::review::verification::VerificationReuseCache>,
+) -> Result<ReviewResult> {
+    let verification_reuse_cache = verification_reuse_cache.unwrap_or_default();
+
     if let Some(result) = maybe_review_chunked_diff_content(
         diff_content,
         config.clone(),
         repo_path,
         on_progress.clone(),
+        verification_reuse_cache.clone(),
     )
     .await?
     {
         return Ok(result);
     }
 
-    orchestrate::review_diff_content_raw_inner(diff_content, config, repo_path, on_progress).await
+    orchestrate::review_diff_content_raw_inner(
+        diff_content,
+        config,
+        repo_path,
+        on_progress,
+        verification_reuse_cache,
+    )
+    .await
 }

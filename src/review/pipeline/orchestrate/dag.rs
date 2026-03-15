@@ -43,6 +43,7 @@ struct ReviewPipelineDagContext<'a> {
     config: Option<config::Config>,
     repo_path: &'a Path,
     on_progress: Option<ProgressCallback>,
+    verification_reuse_cache: crate::review::verification::VerificationReuseCache,
     services: Option<PipelineServices>,
     session: Option<ReviewSession>,
     prepared_jobs: Option<PreparedReviewJobs>,
@@ -56,12 +57,14 @@ impl<'a> ReviewPipelineDagContext<'a> {
         config: config::Config,
         repo_path: &'a Path,
         on_progress: Option<ProgressCallback>,
+        verification_reuse_cache: crate::review::verification::VerificationReuseCache,
     ) -> Self {
         Self {
             diff_content,
             config: Some(config),
             repo_path,
             on_progress,
+            verification_reuse_cache,
             services: None,
             session: None,
             prepared_jobs: None,
@@ -81,11 +84,18 @@ pub(super) async fn execute_review_pipeline_dag(
     config: config::Config,
     repo_path: &Path,
     on_progress: Option<ProgressCallback>,
+    verification_reuse_cache: crate::review::verification::VerificationReuseCache,
 ) -> Result<ReviewResult> {
     let specs = build_review_pipeline_specs();
     let dag_description = describe_dag(&specs);
     debug!(?dag_description, "Executing review pipeline DAG");
-    let mut context = ReviewPipelineDagContext::new(diff_content, config, repo_path, on_progress);
+    let mut context = ReviewPipelineDagContext::new(
+        diff_content,
+        config,
+        repo_path,
+        on_progress,
+        verification_reuse_cache,
+    );
     let records = execute_dag(&specs, &mut context, |stage, context| {
         async move { execute_stage(stage, context).await }.boxed()
     })
@@ -250,7 +260,13 @@ async fn execute_session_stage(context: &mut ReviewPipelineDagContext<'_>) -> Re
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("session stage missing services"))?;
     context.session = Some(
-        ReviewSession::new(context.diff_content, services, context.on_progress.clone()).await?,
+        ReviewSession::new(
+            context.diff_content,
+            services,
+            context.on_progress.clone(),
+            std::mem::take(&mut context.verification_reuse_cache),
+        )
+        .await?,
     );
     Ok(())
 }

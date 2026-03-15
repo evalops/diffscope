@@ -23,6 +23,7 @@ pub struct ReviewResult {
     pub hotspots: Vec<core::multi_pass::HotspotResult>,
     pub agent_activity: Option<AgentActivity>,
     pub verification_report: Option<crate::review::verification::VerificationReport>,
+    pub verification_reuse_cache: crate::review::verification::VerificationReuseCache,
     pub warnings: Vec<String>,
     pub dag_traces: Vec<crate::core::dag::DagExecutionTrace>,
 }

@@ -1,7 +1,7 @@
 use tracing::{info, warn};
 
 use crate::core;
-use crate::review::verification::VerificationJudgeConfig;
+use crate::review::verification::{verify_comments_with_judges_and_reuse, VerificationJudgeConfig};
 
 use super::super::comments::is_analyzer_comment;
 use super::super::services::PipelineServices;
@@ -16,7 +16,7 @@ pub(super) struct VerificationPassOutput {
 pub(super) async fn apply_verification_pass(
     comments: Vec<core::Comment>,
     services: &PipelineServices,
-    session: &ReviewSession,
+    session: &mut ReviewSession,
 ) -> VerificationPassOutput {
     let (analyzer_comments, llm_comments): (Vec<_>, Vec<_>) =
         comments.into_iter().partition(is_analyzer_comment);
@@ -26,7 +26,7 @@ pub(super) async fn apply_verification_pass(
         && llm_comments.len() <= services.config.verification.max_comments
     {
         let comment_count_before = llm_comments.len();
-        let summary = super::super::super::verification::verify_comments_with_judges(
+        let summary = verify_comments_with_judges_and_reuse(
             llm_comments,
             &session.diffs,
             &session.source_files,
@@ -37,6 +37,7 @@ pub(super) async fn apply_verification_pass(
                 fail_open: services.config.verification.fail_open,
                 consensus_mode: services.config.verification.consensus_mode,
             },
+            Some(&mut session.verification_reuse_cache),
         )
         .await;
 

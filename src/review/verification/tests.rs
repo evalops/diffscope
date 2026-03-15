@@ -6,6 +6,7 @@ use crate::core::diff_parser::{ChangeType, DiffHunk, DiffLine};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tempfile::tempdir;
 
@@ -43,6 +44,39 @@ impl LLMAdapter for FailingVerificationAdapter {
 
     fn model_name(&self) -> &str {
         "failing-verifier"
+    }
+}
+
+struct CountingVerificationAdapter {
+    responses: Mutex<Vec<String>>,
+    requests: AtomicUsize,
+    model_name: &'static str,
+}
+
+impl CountingVerificationAdapter {
+    fn request_count(&self) -> usize {
+        self.requests.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl LLMAdapter for CountingVerificationAdapter {
+    async fn complete(&self, _request: LLMRequest) -> anyhow::Result<LLMResponse> {
+        self.requests.fetch_add(1, Ordering::SeqCst);
+        let response = self
+            .responses
+            .lock()
+            .expect("verification adapter mutex poisoned")
+            .remove(0);
+        Ok(LLMResponse {
+            content: response,
+            model: self.model_name.to_string(),
+            usage: None,
+        })
+    }
+
+    fn model_name(&self) -> &str {
+        self.model_name
     }
 }
 
@@ -519,6 +553,128 @@ async fn test_verify_comments_with_judges_all_consensus_drops_disagreement() {
         verified.report.as_ref().map(|report| report.required_votes),
         Some(2)
     );
+}
+
+#[tokio::test]
+async fn test_verify_comments_with_judges_reuses_cached_results() {
+    let comments = vec![make_comment("c1", "SQL injection", 10)];
+    let diffs = vec![make_diff(
+        "src/lib.rs",
+        &[(10, "let query = format!(\"SELECT * FROM users\", id);")],
+    )];
+    let source_files = HashMap::from([(
+        PathBuf::from("src/lib.rs"),
+        "let query = format!(\"SELECT * FROM users\", id);".to_string(),
+    )]);
+    let adapter = Arc::new(CountingVerificationAdapter {
+        responses: Mutex::new(vec![
+            r#"[{"index":1,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":9,"reason":"ok"}]"#
+                .to_string(),
+        ]),
+        requests: AtomicUsize::new(0),
+        model_name: "counting-verifier",
+    });
+    let judge: Arc<dyn LLMAdapter> = adapter.clone();
+    let mut reuse_cache = VerificationReuseCache::default();
+
+    let first = verify_comments_with_judges_and_reuse(
+        comments.clone(),
+        &diffs,
+        &source_files,
+        &HashMap::new(),
+        VerificationJudgeConfig {
+            adapters: &[judge.clone()],
+            min_score: 6,
+            fail_open: false,
+            consensus_mode: crate::config::VerificationConsensusMode::Any,
+        },
+        Some(&mut reuse_cache),
+    )
+    .await;
+
+    assert_eq!(first.comments.len(), 1);
+    assert_eq!(adapter.request_count(), 1);
+
+    let second = verify_comments_with_judges_and_reuse(
+        comments,
+        &diffs,
+        &source_files,
+        &HashMap::new(),
+        VerificationJudgeConfig {
+            adapters: &[judge],
+            min_score: 6,
+            fail_open: false,
+            consensus_mode: crate::config::VerificationConsensusMode::Any,
+        },
+        Some(&mut reuse_cache),
+    )
+    .await;
+
+    assert_eq!(second.comments.len(), 1);
+    assert_eq!(adapter.request_count(), 1);
+}
+
+#[tokio::test]
+async fn test_verify_comments_with_judges_cache_misses_when_evidence_changes() {
+    let comments = vec![make_comment("c1", "SQL injection", 10)];
+    let diffs = vec![make_diff(
+        "src/lib.rs",
+        &[(10, "let query = format!(\"SELECT * FROM users\", id);")],
+    )];
+    let initial_source_files = HashMap::from([(
+        PathBuf::from("src/lib.rs"),
+        "let query = format!(\"SELECT * FROM users\", id);".to_string(),
+    )]);
+    let changed_source_files = HashMap::from([(
+        PathBuf::from("src/lib.rs"),
+        "let query = format!(\"SELECT * FROM admins\", id);".to_string(),
+    )]);
+    let adapter = Arc::new(CountingVerificationAdapter {
+        responses: Mutex::new(vec![
+            r#"[{"index":1,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":9,"reason":"ok"}]"#
+                .to_string(),
+            r#"[{"index":1,"accurate":true,"line_correct":true,"suggestion_sound":true,"score":9,"reason":"ok"}]"#
+                .to_string(),
+        ]),
+        requests: AtomicUsize::new(0),
+        model_name: "counting-verifier",
+    });
+    let judge: Arc<dyn LLMAdapter> = adapter.clone();
+    let mut reuse_cache = VerificationReuseCache::default();
+
+    let first = verify_comments_with_judges_and_reuse(
+        comments.clone(),
+        &diffs,
+        &initial_source_files,
+        &HashMap::new(),
+        VerificationJudgeConfig {
+            adapters: &[judge.clone()],
+            min_score: 6,
+            fail_open: false,
+            consensus_mode: crate::config::VerificationConsensusMode::Any,
+        },
+        Some(&mut reuse_cache),
+    )
+    .await;
+    assert_eq!(first.comments.len(), 1);
+    assert_eq!(adapter.request_count(), 1);
+
+    let second = verify_comments_with_judges_and_reuse(
+        comments,
+        &diffs,
+        &changed_source_files,
+        &HashMap::new(),
+        VerificationJudgeConfig {
+            adapters: &[judge],
+            min_score: 6,
+            fail_open: false,
+            consensus_mode: crate::config::VerificationConsensusMode::Any,
+        },
+        Some(&mut reuse_cache),
+    )
+    .await;
+    assert_eq!(second.comments.len(), 1);
+    assert_eq!(adapter.request_count(), 2);
 }
 
 #[test]

@@ -12,6 +12,7 @@ pub(super) async fn maybe_review_chunked_diff_content(
     config: config::Config,
     repo_path: &Path,
     on_progress: Option<ProgressCallback>,
+    verification_reuse_cache: crate::review::verification::VerificationReuseCache,
 ) -> Result<Option<ReviewResult>> {
     if !should_optimize_for_local(&config) {
         return Ok(None);
@@ -30,6 +31,7 @@ pub(super) async fn maybe_review_chunked_diff_content(
     );
 
     let mut merged = ReviewResult::default();
+    let mut verification_reuse_cache = verification_reuse_cache;
     for (index, chunk) in chunks.iter().enumerate() {
         eprintln!("Processing chunk {}/{}...", index + 1, chunks.len());
         match super::orchestrate::review_diff_content_raw_inner(
@@ -37,10 +39,14 @@ pub(super) async fn maybe_review_chunked_diff_content(
             config.clone(),
             repo_path,
             on_progress.clone(),
+            std::mem::take(&mut verification_reuse_cache),
         )
         .await
         {
-            Ok(chunk_result) => merge_chunk_result(&mut merged, chunk_result),
+            Ok(chunk_result) => {
+                verification_reuse_cache = chunk_result.verification_reuse_cache.clone();
+                merge_chunk_result(&mut merged, chunk_result)
+            }
             Err(error) => {
                 eprintln!("Warning: chunk {} failed: {}", index + 1, error);
             }
@@ -64,5 +70,8 @@ fn merge_chunk_result(merged: &mut ReviewResult, chunk_result: ReviewResult) {
     if merged.verification_report.is_none() {
         merged.verification_report = chunk_result.verification_report;
     }
+    merged
+        .verification_reuse_cache
+        .merge(chunk_result.verification_reuse_cache);
     merged.warnings.extend(chunk_result.warnings);
 }

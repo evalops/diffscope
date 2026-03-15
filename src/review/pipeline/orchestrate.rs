@@ -18,6 +18,14 @@ pub(super) async fn review_diff_content_raw_inner(
     config: config::Config,
     repo_path: &Path,
     on_progress: Option<ProgressCallback>,
+    verification_reuse_cache: crate::review::verification::VerificationReuseCache,
 ) -> Result<ReviewResult> {
-    execute_review_pipeline_dag(diff_content, config, repo_path, on_progress).await
+    execute_review_pipeline_dag(
+        diff_content,
+        config,
+        repo_path,
+        on_progress,
+        verification_reuse_cache,
+    )
+    .await
 }

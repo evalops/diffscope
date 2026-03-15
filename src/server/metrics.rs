@@ -447,6 +447,7 @@ mod tests {
             http_client: reqwest::Client::new(),
             review_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_REVIEWS)),
             last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            pr_verification_reuse_caches: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         });
         let _permit = state
             .review_semaphore

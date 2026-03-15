@@ -23,7 +23,9 @@ pub use filters::apply_review_filters;
 pub use pipeline::{
     build_review_guidance, build_symbol_index, extract_symbols_from_diff, filter_comments_for_diff,
     review_diff_content, review_diff_content_raw, review_diff_content_raw_with_progress,
-    review_diff_content_with_repo, ProgressCallback, ProgressUpdate,
+    review_diff_content_raw_with_progress_and_verification_reuse,
+    review_diff_content_raw_with_verification_reuse, review_diff_content_with_repo,
+    ProgressCallback, ProgressUpdate,
 };
 #[allow(unused_imports)]
 pub(crate) use pipeline::{describe_review_pipeline_graph, describe_review_postprocess_graph};
@@ -36,6 +38,8 @@ pub use rule_helpers::{
 };
 #[allow(unused_imports)]
 pub(crate) use verification::summarize_review_verification;
+#[allow(unused_imports)]
+pub(crate) use verification::VerificationReuseCache;
 
 // Used by sibling modules (commands, output) and their tests
 #[allow(unused_imports)]

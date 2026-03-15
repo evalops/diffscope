@@ -25,6 +25,7 @@ pub(super) struct ReviewSession {
     pub semantic_index: Option<core::semantic::SemanticIndex>,
     pub semantic_feedback_store: Option<core::SemanticFeedbackStore>,
     pub verification_context: HashMap<PathBuf, Vec<core::LLMContextChunk>>,
+    pub verification_reuse_cache: crate::review::verification::VerificationReuseCache,
     pub graph_query_traces: Vec<core::dag::DagExecutionTrace>,
 }
 
@@ -33,7 +34,14 @@ impl ReviewSession {
         diff_content: &str,
         services: &PipelineServices,
         on_progress: Option<ProgressCallback>,
+        verification_reuse_cache: crate::review::verification::VerificationReuseCache,
     ) -> Result<Self> {
-        build_review_session(diff_content, services, on_progress).await
+        build_review_session(
+            diff_content,
+            services,
+            on_progress,
+            verification_reuse_cache,
+        )
+        .await
     }
 }

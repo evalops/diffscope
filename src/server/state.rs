@@ -282,6 +282,7 @@ mod tests {
                 config_path,
                 review_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
                 last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                pr_verification_reuse_caches: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             });
             let handle = AppState::save_reviews_async(&state);
             // The handle should be awaitable and complete successfully
@@ -377,6 +378,7 @@ mod tests {
                 config_path,
                 review_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
                 last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                pr_verification_reuse_caches: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             });
 
             let pr_key = "owner/repo#42";
@@ -413,6 +415,86 @@ mod tests {
     }
 
     #[test]
+    fn test_store_and_get_pr_verification_reuse_cache() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let storage_path = dir.path().join("reviews.json");
+            let config_path = dir.path().join("config.json");
+            let json_backend = crate::server::storage_json::JsonStorageBackend::new(&storage_path);
+            let state = Arc::new(AppState {
+                config: Arc::new(tokio::sync::RwLock::new(crate::config::Config::default())),
+                repo_path: dir.path().to_path_buf(),
+                reviews: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                storage: Arc::new(json_backend),
+                http_client: reqwest::Client::new(),
+                storage_path,
+                config_path,
+                review_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
+                last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                pr_verification_reuse_caches: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            });
+
+            let pr_key = "owner/repo#42";
+            assert!(AppState::get_pr_verification_reuse_cache(&state, pr_key)
+                .await
+                .is_empty());
+
+            let mut first_cache = crate::review::VerificationReuseCache::default();
+            first_cache.insert(
+                "c1".to_string(),
+                "judge-a".to_string(),
+                "hash-1".to_string(),
+                crate::review::verification::VerificationResult {
+                    comment_id: "c1".to_string(),
+                    accurate: true,
+                    line_correct: true,
+                    suggestion_sound: true,
+                    score: 8,
+                    reason: "cached".to_string(),
+                },
+            );
+            AppState::store_pr_verification_reuse_cache(&state, pr_key, first_cache).await;
+
+            let loaded = AppState::get_pr_verification_reuse_cache(&state, pr_key).await;
+            assert_eq!(
+                loaded
+                    .lookup("c1", "judge-a", "hash-1")
+                    .map(|result| result.score),
+                Some(8)
+            );
+
+            let mut replacement_cache = crate::review::VerificationReuseCache::default();
+            replacement_cache.insert(
+                "c2".to_string(),
+                "judge-b".to_string(),
+                "hash-2".to_string(),
+                crate::review::verification::VerificationResult {
+                    comment_id: "c2".to_string(),
+                    accurate: false,
+                    line_correct: false,
+                    suggestion_sound: false,
+                    score: 2,
+                    reason: "replacement".to_string(),
+                },
+            );
+            AppState::store_pr_verification_reuse_cache(&state, pr_key, replacement_cache).await;
+
+            let replaced = AppState::get_pr_verification_reuse_cache(&state, pr_key).await;
+            assert!(replaced.lookup("c1", "judge-a", "hash-1").is_none());
+            assert_eq!(
+                replaced
+                    .lookup("c2", "judge-b", "hash-2")
+                    .map(|result| result.score),
+                Some(2)
+            );
+        });
+    }
+
+    #[test]
     fn test_last_reviewed_shas_multiple_prs() {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -433,6 +515,7 @@ mod tests {
                 config_path,
                 review_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
                 last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+                pr_verification_reuse_caches: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             });
 
             // Record SHAs for multiple PRs across different repos

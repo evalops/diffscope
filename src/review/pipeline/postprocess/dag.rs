@@ -108,6 +108,7 @@ impl<'a> ReviewPostprocessDagContext<'a> {
             hotspots: self.session.enhanced_ctx.hotspots.clone(),
             agent_activity: self.agent_activity,
             verification_report,
+            verification_reuse_cache: self.session.verification_reuse_cache.clone(),
             warnings,
             dag_traces: self.session.graph_query_traces.clone(),
         }

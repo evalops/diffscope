@@ -2304,6 +2304,7 @@ pub(crate) async fn run_pr_review_task(
 
     let task_start = std::time::Instant::now();
     let diff_source = format!("pr:{repo}#{pr_number}");
+    let pr_key = format!("{repo}#{pr_number}");
     AppState::mark_running(&state, &review_id).await;
 
     let config = state.config.read().await.clone();
@@ -2344,15 +2345,22 @@ pub(crate) async fn run_pr_review_task(
     }
 
     let llm_start = std::time::Instant::now();
+    let verification_reuse_cache = AppState::get_pr_verification_reuse_cache(&state, &pr_key).await;
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(300),
-        crate::review::review_diff_content_raw(&diff_content, config, &repo_path),
+        crate::review::review_diff_content_raw_with_verification_reuse(
+            &diff_content,
+            config,
+            &repo_path,
+            verification_reuse_cache,
+        ),
     )
     .await;
     let llm_ms = llm_start.elapsed().as_millis() as u64;
 
     match result {
         Ok(Ok(review_result)) => {
+            let verification_reuse_cache = review_result.verification_reuse_cache.clone();
             let comments = review_result.comments;
             let summary = CommentSynthesizer::apply_verification(
                 CommentSynthesizer::generate_summary(&comments),
@@ -2429,6 +2437,8 @@ pub(crate) async fn run_pr_review_task(
                     .build();
             emit_wide_event(&event);
             AppState::complete_review(&state, &review_id, comments, summary, files_reviewed, event)
+                .await;
+            AppState::store_pr_verification_reuse_cache(&state, &pr_key, verification_reuse_cache)
                 .await;
             persist_pr_fix_loop_telemetry(&state, &review_id, &repo, pr_number).await;
 

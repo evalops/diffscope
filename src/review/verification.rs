@@ -18,10 +18,10 @@ mod tests;
 #[cfg(test)]
 use parser::parse_verification_response;
 use parser::{try_parse_verification_response, verification_response_schema};
-use prompt::build_verification_prompt;
+use prompt::{build_verification_evidence_hash, build_verification_prompt};
 
 /// Result of verifying a single review comment
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VerificationResult {
     pub comment_id: String,
     pub accurate: bool,
@@ -29,6 +29,50 @@ pub struct VerificationResult {
     pub suggestion_sound: bool,
     pub score: u8, // 0-10
     pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VerificationReuseCache {
+    entries: HashMap<String, HashMap<String, HashMap<String, VerificationResult>>>,
+}
+
+impl VerificationReuseCache {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub(crate) fn lookup(
+        &self,
+        comment_id: &str,
+        model: &str,
+        evidence_hash: &str,
+    ) -> Option<&VerificationResult> {
+        self.entries.get(comment_id)?.get(model)?.get(evidence_hash)
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        comment_id: String,
+        model: String,
+        evidence_hash: String,
+        result: VerificationResult,
+    ) {
+        self.entries
+            .entry(comment_id)
+            .or_default()
+            .entry(model)
+            .or_default()
+            .insert(evidence_hash, result);
+    }
+
+    pub(crate) fn merge(&mut self, other: Self) {
+        for (comment_id, model_entries) in other.entries {
+            let entry = self.entries.entry(comment_id).or_default();
+            for (model, evidence_entries) in model_entries {
+                entry.entry(model).or_default().extend(evidence_entries);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -115,6 +159,16 @@ pub(crate) struct VerificationJudgeConfig<'a> {
     pub consensus_mode: VerificationConsensusMode,
 }
 
+struct SingleJudgePassArgs<'a> {
+    diffs: &'a [UnifiedDiff],
+    source_files: &'a HashMap<std::path::PathBuf, String>,
+    extra_context: &'a HashMap<std::path::PathBuf, Vec<LLMContextChunk>>,
+    adapter: &'a dyn LLMAdapter,
+    min_score: u8,
+    fail_open: bool,
+    reuse_cache: Option<&'a mut VerificationReuseCache>,
+}
+
 const VERIFICATION_SYSTEM_PROMPT: &str = r#"You are a code review verifier. Your job is to validate review findings against the exact code snippets provided.
 
 For each finding, assess:
@@ -155,12 +209,15 @@ pub async fn verify_comments(
 
     let judge_summary = verify_comments_single(
         &comments,
-        diffs,
-        source_files,
-        extra_context,
-        adapter,
-        min_score,
-        fail_open,
+        SingleJudgePassArgs {
+            diffs,
+            source_files,
+            extra_context,
+            adapter,
+            min_score,
+            fail_open,
+            reuse_cache: None,
+        },
     )
     .await;
     build_verification_summary(
@@ -171,12 +228,32 @@ pub async fn verify_comments(
     )
 }
 
+#[cfg(test)]
 pub(crate) async fn verify_comments_with_judges(
     comments: Vec<Comment>,
     diffs: &[UnifiedDiff],
     source_files: &HashMap<std::path::PathBuf, String>,
     extra_context: &HashMap<std::path::PathBuf, Vec<LLMContextChunk>>,
     judge_config: VerificationJudgeConfig<'_>,
+) -> VerificationSummary {
+    verify_comments_with_judges_and_reuse(
+        comments,
+        diffs,
+        source_files,
+        extra_context,
+        judge_config,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn verify_comments_with_judges_and_reuse(
+    comments: Vec<Comment>,
+    diffs: &[UnifiedDiff],
+    source_files: &HashMap<std::path::PathBuf, String>,
+    extra_context: &HashMap<std::path::PathBuf, Vec<LLMContextChunk>>,
+    judge_config: VerificationJudgeConfig<'_>,
+    reuse_cache: Option<&mut VerificationReuseCache>,
 ) -> VerificationSummary {
     if comments.is_empty() {
         return VerificationSummary::default();
@@ -193,16 +270,20 @@ pub(crate) async fn verify_comments_with_judges(
     }
 
     let mut judge_summaries = Vec::new();
+    let mut reuse_cache = reuse_cache;
     for adapter in judge_config.adapters {
         judge_summaries.push(
             verify_comments_single(
                 &comments,
-                diffs,
-                source_files,
-                extra_context,
-                adapter.as_ref(),
-                judge_config.min_score,
-                judge_config.fail_open,
+                SingleJudgePassArgs {
+                    diffs,
+                    source_files,
+                    extra_context,
+                    adapter: adapter.as_ref(),
+                    min_score: judge_config.min_score,
+                    fail_open: judge_config.fail_open,
+                    reuse_cache: reuse_cache.as_deref_mut(),
+                },
             )
             .await,
         );
@@ -218,46 +299,92 @@ pub(crate) async fn verify_comments_with_judges(
 
 async fn verify_comments_single(
     comments: &[Comment],
-    diffs: &[UnifiedDiff],
-    source_files: &HashMap<std::path::PathBuf, String>,
-    extra_context: &HashMap<std::path::PathBuf, Vec<LLMContextChunk>>,
-    adapter: &dyn LLMAdapter,
-    min_score: u8,
-    fail_open: bool,
+    args: SingleJudgePassArgs<'_>,
 ) -> SingleJudgeSummary {
     let total_count = comments.len();
     let mut decisions = Vec::new();
     let mut warnings = Vec::new();
+    let model_name = args.adapter.model_name().to_string();
+    let diff_map = args
+        .diffs
+        .iter()
+        .map(|diff| (diff.file_path.clone(), diff))
+        .collect::<HashMap<_, _>>();
+    let mut reuse_cache = args.reuse_cache;
+
     for batch in comments.chunks(VERIFICATION_BATCH_SIZE) {
-        let prompt = build_verification_prompt(batch, diffs, source_files, extra_context);
+        let mut uncached_comments = Vec::new();
+        let mut evidence_hashes = HashMap::new();
+
+        for comment in batch {
+            let evidence_hash = build_verification_evidence_hash(
+                comment,
+                diff_map.get(&comment.file_path).copied(),
+                args.source_files,
+                args.extra_context,
+            );
+
+            if let Some(result) = reuse_cache
+                .as_deref()
+                .and_then(|cache| cache.lookup(&comment.id, model_name.as_str(), &evidence_hash))
+            {
+                info!(
+                    "Verification reused cached decision for comment {} with {}",
+                    comment.id, model_name
+                );
+                decisions.push(build_judge_decision_from_result(
+                    comment,
+                    result,
+                    args.min_score,
+                ));
+            } else {
+                evidence_hashes.insert(comment.id.clone(), evidence_hash);
+                uncached_comments.push(comment.clone());
+            }
+        }
+
+        if uncached_comments.is_empty() {
+            continue;
+        }
+
+        let prompt = build_verification_prompt(
+            &uncached_comments,
+            args.diffs,
+            args.source_files,
+            args.extra_context,
+        );
         let request = LLMRequest {
             system_prompt: VERIFICATION_SYSTEM_PROMPT.to_string(),
             user_prompt: prompt,
             temperature: Some(0.0),
-            max_tokens: Some((batch.len() * 220).max(400)),
+            max_tokens: Some((uncached_comments.len() * 220).max(400)),
             response_schema: Some(verification_response_schema()),
         };
 
-        let response = match adapter.complete(request).await {
+        let response = match args.adapter.complete(request).await {
             Ok(response) => response,
             Err(error) => {
                 info!(
                     "Verification batch failed for {} comment(s) with {}: {}",
-                    batch.len(),
-                    adapter.model_name(),
+                    uncached_comments.len(),
+                    model_name,
                     error
                 );
-                if fail_open {
+                if args.fail_open {
                     warnings.push(format!(
                         "verification judge {} fail-open kept {} comment(s) after verifier request error: {}",
-                        adapter.model_name(),
-                        batch.len(),
+                        model_name,
+                        uncached_comments.len(),
                         error
                     ));
                 }
-                decisions.extend(batch.iter().cloned().map(|comment| JudgeDecision {
+                decisions.extend(uncached_comments.into_iter().map(|comment| JudgeDecision {
                     comment_id: comment.id.clone(),
-                    kept_comment: if fail_open { Some(comment) } else { None },
+                    kept_comment: if args.fail_open {
+                        Some(comment.clone())
+                    } else {
+                        None
+                    },
                     passed_vote: false,
                     abstained: true,
                 }));
@@ -265,22 +392,28 @@ async fn verify_comments_single(
             }
         };
 
-        let Some(parsed_results) = try_parse_verification_response(&response.content, batch) else {
+        let Some(parsed_results) =
+            try_parse_verification_response(&response.content, &uncached_comments)
+        else {
             info!(
                 "Verification batch returned an unparseable response for {} comment(s) with {}",
-                batch.len(),
-                adapter.model_name()
+                uncached_comments.len(),
+                model_name
             );
-            if fail_open {
+            if args.fail_open {
                 warnings.push(format!(
                     "verification judge {} fail-open kept {} comment(s) after unparseable verifier output",
-                    adapter.model_name(),
-                    batch.len()
+                    model_name,
+                    uncached_comments.len()
                 ));
             }
-            decisions.extend(batch.iter().cloned().map(|comment| JudgeDecision {
+            decisions.extend(uncached_comments.into_iter().map(|comment| JudgeDecision {
                 comment_id: comment.id.clone(),
-                kept_comment: if fail_open { Some(comment) } else { None },
+                kept_comment: if args.fail_open {
+                    Some(comment.clone())
+                } else {
+                    None
+                },
                 passed_vote: false,
                 abstained: true,
             }));
@@ -292,44 +425,29 @@ async fn verify_comments_single(
             .map(|result| (result.comment_id.clone(), result))
             .collect::<HashMap<_, _>>();
 
-        for mut comment in batch.iter().cloned() {
+        for comment in uncached_comments {
             match results.get(&comment.id) {
-                Some(result)
-                    if result.score >= min_score && result.accurate && result.line_correct =>
-                {
-                    comment.confidence = (result.score as f32 / 10.0).min(1.0);
-                    if !result.suggestion_sound {
-                        comment.suggestion = None;
-                        comment.code_suggestion = None;
-                    }
-                    decisions.push(JudgeDecision {
-                        comment_id: comment.id.clone(),
-                        kept_comment: Some(comment),
-                        passed_vote: true,
-                        abstained: false,
-                    });
-                }
                 Some(result) => {
-                    info!(
-                        "Verification filtered comment {} by {} (score: {}, accurate: {}, line_correct: {})",
-                        comment.id,
-                        adapter.model_name(),
-                        result.score,
-                        result.accurate,
-                        result.line_correct
-                    );
-                    decisions.push(JudgeDecision {
-                        comment_id: comment.id.clone(),
-                        kept_comment: None,
-                        passed_vote: false,
-                        abstained: false,
-                    });
+                    if let (Some(cache), Some(evidence_hash)) =
+                        (reuse_cache.as_deref_mut(), evidence_hashes.get(&comment.id))
+                    {
+                        cache.insert(
+                            comment.id.clone(),
+                            model_name.clone(),
+                            evidence_hash.clone(),
+                            result.clone(),
+                        );
+                    }
+                    decisions.push(build_judge_decision_from_result(
+                        &comment,
+                        result,
+                        args.min_score,
+                    ));
                 }
                 None => {
                     info!(
                         "Verification dropped comment {} because {} returned no result",
-                        comment.id,
-                        adapter.model_name()
+                        comment.id, model_name
                     );
                     decisions.push(JudgeDecision {
                         comment_id: comment.id.clone(),
@@ -348,15 +466,41 @@ async fn verify_comments_single(
         .count();
     info!(
         "Verification judge {}: {}/{} comments passed",
-        adapter.model_name(),
-        verified_count,
-        total_count
+        model_name, verified_count, total_count
     );
 
     SingleJudgeSummary {
-        model: adapter.model_name().to_string(),
+        model: model_name,
         decisions,
         warnings,
+    }
+}
+
+fn build_judge_decision_from_result(
+    comment: &Comment,
+    result: &VerificationResult,
+    min_score: u8,
+) -> JudgeDecision {
+    if result.score >= min_score && result.accurate && result.line_correct {
+        let mut kept_comment = comment.clone();
+        kept_comment.confidence = (result.score as f32 / 10.0).min(1.0);
+        if !result.suggestion_sound {
+            kept_comment.suggestion = None;
+            kept_comment.code_suggestion = None;
+        }
+        JudgeDecision {
+            comment_id: kept_comment.id.clone(),
+            kept_comment: Some(kept_comment),
+            passed_vote: true,
+            abstained: false,
+        }
+    } else {
+        JudgeDecision {
+            comment_id: comment.id.clone(),
+            kept_comment: None,
+            passed_vote: false,
+            abstained: false,
+        }
     }
 }
 

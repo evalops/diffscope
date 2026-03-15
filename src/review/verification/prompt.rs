@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::core::{Comment, LLMContextChunk, UnifiedDiff};
+use sha2::{Digest, Sha256};
 
 #[path = "prompt/evidence.rs"]
 mod evidence;
@@ -10,6 +11,16 @@ mod render;
 mod support;
 
 use render::render_comment_section;
+
+pub(super) fn build_verification_evidence_hash(
+    comment: &Comment,
+    diff: Option<&UnifiedDiff>,
+    source_files: &HashMap<std::path::PathBuf, String>,
+    extra_context: &HashMap<std::path::PathBuf, Vec<LLMContextChunk>>,
+) -> String {
+    let evidence = render_comment_section(0, comment, diff, source_files, extra_context);
+    format!("{:x}", Sha256::digest(evidence.as_bytes()))
+}
 
 pub(super) fn build_verification_prompt(
     comments: &[Comment],

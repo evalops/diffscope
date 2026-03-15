@@ -172,6 +172,9 @@ pub struct AppState {
     /// Tracks the last reviewed head SHA per PR, keyed by "owner/repo#pr_number".
     /// Used for incremental (push-by-push) reviews.
     pub last_reviewed_shas: Arc<RwLock<HashMap<String, String>>>,
+    /// Reuses per-finding verifier decisions across PR reruns, keyed by "owner/repo#pr_number".
+    pub pr_verification_reuse_caches:
+        Arc<RwLock<HashMap<String, crate::review::verification::VerificationReuseCache>>>,
 }
 
 /// Lightweight view of a review session for list endpoints (no comments/diff/event).
