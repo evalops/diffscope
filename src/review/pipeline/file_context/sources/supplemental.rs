@@ -176,10 +176,13 @@ pub(in super::super) async fn add_path_context(
     }
 
     if !path_config.extra_context.is_empty() {
-        let extra_chunks = services
+        let mut extra_chunks = services
             .context_fetcher
             .fetch_additional_context(&path_config.extra_context)
             .await?;
+        for chunk in &mut extra_chunks {
+            chunk.provenance = Some(core::ContextProvenance::PathSpecificFocusAreas);
+        }
         context_chunks.extend(extra_chunks);
     }
 

@@ -4,6 +4,8 @@ use tracing::{debug, info};
 
 #[path = "blast_radius.rs"]
 mod blast_radius;
+#[path = "context_sources.rs"]
+mod context_sources;
 
 use crate::core;
 use crate::core::dag::{
@@ -22,6 +24,7 @@ use super::feedback::apply_semantic_feedback_adjustment;
 use super::suppression::apply_convention_suppression;
 use super::verification::{apply_verification_pass, VerificationPassOutput};
 use blast_radius::apply_blast_radius_summaries;
+use context_sources::apply_context_source_tags;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ReviewPostprocessStage {
@@ -34,6 +37,7 @@ enum ReviewPostprocessStage {
     EnhancedFilters,
     ConventionSuppression,
     BlastRadius,
+    ContextSourceArtifacts,
     PrioritizeFindings,
     SaveConventionStore,
 }
@@ -50,6 +54,7 @@ impl DagNode for ReviewPostprocessStage {
             Self::EnhancedFilters => "enhanced_filters",
             Self::ConventionSuppression => "convention_suppression",
             Self::BlastRadius => "blast_radius",
+            Self::ContextSourceArtifacts => "context_source_artifacts",
             Self::PrioritizeFindings => "prioritize_findings",
             Self::SaveConventionStore => "save_convention_store",
         }
@@ -321,6 +326,22 @@ pub(in super::super) fn describe_review_postprocess_graph(
                 hints: stage_hints(spec.id),
                 enabled: spec.enabled,
             },
+            ReviewPostprocessStage::ContextSourceArtifacts => DagNodeContract {
+                name: spec.id.name().to_string(),
+                description:
+                    "Attach stable context-source tags that identify which external or supplemental context informed each file review."
+                        .to_string(),
+                kind: DagNodeKind::Transformation,
+                dependencies: spec
+                    .dependencies
+                    .into_iter()
+                    .map(|dependency| dependency.name().to_string())
+                    .collect(),
+                inputs: vec!["comments".to_string(), "verification_context".to_string()],
+                outputs: vec!["comments".to_string()],
+                hints: stage_hints(spec.id),
+                enabled: spec.enabled,
+            },
             ReviewPostprocessStage::PrioritizeFindings => DagNodeContract {
                 name: spec.id.name().to_string(),
                 description:
@@ -434,8 +455,14 @@ fn build_postprocess_specs(
             enabled: true,
         },
         DagNodeSpec {
-            id: ReviewPostprocessStage::PrioritizeFindings,
+            id: ReviewPostprocessStage::ContextSourceArtifacts,
             dependencies: vec![ReviewPostprocessStage::BlastRadius],
+            hints: stage_hints(ReviewPostprocessStage::ContextSourceArtifacts),
+            enabled: true,
+        },
+        DagNodeSpec {
+            id: ReviewPostprocessStage::PrioritizeFindings,
+            dependencies: vec![ReviewPostprocessStage::ContextSourceArtifacts],
             hints: stage_hints(ReviewPostprocessStage::PrioritizeFindings),
             enabled: true,
         },
@@ -466,6 +493,9 @@ async fn execute_stage(
             execute_convention_suppression_stage(context)
         }
         ReviewPostprocessStage::BlastRadius => execute_blast_radius_stage(context),
+        ReviewPostprocessStage::ContextSourceArtifacts => {
+            execute_context_source_artifacts_stage(context)
+        }
         ReviewPostprocessStage::PrioritizeFindings => execute_prioritize_findings_stage(context),
         ReviewPostprocessStage::SaveConventionStore => execute_convention_store_save_stage(context),
     }
@@ -566,6 +596,14 @@ fn execute_blast_radius_stage(context: &mut ReviewPostprocessDagContext<'_>) -> 
     Ok(())
 }
 
+fn execute_context_source_artifacts_stage(
+    context: &mut ReviewPostprocessDagContext<'_>,
+) -> Result<()> {
+    let comments = std::mem::take(&mut context.comments);
+    context.comments = apply_context_source_tags(comments, &context.session.verification_context);
+    Ok(())
+}
+
 fn execute_prioritize_findings_stage(context: &mut ReviewPostprocessDagContext<'_>) -> Result<()> {
     core::sort_comments_by_priority(&mut context.comments);
     Ok(())
@@ -605,6 +643,9 @@ mod tests {
             .any(|description| description.name == "blast_radius"));
         assert!(descriptions
             .iter()
+            .any(|description| description.name == "context_source_artifacts"));
+        assert!(descriptions
+            .iter()
             .any(|description| description.name == "prioritize_findings"));
     }
 
@@ -621,6 +662,11 @@ mod tests {
             .iter()
             .any(|node| node.name == "save_convention_store" && node.hints.side_effects));
         assert_eq!(graph.terminal_nodes, vec!["save_convention_store"]);
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.name == "context_source_artifacts"
+                && node.inputs.contains(&"verification_context".to_string())));
         assert!(graph
             .nodes
             .iter()

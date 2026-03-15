@@ -81,7 +81,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 45. [ ] Support Jira/Linear issue context ingestion for PR-linked reviews.
 46. [ ] Support document-backed context ingestion for design docs, RFCs, and runbooks.
 47. [ ] Add explicit "intent mismatch" review checks comparing PR changes to ticket acceptance criteria.
-48. [ ] Add review artifacts that show which external context sources influenced a finding.
+48. [x] Add review artifacts that show which external context sources influenced a finding.
 49. [x] Add tests for pattern repository resolution across local paths, Git URLs, and broken sources.
 50. [ ] Add analytics on which context sources actually improve acceptance and fix rates.
 

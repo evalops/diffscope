@@ -117,6 +117,27 @@ impl ContextProvenance {
         }
     }
 
+    pub fn artifact_tag(&self) -> Option<String> {
+        let source = match self {
+            Self::ActiveReviewRules | Self::Analyzer { .. } => return None,
+            Self::CustomContextNotes => "custom-context".to_string(),
+            Self::DependencyGraphNeighborhood => "dependency-graph".to_string(),
+            Self::PathSpecificFocusAreas => "path-focus".to_string(),
+            Self::RepositoryGraphMetadata => "repository-graph".to_string(),
+            Self::PatternRepositoryContext { source }
+            | Self::PatternRepositorySource { source } => {
+                format!("pattern-repository:{}", source.trim())
+            }
+            Self::RelatedTestFile => "related-test-file".to_string(),
+            Self::ReverseDependencySummary => "reverse-dependency-summary".to_string(),
+            Self::SimilarImplementation { .. } => "similar-implementation".to_string(),
+            Self::SemanticRetrieval { .. } => "semantic-retrieval".to_string(),
+            Self::SymbolGraphPath { .. } => "symbol-graph".to_string(),
+        };
+
+        Some(format!("context-source:{source}"))
+    }
+
     fn label(&self) -> String {
         match self {
             Self::ActiveReviewRules => "active review rules".to_string(),
@@ -213,5 +234,30 @@ mod tests {
             ContextProvenance::RepositoryGraphMetadata.to_string(),
             "repository graph metadata"
         );
+    }
+
+    #[test]
+    fn artifact_tags_are_stable_for_external_context_sources() {
+        assert_eq!(
+            ContextProvenance::CustomContextNotes
+                .artifact_tag()
+                .as_deref(),
+            Some("context-source:custom-context")
+        );
+        assert_eq!(
+            ContextProvenance::pattern_repository_source("Acme/security-rules")
+                .artifact_tag()
+                .as_deref(),
+            Some("context-source:pattern-repository:Acme/security-rules")
+        );
+        assert_eq!(
+            ContextProvenance::symbol_graph_path(vec!["calls".to_string()], 1, 0.7)
+                .artifact_tag()
+                .as_deref(),
+            Some("context-source:symbol-graph")
+        );
+        assert!(ContextProvenance::ActiveReviewRules
+            .artifact_tag()
+            .is_none());
     }
 }
