@@ -40,6 +40,73 @@ pub(crate) struct StatusResponse {
     pub active_reviews: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ApiComment {
+    #[serde(flatten)]
+    pub comment: crate::core::comment::Comment,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outcomes: Vec<crate::core::comment::CommentOutcome>,
+}
+
+impl ApiComment {
+    pub(crate) fn from_comment(comment: crate::core::comment::Comment, stale_review: bool) -> Self {
+        let outcomes = crate::core::comment::derive_comment_outcomes(&comment, stale_review);
+        Self { comment, outcomes }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ApiReviewSession {
+    pub id: String,
+    pub status: crate::server::state::ReviewStatus,
+    pub diff_source: String,
+    #[serde(default)]
+    pub github_head_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_post_results_requested: Option<bool>,
+    pub started_at: i64,
+    pub completed_at: Option<i64>,
+    pub comments: Vec<ApiComment>,
+    pub summary: Option<crate::core::comment::ReviewSummary>,
+    pub files_reviewed: usize,
+    pub error: Option<String>,
+    #[serde(default)]
+    pub pr_summary_text: Option<String>,
+    #[serde(default)]
+    pub diff_content: Option<String>,
+    #[serde(default)]
+    pub event: Option<crate::server::state::ReviewEvent>,
+    #[serde(default)]
+    pub progress: Option<crate::server::state::ReviewProgress>,
+}
+
+pub(crate) fn build_api_review_session(
+    session: crate::server::state::ReviewSession,
+    stale_review: bool,
+) -> ApiReviewSession {
+    ApiReviewSession {
+        id: session.id,
+        status: session.status,
+        diff_source: session.diff_source,
+        github_head_sha: session.github_head_sha,
+        github_post_results_requested: session.github_post_results_requested,
+        started_at: session.started_at,
+        completed_at: session.completed_at,
+        comments: session
+            .comments
+            .into_iter()
+            .map(|comment| ApiComment::from_comment(comment, stale_review))
+            .collect(),
+        summary: session.summary,
+        files_reviewed: session.files_reviewed,
+        error: session.error,
+        pr_summary_text: session.pr_summary_text,
+        diff_content: session.diff_content,
+        event: session.event,
+        progress: session.progress,
+    }
+}
+
 #[derive(Deserialize)]
 pub(crate) struct FeedbackRequest {
     pub comment_id: String,
@@ -258,5 +325,60 @@ impl ListEventsParams {
             limit: self.limit,
             offset: self.offset,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn build_api_review_session_derives_comment_outcomes() {
+        let session = crate::server::state::ReviewSession {
+            id: "review-1".to_string(),
+            status: crate::server::state::ReviewStatus::Complete,
+            diff_source: "pr:owner/repo#42".to_string(),
+            github_head_sha: Some("abc123".to_string()),
+            github_post_results_requested: Some(true),
+            started_at: 1,
+            completed_at: Some(2),
+            comments: vec![crate::core::comment::Comment {
+                id: "comment-1".to_string(),
+                file_path: PathBuf::from("src/lib.rs"),
+                line_number: 10,
+                content: "test".to_string(),
+                rule_id: None,
+                severity: crate::core::comment::Severity::Warning,
+                category: crate::core::comment::Category::Bug,
+                suggestion: None,
+                confidence: 0.9,
+                code_suggestion: None,
+                tags: Vec::new(),
+                fix_effort: crate::core::comment::FixEffort::Low,
+                feedback: Some("accept".to_string()),
+                status: crate::core::comment::CommentStatus::Open,
+                resolved_at: None,
+            }],
+            summary: None,
+            files_reviewed: 1,
+            error: None,
+            pr_summary_text: None,
+            diff_content: None,
+            event: None,
+            progress: None,
+        };
+
+        let api_session = build_api_review_session(session, true);
+
+        assert_eq!(api_session.comments.len(), 1);
+        assert_eq!(
+            api_session.comments[0].outcomes,
+            vec![
+                crate::core::comment::CommentOutcome::Accepted,
+                crate::core::comment::CommentOutcome::Stale
+            ]
+        );
     }
 }

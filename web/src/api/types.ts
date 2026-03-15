@@ -5,6 +5,7 @@ export type ReviewStatus = 'Pending' | 'Running' | 'Complete' | 'Failed'
 export type FeedbackAction = 'accept' | 'reject'
 export type CommentLifecycleStatus = 'Open' | 'Resolved' | 'Dismissed'
 export type CommentLifecycleAction = 'open' | 'resolved' | 'dismissed'
+export type CommentOutcome = 'new' | 'accepted' | 'rejected' | 'addressed' | 'stale' | 'auto_fixed'
 export type MergeReadiness = 'Ready' | 'NeedsAttention' | 'NeedsReReview'
 export type ReviewVerificationState = 'NotApplicable' | 'Verified' | 'Inconclusive'
 
@@ -31,6 +32,7 @@ export interface Comment {
   feedback?: FeedbackAction
   status?: CommentLifecycleStatus
   resolved_at?: string | number
+  outcomes?: CommentOutcome[]
 }
 
 export interface ReviewSummary {

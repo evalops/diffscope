@@ -6,6 +6,7 @@ import { ReviewView } from '../ReviewView'
 import type { Comment, PrReadinessReview, PrReadinessSnapshot, ReviewSession, ReviewSummary } from '../../api/types'
 
 let currentRouteReviewId = 'review-1'
+let currentSearchParams = new URLSearchParams()
 const useReviewMock = vi.fn()
 const useGhPrReadinessMock = vi.fn()
 const feedbackMutate = vi.fn()
@@ -14,7 +15,7 @@ const lifecycleMutate = vi.fn()
 vi.mock('react-router-dom', () => ({
   useParams: () => ({ id: currentRouteReviewId }),
   useSearchParams: () => [
-    { get: () => null },
+    currentSearchParams,
     () => {},
   ],
 }))
@@ -145,6 +146,7 @@ function makePrReadinessSnapshot(overrides: Partial<PrReadinessSnapshot> = {}): 
 describe('ReviewView blocker mode', () => {
   beforeEach(() => {
     currentRouteReviewId = 'review-1'
+    currentSearchParams = new URLSearchParams()
     useReviewMock.mockReset()
     useGhPrReadinessMock.mockReset()
     feedbackMutate.mockReset()
@@ -266,6 +268,92 @@ describe('ReviewView blocker mode', () => {
     expect(screen.queryByRole('heading', { name: 'Unresolved' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Informational' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Fixed' })).toBeInTheDocument()
+  })
+
+  it('groups comments into a stale section when stale outcomes are present', async () => {
+    const user = userEvent.setup()
+    useReviewMock.mockReturnValue({
+      data: makeReview({
+        comments: [
+          makeComment({ id: 'comment-1', outcomes: ['stale'] }),
+          makeComment({
+            id: 'comment-2',
+            file_path: 'src/b.ts',
+            content: 'Resolved blocker',
+            severity: 'Warning',
+            status: 'Resolved',
+          }),
+        ],
+        summary: makeSummary({
+          total_comments: 2,
+          by_severity: { Error: 1, Warning: 1 },
+          by_category: { Bug: 2 },
+          critical_issues: 1,
+          open_comments: 1,
+          open_by_severity: { Error: 1 },
+          open_blocking_comments: 1,
+          open_informational_comments: 0,
+          resolved_comments: 1,
+          open_blockers: 1,
+          completeness: {
+            total_findings: 2,
+            acknowledged_findings: 1,
+            fixed_findings: 1,
+            stale_findings: 1,
+          },
+          merge_readiness: 'NeedsReReview',
+          readiness_reasons: ['New commits landed after the latest completed review.'],
+        }),
+      }),
+      isLoading: false,
+    })
+
+    render(<ReviewView />)
+
+    await user.click(screen.getByRole('button', { name: 'List' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Stale' })).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('heading', { name: 'Unresolved' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Fixed' })).toBeInTheDocument()
+  })
+
+  it('keeps open findings unresolved when re-review is caused by verification rather than stale commits', async () => {
+    const user = userEvent.setup()
+    useReviewMock.mockReturnValue({
+      data: makeReview({
+        summary: makeSummary({
+          merge_readiness: 'NeedsReReview',
+          completeness: {
+            total_findings: 3,
+            acknowledged_findings: 1,
+            fixed_findings: 1,
+            stale_findings: 0,
+          },
+          readiness_reasons: ['verification was inconclusive or fail-open; rerun this review'],
+          verification: {
+            state: 'Inconclusive',
+            judge_count: 2,
+            required_votes: 2,
+            warning_count: 1,
+            filtered_comments: 0,
+            abstained_comments: 0,
+          },
+        }),
+      }),
+      isLoading: false,
+    })
+
+    render(<ReviewView />)
+
+    await user.click(screen.getByRole('button', { name: 'List' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Unresolved' })).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('heading', { name: 'Stale' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Informational' })).toBeInTheDocument()
   })
 
   it.skip('supports keyboard finding workflows for next, thumbs, and resolve actions', async () => {

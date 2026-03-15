@@ -122,6 +122,17 @@ impl CommentStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CommentOutcome {
+    New,
+    Accepted,
+    Rejected,
+    Addressed,
+    Stale,
+    AutoFixed,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum MergeReadiness {
     Ready,

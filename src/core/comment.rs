@@ -7,6 +7,8 @@ mod confidence;
 mod identity;
 #[path = "comment/ordering.rs"]
 mod ordering;
+#[path = "comment/outcomes.rs"]
+mod outcomes;
 #[path = "comment/signals.rs"]
 mod signals;
 #[path = "comment/suggestions.rs"]
@@ -35,9 +37,10 @@ use summary::{
 use tags::extract_tags;
 
 pub use identity::compute_comment_id;
+pub use outcomes::derive_comment_outcomes;
 pub use types::{
-    Category, CodeSuggestion, Comment, CommentStatus, FixEffort, FixLoopTelemetry, MergeReadiness,
-    RawComment, ReviewCompletenessSummary, ReviewSummary, ReviewVerificationState,
+    Category, CodeSuggestion, Comment, CommentOutcome, CommentStatus, FixEffort, FixLoopTelemetry,
+    MergeReadiness, RawComment, ReviewCompletenessSummary, ReviewSummary, ReviewVerificationState,
     ReviewVerificationSummary, Severity,
 };
 

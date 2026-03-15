@@ -22,7 +22,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 
 ## 1. Feedback, Memory, and Outcomes
 
-1. [ ] Add first-class comment outcome states beyond thumbs: `new`, `accepted`, `rejected`, `addressed`, `stale`, `auto_fixed`.
+1. [x] Add first-class comment outcome states beyond thumbs: `new`, `accepted`, `rejected`, `addressed`, `stale`, `auto_fixed`.
 2. [ ] Infer "addressed by later commit" by diffing follow-up pushes against the original commented lines.
 3. [ ] Feed addressed/not-addressed outcomes into the reinforcement store alongside thumbs.
 4. [x] Separate false-positive rejections from "valid but won't fix" dismissals in stored feedback.

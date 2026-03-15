@@ -427,7 +427,7 @@ pub(crate) fn get_diff_from_git(
 pub(crate) async fn get_review(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<ReviewSession>, StatusCode> {
+) -> Result<Json<ApiReviewSession>, StatusCode> {
     let session = if let Some(session) = {
         let reviews = state.reviews.read().await;
         reviews.get(&id).cloned()
@@ -442,10 +442,10 @@ pub(crate) async fn get_review(
 
     let inventory = load_review_inventory(&state).await;
     let latest_by_source = latest_review_head_by_source(&inventory);
-    Ok(Json(apply_dynamic_review_state(
-        session,
-        &latest_by_source,
-        None,
+    let stale_review = is_review_stale(&session, &latest_by_source, None);
+    Ok(Json(build_api_review_session(
+        apply_dynamic_review_state(session, &latest_by_source, None),
+        stale_review,
     )))
 }
 

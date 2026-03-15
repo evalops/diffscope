@@ -1,6 +1,7 @@
 import { Check, X, ChevronDown, ChevronRight, Copy, CheckCheck } from 'lucide-react'
 import { useState } from 'react'
-import type { Comment } from '../api/types'
+import type { Comment, CommentOutcome } from '../api/types'
+import { getCommentOutcomes } from '../lib/commentOutcomes'
 import { SeverityBadge } from './SeverityBadge'
 
 const severityBorder: Record<string, string> = {
@@ -16,14 +17,30 @@ const lifecycleBadge: Record<string, string> = {
   Dismissed: 'bg-text-muted/10 text-text-muted border border-border',
 }
 
-const feedbackBadge: Record<'accept' | 'reject', { label: string; className: string }> = {
-  accept: {
+const outcomeBadge: Record<CommentOutcome, { label: string; className: string }> = {
+  new: {
+    label: 'New',
+    className: 'bg-accent/10 text-accent border border-accent/20',
+  },
+  accepted: {
     label: 'Accepted',
     className: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
   },
-  reject: {
+  rejected: {
     label: 'Rejected',
     className: 'bg-sev-error/10 text-sev-error border border-sev-error/20',
+  },
+  addressed: {
+    label: 'Addressed',
+    className: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
+  },
+  stale: {
+    label: 'Stale',
+    className: 'bg-accent/10 text-accent border border-accent/20',
+  },
+  auto_fixed: {
+    label: 'Auto fixed',
+    className: 'bg-sev-suggestion/10 text-sev-suggestion border border-sev-suggestion/20',
   },
 }
 
@@ -42,7 +59,7 @@ export function CommentCard({ comment, variant = 'card', onFeedback, onLifecycle
   const accepted = comment.feedback === 'accept'
   const rejected = comment.feedback === 'reject'
   const lifecycle = comment.status ?? 'Open'
-  const feedbackState = comment.feedback ? feedbackBadge[comment.feedback] : null
+  const outcomes = getCommentOutcomes(comment)
 
   const copyCode = () => {
     if (comment.code_suggestion?.suggested_code) {
@@ -76,11 +93,11 @@ export function CommentCard({ comment, variant = 'card', onFeedback, onLifecycle
         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${lifecycleBadge[lifecycle] ?? lifecycleBadge.Open}`}>
           {lifecycle}
         </span>
-        {feedbackState && (
-          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${feedbackState.className}`}>
-            {feedbackState.label}
+        {outcomes.map((outcome) => (
+          <span key={outcome} className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${outcomeBadge[outcome].className}`}>
+            {outcomeBadge[outcome].label}
           </span>
-        )}
+        ))}
 
         <div className="ml-auto flex items-center gap-1">
           {comment.fix_effort && (

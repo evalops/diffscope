@@ -7,6 +7,7 @@ import { FileSidebar } from '../components/FileSidebar'
 import { ScoreGauge } from '../components/ScoreGauge'
 import { SeverityBadge } from '../components/SeverityBadge'
 import { CommentCard } from '../components/CommentCard'
+import { getCommentOutcomes, isStaleReviewSummary } from '../lib/commentOutcomes'
 import { parseDiff } from '../lib/parseDiff'
 import type {
   Comment,
@@ -131,30 +132,25 @@ function isBlockingComment(comment: Pick<Comment, 'severity' | 'status'>): boole
   return (comment.status ?? 'Open') === 'Open' && BLOCKING_SEVERITIES.has(comment.severity)
 }
 
-function classifyReviewCommentSection(
-  comment: Comment,
-  mergeReadiness?: MergeReadiness,
-): ReviewCommentSectionKey {
+function classifyReviewCommentSection(comment: Comment): ReviewCommentSectionKey {
   const status = comment.status ?? 'Open'
-  if (status === 'Resolved' || status === 'Dismissed') {
+  const outcomes = new Set(comment.outcomes ?? [])
+  if (status === 'Resolved' || status === 'Dismissed' || outcomes.has('addressed') || outcomes.has('auto_fixed')) {
     return 'fixed'
   }
 
-  if (mergeReadiness === 'NeedsReReview') {
+  if (outcomes.has('stale')) {
     return 'stale'
   }
 
   return BLOCKING_SEVERITIES.has(comment.severity) ? 'unresolved' : 'informational'
 }
 
-function buildReviewCommentSections(
-  comments: Comment[],
-  mergeReadiness?: MergeReadiness,
-): ReviewCommentSection[] {
+function buildReviewCommentSections(comments: Comment[]): ReviewCommentSection[] {
   const groupedSections = new Map<ReviewCommentSectionKey, Map<string, Comment[]>>()
 
   for (const comment of comments) {
-    const sectionKey = classifyReviewCommentSection(comment, mergeReadiness)
+    const sectionKey = classifyReviewCommentSection(comment)
     if (!groupedSections.has(sectionKey)) {
       groupedSections.set(sectionKey, new Map())
     }
@@ -402,7 +398,14 @@ export function ReviewView() {
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null)
   const reviewRootRef = useRef<HTMLDivElement | null>(null)
   const diffContent = review?.diff_content
-  const comments = useMemo(() => review?.comments ?? [], [review?.comments])
+  const reviewIsStale = useMemo(() => isStaleReviewSummary(review?.summary), [review?.summary])
+  const comments = useMemo(
+    () => (review?.comments ?? []).map((comment) => ({
+      ...comment,
+      outcomes: getCommentOutcomes(comment, { staleReview: reviewIsStale }),
+    })),
+    [review?.comments, reviewIsStale],
+  )
 
   const handleFeedback = useCallback((commentId: string, action: 'accept' | 'reject') => {
     feedback.mutate({ commentId, action })
@@ -453,8 +456,8 @@ export function ReviewView() {
   }), [comments, severityFilter, activeSelectedFile, categoryFilter, ruleFilter, lifecycleFilter, showOnlyBlockers])
 
   const commentSections = useMemo(
-    () => buildReviewCommentSections(filteredComments, review?.summary?.merge_readiness),
-    [filteredComments, review?.summary?.merge_readiness],
+    () => buildReviewCommentSections(filteredComments),
+    [filteredComments],
   )
 
   const visibleCommentIds = useMemo(

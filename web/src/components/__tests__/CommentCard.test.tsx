@@ -72,6 +72,23 @@ describe('CommentCard', () => {
     expect(screen.getByText('Dismissed')).toBeInTheDocument()
   })
 
+  it('renders a visible new outcome badge for open findings without other outcomes', () => {
+    render(<CommentCard comment={makeComment()} />)
+    expect(screen.getByText('New')).toBeInTheDocument()
+  })
+
+  it('renders addressed and stale outcome badges when present', () => {
+    render(
+      <>
+        <CommentCard comment={makeComment({ status: 'Resolved', outcomes: ['addressed'] })} />
+        <CommentCard comment={makeComment({ id: 'comment-2', outcomes: ['stale'] })} />
+      </>,
+    )
+
+    expect(screen.getByText('Addressed')).toBeInTheDocument()
+    expect(screen.getByText('Stale')).toBeInTheDocument()
+  })
+
   it('shows "Suggested fix" toggle when code_suggestion is present', () => {
     const comment = makeComment({
       code_suggestion: {

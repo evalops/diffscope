@@ -11,8 +11,9 @@ use uuid::Uuid;
 
 use super::pr_readiness::{
     apply_dynamic_review_state, build_pr_readiness_snapshot, build_repo_blocker_rollups,
-    get_pr_readiness_snapshot, latest_pr_review_session, latest_review_head_by_source,
-    load_review_inventory, parse_pr_diff_source, pr_diff_source, PrReadinessSnapshot,
+    get_pr_readiness_snapshot, is_review_stale, latest_pr_review_session,
+    latest_review_head_by_source, load_review_inventory, parse_pr_diff_source, pr_diff_source,
+    PrReadinessSnapshot,
 };
 use super::state::{
     build_progress_callback, count_diff_files, count_reviewed_files, current_timestamp,
