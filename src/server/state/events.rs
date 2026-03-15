@@ -1,4 +1,7 @@
 use super::*;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+use uuid::Uuid;
 
 pub struct ReviewEventBuilder {
     event: ReviewEvent,
@@ -224,4 +227,105 @@ pub fn emit_wide_event(event: &ReviewEvent) {
     if let Ok(json) = serde_json::to_string(&payload) {
         info!(target: "review.event.json", "{}", json);
     }
+}
+
+#[derive(Debug, Serialize)]
+struct AutomationWebhookPayload<'a> {
+    delivery_id: String,
+    sent_at: chrono::DateTime<chrono::Utc>,
+    review: &'a ReviewEvent,
+}
+
+pub(crate) fn dispatch_review_event_webhook(state: Arc<AppState>, event: ReviewEvent) {
+    tokio::spawn(async move {
+        let (webhook_url, webhook_secret) = {
+            let config = state.config.read().await;
+            (
+                config.automation.webhook_url.clone(),
+                config.automation.webhook_secret.clone(),
+            )
+        };
+
+        if let Err(err) = send_review_event_webhook(
+            &state.http_client,
+            webhook_url.as_deref(),
+            webhook_secret.as_deref(),
+            &event,
+        )
+        .await
+        {
+            warn!(
+                review_id = %event.review_id,
+                event_type = %event.event_type,
+                "Failed to deliver automation webhook: {}",
+                err
+            );
+        }
+    });
+}
+
+pub(crate) async fn send_review_event_webhook(
+    client: &reqwest::Client,
+    webhook_url: Option<&str>,
+    webhook_secret: Option<&str>,
+    event: &ReviewEvent,
+) -> anyhow::Result<bool> {
+    let Some(webhook_url) = webhook_url.map(str::trim).filter(|url| !url.is_empty()) else {
+        return Ok(false);
+    };
+
+    let (delivery_id, body) = serialize_review_event_webhook_payload(event)?;
+    let mut request = client
+        .post(webhook_url)
+        .header("Content-Type", "application/json")
+        .header("X-DiffScope-Event", &event.event_type)
+        .header("X-DiffScope-Delivery", &delivery_id)
+        .body(body.clone());
+
+    if let Some(secret) = webhook_secret
+        .map(str::trim)
+        .filter(|secret| !secret.is_empty())
+    {
+        request = request.header(
+            "X-DiffScope-Signature-256",
+            sign_review_event_webhook_body(secret, body.as_bytes())?,
+        );
+    }
+
+    let response = request.send().await?;
+    if !response.status().is_success() {
+        anyhow::bail!("automation webhook returned {}", response.status());
+    }
+
+    Ok(true)
+}
+
+pub(crate) fn serialize_review_event_webhook_payload(
+    event: &ReviewEvent,
+) -> anyhow::Result<(String, String)> {
+    let payload = AutomationWebhookPayload {
+        delivery_id: Uuid::new_v4().to_string(),
+        sent_at: chrono::Utc::now(),
+        review: event,
+    };
+    let delivery_id = payload.delivery_id.clone();
+    let body = serde_json::to_string(&payload)?;
+    Ok((delivery_id, body))
+}
+
+pub(crate) fn sign_review_event_webhook_body(secret: &str, body: &[u8]) -> anyhow::Result<String> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())?;
+    mac.update(body);
+    Ok(format!(
+        "sha256={}",
+        encode_hex(mac.finalize().into_bytes())
+    ))
+}
+
+fn encode_hex(bytes: impl AsRef<[u8]>) -> String {
+    bytes
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }

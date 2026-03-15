@@ -116,6 +116,17 @@ pub struct GitHubConfig {
     pub webhook_secret: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AutomationConfig {
+    /// Outbound webhook URL for downstream automation consumers.
+    #[serde(default, rename = "automation_webhook_url")]
+    pub webhook_url: Option<String>,
+
+    /// Optional shared secret for signing outbound automation webhooks.
+    #[serde(default, rename = "automation_webhook_secret")]
+    pub webhook_secret: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// Enable agent loop for iterative tool-calling review (default false).
@@ -453,6 +464,9 @@ pub struct Config {
     #[serde(default, flatten)]
     pub github: GitHubConfig,
 
+    #[serde(default, flatten)]
+    pub automation: AutomationConfig,
+
     /// When true, run separate specialized LLM passes for security, correctness,
     /// and style instead of a single monolithic review prompt.
     #[serde(default = "default_false")]
@@ -655,6 +669,7 @@ impl Default for Config {
             rule_priority: Vec::new(),
             providers: HashMap::new(),
             github: GitHubConfig::default(),
+            automation: AutomationConfig::default(),
             multi_pass_specialized: false,
             agent: AgentConfig::default(),
             verification: VerificationConfig::default(),
@@ -831,32 +846,19 @@ impl Config {
                 .ok()
                 .filter(|s| !s.trim().is_empty());
         }
-
-        // Validate base_url: must be a valid http/https URL with a host
-        if let Some(ref raw_url) = self.base_url {
-            match url::Url::parse(raw_url) {
-                Ok(parsed) => {
-                    if !matches!(parsed.scheme(), "http" | "https") {
-                        warn!(
-                            "base_url '{}' uses unsupported scheme '{}' (expected http or https), ignoring",
-                            raw_url,
-                            parsed.scheme()
-                        );
-                        self.base_url = None;
-                    } else if parsed.host().is_none() {
-                        warn!("base_url '{}' has no valid host, ignoring", raw_url);
-                        self.base_url = None;
-                    }
-                }
-                Err(err) => {
-                    warn!(
-                        "base_url '{}' is not a valid URL ({}), ignoring",
-                        raw_url, err
-                    );
-                    self.base_url = None;
-                }
-            }
+        if self.automation.webhook_url.is_none() {
+            self.automation.webhook_url = std::env::var("DIFFSCOPE_AUTOMATION_WEBHOOK_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty());
         }
+        if self.automation.webhook_secret.is_none() {
+            self.automation.webhook_secret = std::env::var("DIFFSCOPE_AUTOMATION_WEBHOOK_SECRET")
+                .ok()
+                .filter(|s| !s.trim().is_empty());
+        }
+
+        validate_optional_http_url(&mut self.base_url, "base_url");
+        validate_optional_http_url(&mut self.automation.webhook_url, "automation_webhook_url");
 
         // Normalize adapter field
         if let Some(ref adapter) = self.adapter {
@@ -1365,6 +1367,36 @@ impl Config {
     }
 }
 
+fn validate_optional_http_url(url: &mut Option<String>, field_name: &str) {
+    let Some(raw_url) = url.clone() else {
+        return;
+    };
+
+    match url::Url::parse(&raw_url) {
+        Ok(parsed) => {
+            if !matches!(parsed.scheme(), "http" | "https") {
+                warn!(
+                    "{} '{}' uses unsupported scheme '{}' (expected http or https), ignoring",
+                    field_name,
+                    raw_url,
+                    parsed.scheme()
+                );
+                *url = None;
+            } else if parsed.host().is_none() {
+                warn!("{} '{}' has no valid host, ignoring", field_name, raw_url);
+                *url = None;
+            }
+        }
+        Err(err) => {
+            warn!(
+                "{} '{}' is not a valid URL ({}), ignoring",
+                field_name, raw_url, err
+            );
+            *url = None;
+        }
+    }
+}
+
 fn default_model() -> String {
     "anthropic/claude-opus-4.5".to_string()
 }
@@ -1744,6 +1776,39 @@ mod tests {
         };
         config.normalize();
         assert!(config.base_url.is_none());
+    }
+
+    #[test]
+    fn normalize_accepts_automation_webhook_url_https() {
+        let mut config = Config {
+            automation: AutomationConfig {
+                webhook_url: Some("https://automation.example.com/hooks/reviews".to_string()),
+                ..AutomationConfig::default()
+            },
+            ..Config::default()
+        };
+
+        config.normalize();
+
+        assert_eq!(
+            config.automation.webhook_url.as_deref(),
+            Some("https://automation.example.com/hooks/reviews")
+        );
+    }
+
+    #[test]
+    fn normalize_rejects_automation_webhook_url_bad_scheme() {
+        let mut config = Config {
+            automation: AutomationConfig {
+                webhook_url: Some("ftp://automation.example.com/hooks/reviews".to_string()),
+                ..AutomationConfig::default()
+            },
+            ..Config::default()
+        };
+
+        config.normalize();
+
+        assert!(config.automation.webhook_url.is_none());
     }
 
     #[test]

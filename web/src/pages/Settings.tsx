@@ -1051,6 +1051,13 @@ export function Settings() {
         </div>
       </Section>
 
+      <Section title="AUTOMATION WEBHOOKS" defaultOpen={false}>
+        <div className="space-y-3">
+          {field('Webhook URL', 'automation_webhook_url', 'text', 'https://automation.example.com/hooks/reviews', 'DiffScope posts review.completed, review.failed, and review.timeout events here')}
+          {field('Webhook Secret', 'automation_webhook_secret', 'password', '', 'Optional shared secret used to sign outbound webhook payloads')}
+        </div>
+      </Section>
+
       <Section title="VERIFICATION PASS" defaultOpen={false}>
         <Toggle
           label="Enable Verification Pass"

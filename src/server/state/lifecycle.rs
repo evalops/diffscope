@@ -17,6 +17,8 @@ impl AppState {
         files_reviewed: usize,
         event: ReviewEvent,
     ) {
+        let dispatch_event = event.clone();
+        let mut should_dispatch = false;
         let mut reviews = state.reviews.write().await;
         if let Some(session) = reviews.get_mut(review_id) {
             session.status = ReviewStatus::Complete;
@@ -26,6 +28,12 @@ impl AppState {
             session.completed_at = Some(current_timestamp());
             session.event = Some(event);
             session.progress = None;
+            should_dispatch = true;
+        }
+        drop(reviews);
+
+        if should_dispatch {
+            dispatch_review_event_webhook(state.clone(), dispatch_event);
         }
     }
 
@@ -36,6 +44,8 @@ impl AppState {
         error: String,
         event: Option<ReviewEvent>,
     ) {
+        let dispatch_event = event.clone();
+        let mut should_dispatch = false;
         let mut reviews = state.reviews.write().await;
         if let Some(session) = reviews.get_mut(review_id) {
             session.status = ReviewStatus::Failed;
@@ -43,6 +53,14 @@ impl AppState {
             session.completed_at = Some(current_timestamp());
             session.event = event;
             session.progress = None;
+            should_dispatch = true;
+        }
+        drop(reviews);
+
+        if should_dispatch {
+            if let Some(event) = dispatch_event {
+                dispatch_review_event_webhook(state.clone(), event);
+            }
         }
     }
 

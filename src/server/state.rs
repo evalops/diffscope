@@ -32,6 +32,7 @@ pub(crate) use types::*;
 mod tests {
     use super::*;
     use crate::core::comment::{Category, FixEffort, Severity};
+    use mockito::Matcher;
     use std::path::PathBuf;
 
     #[test]
@@ -86,6 +87,75 @@ mod tests {
             "OTEL payload must include review object"
         );
         assert!(json.contains("r-otel"), "payload must contain review_id");
+    }
+
+    #[test]
+    fn test_serialize_review_event_webhook_payload_includes_delivery_metadata() {
+        let event = ReviewEventBuilder::new("r-webhook", "review.completed", "head", "gpt-4o")
+            .duration_ms(100)
+            .build();
+
+        let (delivery_id, body) = serialize_review_event_webhook_payload(&event).unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+        assert_eq!(payload["delivery_id"].as_str(), Some(delivery_id.as_str()));
+        assert!(payload["sent_at"].as_str().is_some());
+        assert_eq!(payload["review"]["review_id"].as_str(), Some("r-webhook"));
+        assert_eq!(
+            payload["review"]["event_type"].as_str(),
+            Some("review.completed")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_send_review_event_webhook_noops_without_url() {
+        let event = ReviewEventBuilder::new("r-noop", "review.completed", "head", "gpt-4o").build();
+
+        let delivered = send_review_event_webhook(&reqwest::Client::new(), None, None, &event)
+            .await
+            .unwrap();
+
+        assert!(!delivered);
+    }
+
+    #[tokio::test]
+    async fn test_send_review_event_webhook_posts_signed_request() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/hooks/reviews")
+            .match_header(
+                "content-type",
+                Matcher::Regex("application/json.*".to_string()),
+            )
+            .match_header("x-diffscope-event", "review.completed")
+            .match_header(
+                "x-diffscope-delivery",
+                Matcher::Regex("[0-9a-f-]{36}".to_string()),
+            )
+            .match_header(
+                "x-diffscope-signature-256",
+                Matcher::Regex("sha256=[0-9a-f]{64}".to_string()),
+            )
+            .match_body(Matcher::Regex(
+                r#""review_id":"r-hook".*"event_type":"review.completed""#.to_string(),
+            ))
+            .with_status(202)
+            .create_async()
+            .await;
+
+        let event = ReviewEventBuilder::new("r-hook", "review.completed", "head", "gpt-4o").build();
+
+        let delivered = send_review_event_webhook(
+            &reqwest::Client::new(),
+            Some(&format!("{}/hooks/reviews", server.url())),
+            Some("shared-secret"),
+            &event,
+        )
+        .await
+        .unwrap();
+
+        assert!(delivered);
+        mock.assert_async().await;
     }
 
     #[test]
