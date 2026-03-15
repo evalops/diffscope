@@ -37,6 +37,61 @@ pub async fn inject_custom_context(
     Ok(())
 }
 
+pub fn inject_linked_issue_context(
+    config: &config::Config,
+    diff: &core::UnifiedDiff,
+    context_chunks: &mut Vec<core::LLMContextChunk>,
+) {
+    for issue in &config.linked_issue_contexts {
+        let mut lines = vec![format!(
+            "Linked {} issue context: {}",
+            match issue.provider {
+                config::LinkedIssueProvider::Jira => "Jira",
+                config::LinkedIssueProvider::Linear => "Linear",
+            },
+            issue.identifier
+        )];
+
+        if let Some(title) = issue
+            .title
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            lines.push(format!("Title: {title}"));
+        }
+        if let Some(status) = issue
+            .status
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            lines.push(format!("Status: {status}"));
+        }
+        if let Some(url) = issue
+            .url
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            lines.push(format!("URL: {url}"));
+        }
+        if !issue.summary.trim().is_empty() {
+            lines.push("Summary:".to_string());
+            lines.push(issue.summary.trim().to_string());
+        }
+
+        context_chunks.push(
+            core::LLMContextChunk::documentation(diff.file_path.clone(), lines.join("\n"))
+                .with_provenance(match issue.provider {
+                    config::LinkedIssueProvider::Jira => {
+                        core::ContextProvenance::jira_issue_context(issue.identifier.clone())
+                    }
+                    config::LinkedIssueProvider::Linear => {
+                        core::ContextProvenance::linear_issue_context(issue.identifier.clone())
+                    }
+                }),
+        );
+    }
+}
+
 pub async fn inject_pattern_repository_context(
     config: &config::Config,
     resolved_repositories: &PatternRepositoryMap,
@@ -147,6 +202,50 @@ mod tests {
             context_chunks[0].file_path,
             PathBuf::from("docs/review-notes.md")
         );
+    }
+
+    #[test]
+    fn inject_linked_issue_context_uses_provider_specific_provenance() {
+        let mut config = config::Config::default();
+        config.linked_issue_contexts = vec![
+            config::LinkedIssueContext {
+                provider: config::LinkedIssueProvider::Jira,
+                identifier: "ENG-123".to_string(),
+                title: Some("Keep API status enum aligned".to_string()),
+                status: Some("In Progress".to_string()),
+                url: Some("https://example.atlassian.net/browse/ENG-123".to_string()),
+                summary: "The API contract must remain backwards compatible.".to_string(),
+            },
+            config::LinkedIssueContext {
+                provider: config::LinkedIssueProvider::Linear,
+                identifier: "OPS-9".to_string(),
+                title: Some("Propagate webhook secret rename".to_string()),
+                status: Some("Todo".to_string()),
+                url: Some(
+                    "https://linear.app/evalops/issue/OPS-9/rename-webhook-secret".to_string(),
+                ),
+                summary: "Deployment manifests should use the new secret name.".to_string(),
+            },
+        ];
+
+        let mut context_chunks = Vec::new();
+        inject_linked_issue_context(&config, &diff_for("src/lib.rs"), &mut context_chunks);
+
+        assert_eq!(context_chunks.len(), 2);
+        assert_eq!(
+            context_chunks[0].provenance,
+            Some(core::ContextProvenance::jira_issue_context("ENG-123"))
+        );
+        assert!(context_chunks[0]
+            .content
+            .contains("Keep API status enum aligned"));
+        assert_eq!(
+            context_chunks[1].provenance,
+            Some(core::ContextProvenance::linear_issue_context("OPS-9"))
+        );
+        assert!(context_chunks[1]
+            .content
+            .contains("Deployment manifests should use the new secret name."));
     }
 
     #[tokio::test]

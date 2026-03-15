@@ -226,12 +226,14 @@ mod tests {
             "github_webhook_secret".to_string(),
             serde_json::json!("secret5"),
         );
+        obj.insert("jira_api_token".to_string(), serde_json::json!("secret6"));
+        obj.insert("linear_api_key".to_string(), serde_json::json!("secret7"));
         obj.insert(
             "automation_webhook_secret".to_string(),
-            serde_json::json!("secret6"),
+            serde_json::json!("secret8"),
         );
-        obj.insert("server_api_key".to_string(), serde_json::json!("secret7"));
-        obj.insert("vault_token".to_string(), serde_json::json!("secret8"));
+        obj.insert("server_api_key".to_string(), serde_json::json!("secret9"));
+        obj.insert("vault_token".to_string(), serde_json::json!("secret10"));
         mask_config_secrets(&mut obj);
         assert_eq!(obj.get("api_key").unwrap(), &serde_json::json!("***"));
         assert_eq!(obj.get("github_token").unwrap(), &serde_json::json!("***"));
@@ -245,6 +247,14 @@ mod tests {
         );
         assert_eq!(
             obj.get("github_webhook_secret").unwrap(),
+            &serde_json::json!("***")
+        );
+        assert_eq!(
+            obj.get("jira_api_token").unwrap(),
+            &serde_json::json!("***")
+        );
+        assert_eq!(
+            obj.get("linear_api_key").unwrap(),
             &serde_json::json!("***")
         );
         assert_eq!(

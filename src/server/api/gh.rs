@@ -1,4 +1,7 @@
 use super::*;
+use once_cell::sync::Lazy;
+use regex::Regex;
+use std::collections::HashSet;
 
 // === GitHub API helpers (use shared HTTP client for connection pooling) ===
 
@@ -99,12 +102,36 @@ pub(crate) async fn github_api_get_diff(
     Ok(text)
 }
 
-pub(crate) async fn fetch_github_pr_head_sha(
+#[derive(Debug)]
+struct GitHubPrMetadata {
+    head_sha: String,
+    title: String,
+    body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LinkedIssueCandidate {
+    provider: crate::config::LinkedIssueProvider,
+    identifier: String,
+    url: Option<String>,
+}
+
+const MAX_LINKED_ISSUES_PER_PR: usize = 3;
+const MAX_LINKED_ISSUE_SUMMARY_CHARS: usize = 4_000;
+
+static JIRA_BROWSE_URL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"https?://[^\s)]+/browse/([A-Z][A-Z0-9_]+-\d+)").unwrap());
+static LINEAR_ISSUE_URL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"https?://linear\.app/[^\s/]+/issue/([A-Z][A-Z0-9_]+-\d+)(?:/[^\s)]*)?").unwrap()
+});
+static ISSUE_KEY_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Z][A-Z0-9_]+-\d+)\b").unwrap());
+
+async fn fetch_github_pr_metadata(
     client: &reqwest::Client,
     token: &str,
     repo: &str,
     pr_number: u32,
-) -> Result<String, String> {
+) -> Result<GitHubPrMetadata, String> {
     let pr_url = format!("https://api.github.com/repos/{}/pulls/{}", repo, pr_number);
     let pr_resp = github_api_get(client, token, &pr_url).await?;
     if !pr_resp.status().is_success() {
@@ -116,12 +143,434 @@ pub(crate) async fn fetch_github_pr_head_sha(
         .json()
         .await
         .map_err(|e| format!("Failed to parse PR response: {}", e))?;
-    pr_data
+
+    let head_sha = pr_data
         .get("head")
         .and_then(|head| head.get("sha"))
         .and_then(|value| value.as_str())
         .map(str::to_string)
-        .ok_or_else(|| "No head SHA in PR response".to_string())
+        .ok_or_else(|| "No head SHA in PR response".to_string())?;
+
+    Ok(GitHubPrMetadata {
+        head_sha,
+        title: pr_data
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        body: pr_data
+            .get("body")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
+pub(crate) async fn fetch_github_pr_head_sha(
+    client: &reqwest::Client,
+    token: &str,
+    repo: &str,
+    pr_number: u32,
+) -> Result<String, String> {
+    Ok(fetch_github_pr_metadata(client, token, repo, pr_number)
+        .await?
+        .head_sha)
+}
+
+fn jira_integration_enabled(config: &crate::config::Config) -> bool {
+    config
+        .jira
+        .base_url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .is_some()
+        && config
+            .jira
+            .email
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .is_some()
+        && config
+            .jira
+            .api_token
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .is_some()
+}
+
+fn linear_integration_enabled(config: &crate::config::Config) -> bool {
+    config
+        .linear
+        .api_key
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .is_some()
+}
+
+fn extract_linked_issue_candidates(
+    text: &str,
+    config: &crate::config::Config,
+) -> Vec<LinkedIssueCandidate> {
+    let jira_enabled = jira_integration_enabled(config);
+    let linear_enabled = linear_integration_enabled(config);
+    let mut seen = HashSet::new();
+    let mut candidates = Vec::new();
+
+    for captures in LINEAR_ISSUE_URL_RE.captures_iter(text) {
+        if !linear_enabled {
+            break;
+        }
+        let Some(identifier) = captures.get(1).map(|value| value.as_str().to_string()) else {
+            continue;
+        };
+        let url = captures.get(0).map(|value| value.as_str().to_string());
+        push_linked_issue_candidate(
+            &mut candidates,
+            &mut seen,
+            crate::config::LinkedIssueProvider::Linear,
+            identifier,
+            url,
+        );
+    }
+
+    for captures in JIRA_BROWSE_URL_RE.captures_iter(text) {
+        if !jira_enabled {
+            break;
+        }
+        let Some(identifier) = captures.get(1).map(|value| value.as_str().to_string()) else {
+            continue;
+        };
+        let url = captures.get(0).map(|value| value.as_str().to_string());
+        push_linked_issue_candidate(
+            &mut candidates,
+            &mut seen,
+            crate::config::LinkedIssueProvider::Jira,
+            identifier,
+            url,
+        );
+    }
+
+    if jira_enabled ^ linear_enabled {
+        let provider = if jira_enabled {
+            crate::config::LinkedIssueProvider::Jira
+        } else {
+            crate::config::LinkedIssueProvider::Linear
+        };
+        for captures in ISSUE_KEY_RE.captures_iter(text) {
+            let Some(identifier) = captures.get(1).map(|value| value.as_str().to_string()) else {
+                continue;
+            };
+            push_linked_issue_candidate(
+                &mut candidates,
+                &mut seen,
+                provider.clone(),
+                identifier,
+                None,
+            );
+        }
+    }
+
+    candidates.truncate(MAX_LINKED_ISSUES_PER_PR);
+    candidates
+}
+
+fn push_linked_issue_candidate(
+    candidates: &mut Vec<LinkedIssueCandidate>,
+    seen: &mut HashSet<(crate::config::LinkedIssueProvider, String)>,
+    provider: crate::config::LinkedIssueProvider,
+    identifier: String,
+    url: Option<String>,
+) {
+    if seen.insert((provider.clone(), identifier.clone())) {
+        candidates.push(LinkedIssueCandidate {
+            provider,
+            identifier,
+            url,
+        });
+    }
+}
+
+async fn load_pr_linked_issue_contexts(
+    client: &reqwest::Client,
+    config: &crate::config::Config,
+    github_token: Option<&str>,
+    repo: &str,
+    pr_number: u32,
+) -> Vec<crate::config::LinkedIssueContext> {
+    let Some(token) = github_token.filter(|value| !value.trim().is_empty()) else {
+        return Vec::new();
+    };
+
+    if !jira_integration_enabled(config) && !linear_integration_enabled(config) {
+        return Vec::new();
+    }
+
+    let metadata = match fetch_github_pr_metadata(client, token, repo, pr_number).await {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            warn!(repo, pr_number, %error, "Failed to load PR metadata for linked issue context");
+            return Vec::new();
+        }
+    };
+    let combined_text = format!("{}\n{}", metadata.title, metadata.body);
+    let candidates = extract_linked_issue_candidates(&combined_text, config);
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+
+    let mut contexts = Vec::new();
+    for candidate in candidates {
+        let loaded = match candidate.provider {
+            crate::config::LinkedIssueProvider::Jira => {
+                fetch_jira_issue_context(client, &config.jira, &candidate).await
+            }
+            crate::config::LinkedIssueProvider::Linear => {
+                fetch_linear_issue_context(client, &config.linear, &candidate).await
+            }
+        };
+
+        match loaded {
+            Ok(context) => contexts.push(context),
+            Err(error) => warn!(
+                repo,
+                pr_number,
+                issue = %candidate.identifier,
+                %error,
+                "Failed to load linked issue context"
+            ),
+        }
+    }
+
+    contexts
+}
+
+async fn fetch_jira_issue_context(
+    client: &reqwest::Client,
+    jira: &crate::config::JiraConfig,
+    candidate: &LinkedIssueCandidate,
+) -> Result<crate::config::LinkedIssueContext, String> {
+    let base_url = jira
+        .base_url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "jira_base_url is not configured".to_string())?
+        .trim_end_matches('/');
+    let email = jira
+        .email
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "jira_email is not configured".to_string())?;
+    let api_token = jira
+        .api_token
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "jira_api_token is not configured".to_string())?;
+    let api_url = format!(
+        "{base_url}/rest/api/3/issue/{}?fields=summary,description,status",
+        candidate.identifier
+    );
+
+    let resp = client
+        .get(&api_url)
+        .basic_auth(email, Some(api_token))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|error| format!("Jira API error: {error}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Jira API returned {status}: {body}"));
+    }
+
+    let payload: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|error| format!("Failed to parse Jira response: {error}"))?;
+    let fields = payload
+        .get("fields")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| "Jira response did not include fields".to_string())?;
+
+    let title = fields
+        .get("summary")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let status = fields
+        .get("status")
+        .and_then(|value| value.get("name"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let summary = fields
+        .get("description")
+        .map(extract_jira_description_text)
+        .unwrap_or_default();
+
+    Ok(crate::config::LinkedIssueContext {
+        provider: crate::config::LinkedIssueProvider::Jira,
+        identifier: candidate.identifier.clone(),
+        title,
+        status,
+        url: candidate
+            .url
+            .clone()
+            .or_else(|| Some(format!("{base_url}/browse/{}", candidate.identifier))),
+        summary: truncate_linked_issue_summary(summary),
+    })
+}
+
+async fn fetch_linear_issue_context(
+    client: &reqwest::Client,
+    linear: &crate::config::LinearConfig,
+    candidate: &LinkedIssueCandidate,
+) -> Result<crate::config::LinkedIssueContext, String> {
+    let api_key = linear
+        .api_key
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "linear_api_key is not configured".to_string())?;
+    let query = r#"
+        query DiffscopeLinkedIssue($id: String!) {
+            issue(id: $id) {
+                identifier
+                title
+                description
+                url
+                state {
+                    name
+                }
+            }
+        }
+    "#;
+
+    let resp = client
+        .post("https://api.linear.app/graphql")
+        .header("Authorization", api_key)
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({
+            "query": query,
+            "variables": { "id": candidate.identifier },
+        }))
+        .send()
+        .await
+        .map_err(|error| format!("Linear API error: {error}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Linear API returned {status}: {body}"));
+    }
+
+    let payload: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|error| format!("Failed to parse Linear response: {error}"))?;
+
+    if let Some(errors) = payload.get("errors").and_then(|value| value.as_array()) {
+        if !errors.is_empty() {
+            return Err(format!("Linear API returned GraphQL errors: {errors:?}"));
+        }
+    }
+
+    let issue = payload
+        .get("data")
+        .and_then(|value| value.get("issue"))
+        .ok_or_else(|| "Linear response did not include issue data".to_string())?;
+
+    Ok(crate::config::LinkedIssueContext {
+        provider: crate::config::LinkedIssueProvider::Linear,
+        identifier: issue
+            .get("identifier")
+            .and_then(|value| value.as_str())
+            .unwrap_or(candidate.identifier.as_str())
+            .to_string(),
+        title: issue
+            .get("title")
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        status: issue
+            .get("state")
+            .and_then(|value| value.get("name"))
+            .and_then(|value| value.as_str())
+            .map(str::to_string),
+        url: candidate.url.clone().or_else(|| {
+            issue
+                .get("url")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        }),
+        summary: truncate_linked_issue_summary(
+            issue
+                .get("description")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        ),
+    })
+}
+
+fn extract_jira_description_text(value: &serde_json::Value) -> String {
+    fn walk(value: &serde_json::Value, output: &mut String) {
+        match value {
+            serde_json::Value::String(text) => output.push_str(text),
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    walk(item, output);
+                }
+            }
+            serde_json::Value::Object(map) => {
+                if let Some(text) = map.get("text").and_then(|value| value.as_str()) {
+                    output.push_str(text);
+                }
+                if let Some(content) = map.get("content") {
+                    walk(content, output);
+                }
+                match map.get("type").and_then(|value| value.as_str()) {
+                    Some("hardBreak") => output.push('\n'),
+                    Some("paragraph") | Some("heading") | Some("listItem") => {
+                        if !output.ends_with('\n') {
+                            output.push('\n');
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut output = String::new();
+    walk(value, &mut output);
+    normalize_multiline_text(&output)
+}
+
+fn normalize_multiline_text(value: &str) -> String {
+    value
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .split("\n")
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("\n\n\n", "\n\n")
+        .trim()
+        .to_string()
+}
+
+fn truncate_linked_issue_summary(summary: String) -> String {
+    let summary = normalize_multiline_text(&summary);
+    if summary.len() <= MAX_LINKED_ISSUE_SUMMARY_CHARS {
+        return summary;
+    }
+
+    let mut cutoff = MAX_LINKED_ISSUE_SUMMARY_CHARS;
+    while cutoff > 0 && !summary.is_char_boundary(cutoff) {
+        cutoff -= 1;
+    }
+    format!("{}…", summary[..cutoff].trim_end())
 }
 
 // === GitHub integration types and handlers ===
@@ -2450,7 +2899,7 @@ pub(crate) async fn run_pr_review_task(
     let pr_key = format!("{repo}#{pr_number}");
     AppState::mark_running(&state, &review_id).await;
 
-    let config = state.config.read().await.clone();
+    let mut config = state.config.read().await.clone();
     let repo_path = state.repo_path.clone();
     let github_token = config.github.token.clone();
     let model = config.model.clone();
@@ -2485,6 +2934,24 @@ pub(crate) async fn run_pr_review_task(
         persist_pr_fix_loop_telemetry(&state, &review_id, &repo, pr_number).await;
         AppState::save_reviews_async(&state);
         return;
+    }
+
+    let linked_issue_contexts = load_pr_linked_issue_contexts(
+        &state.http_client,
+        &config,
+        github_token.as_deref(),
+        &repo,
+        pr_number,
+    )
+    .await;
+    if !linked_issue_contexts.is_empty() {
+        info!(
+            repo,
+            pr_number,
+            linked_issue_count = linked_issue_contexts.len(),
+            "Loaded PR-linked issue context"
+        );
+        config.linked_issue_contexts = linked_issue_contexts;
     }
 
     let llm_start = std::time::Instant::now();
@@ -3241,5 +3708,86 @@ mod tests {
         assert_eq!(response.blocker_delta, Some(-1));
         assert_eq!(response.improvement_detected, Some(true));
         assert_eq!(response.loop_telemetry, loop_telemetry);
+    }
+
+    #[test]
+    fn extract_linked_issue_candidates_uses_direct_urls_for_multiple_providers() {
+        let mut config = crate::config::Config::default();
+        config.jira.base_url = Some("https://example.atlassian.net".to_string());
+        config.jira.email = Some("robot@example.com".to_string());
+        config.jira.api_token = Some("jira-token".to_string());
+        config.linear.api_key = Some("lin_api_key".to_string());
+
+        let candidates = extract_linked_issue_candidates(
+            "Implements https://example.atlassian.net/browse/ENG-123 and https://linear.app/evalops/issue/OPS-9/fix-secret with ENG-123 duplicated.",
+            &config,
+        );
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(
+            candidates[0],
+            LinkedIssueCandidate {
+                provider: crate::config::LinkedIssueProvider::Linear,
+                identifier: "OPS-9".to_string(),
+                url: Some("https://linear.app/evalops/issue/OPS-9/fix-secret".to_string()),
+            }
+        );
+        assert_eq!(
+            candidates[1],
+            LinkedIssueCandidate {
+                provider: crate::config::LinkedIssueProvider::Jira,
+                identifier: "ENG-123".to_string(),
+                url: Some("https://example.atlassian.net/browse/ENG-123".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn extract_linked_issue_candidates_uses_bare_keys_when_one_provider_is_configured() {
+        let mut config = crate::config::Config::default();
+        config.jira.base_url = Some("https://example.atlassian.net".to_string());
+        config.jira.email = Some("robot@example.com".to_string());
+        config.jira.api_token = Some("jira-token".to_string());
+
+        let candidates = extract_linked_issue_candidates(
+            "This PR completes ENG-123 and follows up ENG-123 again.",
+            &config,
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0],
+            LinkedIssueCandidate {
+                provider: crate::config::LinkedIssueProvider::Jira,
+                identifier: "ENG-123".to_string(),
+                url: None,
+            }
+        );
+    }
+
+    #[test]
+    fn extract_jira_description_text_flattens_atlassian_document_format() {
+        let description = serde_json::json!({
+            "type": "doc",
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [
+                        { "type": "text", "text": "Keep the API contract aligned." }
+                    ]
+                },
+                {
+                    "type": "paragraph",
+                    "content": [
+                        { "type": "text", "text": "Preserve the shipped status enum." }
+                    ]
+                }
+            ]
+        });
+
+        assert_eq!(
+            extract_jira_description_text(&description),
+            "Keep the API contract aligned.\nPreserve the shipped status enum."
+        );
     }
 }

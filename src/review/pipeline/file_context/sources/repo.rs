@@ -9,6 +9,11 @@ pub(in super::super) async fn inject_repository_context(
     diff: &core::UnifiedDiff,
     context_chunks: &mut Vec<core::LLMContextChunk>,
 ) -> Result<()> {
+    super::super::super::super::context_helpers::inject_linked_issue_context(
+        &services.config,
+        diff,
+        context_chunks,
+    );
     super::super::super::super::context_helpers::inject_custom_context(
         &services.config,
         &services.context_fetcher,

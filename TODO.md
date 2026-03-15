@@ -78,7 +78,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 42. [x] Surface review rule file sources in the Settings UI instead of requiring config edits by hand.
 43. [x] Add structured UI editing for custom context notes, files, and scopes.
 44. [x] Add per-path scoped review instructions in the Settings UI for common repo areas.
-45. [ ] Support Jira/Linear issue context ingestion for PR-linked reviews.
+45. [x] Support Jira/Linear issue context ingestion for PR-linked reviews.
 46. [ ] Support document-backed context ingestion for design docs, RFCs, and runbooks.
 47. [ ] Add explicit "intent mismatch" review checks comparing PR changes to ticket acceptance criteria.
 48. [x] Add review artifacts that show which external context sources influenced a finding.

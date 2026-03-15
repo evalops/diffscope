@@ -10,6 +10,12 @@ pub enum ContextProvenance {
         name: String,
     },
     CustomContextNotes,
+    JiraIssueContext {
+        issue_key: String,
+    },
+    LinearIssueContext {
+        issue_id: String,
+    },
     DependencyGraphNeighborhood,
     PathSpecificFocusAreas,
     RepositoryGraphMetadata,
@@ -50,6 +56,18 @@ impl ContextProvenance {
     pub fn pattern_repository_source(source: impl Into<String>) -> Self {
         Self::PatternRepositorySource {
             source: source.into(),
+        }
+    }
+
+    pub fn jira_issue_context(issue_key: impl Into<String>) -> Self {
+        Self::JiraIssueContext {
+            issue_key: issue_key.into(),
+        }
+    }
+
+    pub fn linear_issue_context(issue_id: impl Into<String>) -> Self {
+        Self::LinearIssueContext {
+            issue_id: issue_id.into(),
         }
     }
 
@@ -100,6 +118,8 @@ impl ContextProvenance {
             }
             Self::Analyzer { .. }
             | Self::CustomContextNotes
+            | Self::JiraIssueContext { .. }
+            | Self::LinearIssueContext { .. }
             | Self::DependencyGraphNeighborhood
             | Self::PathSpecificFocusAreas
             | Self::RepositoryGraphMetadata
@@ -121,6 +141,8 @@ impl ContextProvenance {
         let source = match self {
             Self::ActiveReviewRules | Self::Analyzer { .. } => return None,
             Self::CustomContextNotes => "custom-context".to_string(),
+            Self::JiraIssueContext { .. } => "jira-issue".to_string(),
+            Self::LinearIssueContext { .. } => "linear-issue".to_string(),
             Self::DependencyGraphNeighborhood => "dependency-graph".to_string(),
             Self::PathSpecificFocusAreas => "path-focus".to_string(),
             Self::RepositoryGraphMetadata => "repository-graph".to_string(),
@@ -143,6 +165,10 @@ impl ContextProvenance {
             Self::ActiveReviewRules => "active review rules".to_string(),
             Self::Analyzer { name } => format!("{name} analyzer"),
             Self::CustomContextNotes => "custom context notes".to_string(),
+            Self::JiraIssueContext { issue_key } => format!("jira issue context: {issue_key}"),
+            Self::LinearIssueContext { issue_id } => {
+                format!("linear issue context: {issue_id}")
+            }
             Self::DependencyGraphNeighborhood => "dependency graph neighborhood".to_string(),
             Self::PathSpecificFocusAreas => "path-specific focus areas".to_string(),
             Self::RepositoryGraphMetadata => "repository graph metadata".to_string(),
@@ -234,6 +260,14 @@ mod tests {
             ContextProvenance::RepositoryGraphMetadata.to_string(),
             "repository graph metadata"
         );
+        assert_eq!(
+            ContextProvenance::jira_issue_context("ENG-123").to_string(),
+            "jira issue context: ENG-123"
+        );
+        assert_eq!(
+            ContextProvenance::linear_issue_context("LIN-42").to_string(),
+            "linear issue context: LIN-42"
+        );
     }
 
     #[test]
@@ -255,6 +289,18 @@ mod tests {
                 .artifact_tag()
                 .as_deref(),
             Some("context-source:symbol-graph")
+        );
+        assert_eq!(
+            ContextProvenance::jira_issue_context("ENG-123")
+                .artifact_tag()
+                .as_deref(),
+            Some("context-source:jira-issue")
+        );
+        assert_eq!(
+            ContextProvenance::linear_issue_context("LIN-42")
+                .artifact_tag()
+                .as_deref(),
+            Some("context-source:linear-issue")
         );
         assert!(ContextProvenance::ActiveReviewRules
             .artifact_tag()

@@ -117,6 +117,45 @@ pub struct GitHubConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct JiraConfig {
+    #[serde(default, rename = "jira_base_url")]
+    pub base_url: Option<String>,
+
+    #[serde(default, rename = "jira_email")]
+    pub email: Option<String>,
+
+    #[serde(default, rename = "jira_api_token")]
+    pub api_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LinearConfig {
+    #[serde(default, rename = "linear_api_key")]
+    pub api_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkedIssueProvider {
+    Jira,
+    Linear,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LinkedIssueContext {
+    pub provider: LinkedIssueProvider,
+    pub identifier: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AutomationConfig {
     /// Outbound webhook URL for downstream automation consumers.
     #[serde(default, rename = "automation_webhook_url")]
@@ -459,6 +498,9 @@ pub struct Config {
     #[serde(default)]
     pub custom_context: Vec<CustomContextConfig>,
 
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub linked_issue_contexts: Vec<LinkedIssueContext>,
+
     #[serde(default)]
     pub pattern_repositories: Vec<PatternRepositoryConfig>,
 
@@ -476,6 +518,12 @@ pub struct Config {
 
     #[serde(default, flatten)]
     pub github: GitHubConfig,
+
+    #[serde(default, flatten)]
+    pub jira: JiraConfig,
+
+    #[serde(default, flatten)]
+    pub linear: LinearConfig,
 
     #[serde(default, flatten)]
     pub automation: AutomationConfig,
@@ -679,12 +727,15 @@ impl Default for Config {
             exclude_patterns: default_exclude_patterns(),
             paths: HashMap::new(),
             custom_context: Vec::new(),
+            linked_issue_contexts: Vec::new(),
             pattern_repositories: Vec::new(),
             rules_files: Vec::new(),
             max_active_rules: default_max_active_rules(),
             rule_priority: Vec::new(),
             providers: HashMap::new(),
             github: GitHubConfig::default(),
+            jira: JiraConfig::default(),
+            linear: LinearConfig::default(),
             automation: AutomationConfig::default(),
             server_security: ServerSecurityConfig::default(),
             multi_pass_specialized: false,

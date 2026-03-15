@@ -132,6 +132,8 @@ pub(crate) fn mask_config_secrets(obj: &mut serde_json::Map<String, serde_json::
         "github_client_secret",
         "github_private_key",
         "github_webhook_secret",
+        "jira_api_token",
+        "linear_api_key",
         "automation_webhook_secret",
         "server_api_key",
         "vault_token",
