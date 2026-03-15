@@ -446,6 +446,7 @@ mod tests {
             review_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_REVIEWS)),
             last_reviewed_shas: Arc::new(RwLock::new(HashMap::new())),
             pr_verification_reuse_caches: Arc::new(RwLock::new(HashMap::new())),
+            api_rate_limits: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
 

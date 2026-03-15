@@ -448,6 +448,7 @@ mod tests {
             review_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_REVIEWS)),
             last_reviewed_shas: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             pr_verification_reuse_caches: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            api_rate_limits: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         });
         let _permit = state
             .review_semaphore

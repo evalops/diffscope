@@ -175,6 +175,8 @@ pub struct AppState {
     /// Reuses per-finding verifier decisions across PR reruns, keyed by "owner/repo#pr_number".
     pub pr_verification_reuse_caches:
         Arc<RwLock<HashMap<String, crate::review::verification::VerificationReuseCache>>>,
+    /// Tracks per-subject mutation counts for API rate limiting windows.
+    pub api_rate_limits: Arc<tokio::sync::Mutex<HashMap<String, (std::time::Instant, u32)>>>,
 }
 
 /// Lightweight view of a review session for list endpoints (no comments/diff/event).

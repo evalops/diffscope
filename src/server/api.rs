@@ -230,7 +230,8 @@ mod tests {
             "automation_webhook_secret".to_string(),
             serde_json::json!("secret6"),
         );
-        obj.insert("vault_token".to_string(), serde_json::json!("secret7"));
+        obj.insert("server_api_key".to_string(), serde_json::json!("secret7"));
+        obj.insert("vault_token".to_string(), serde_json::json!("secret8"));
         mask_config_secrets(&mut obj);
         assert_eq!(obj.get("api_key").unwrap(), &serde_json::json!("***"));
         assert_eq!(obj.get("github_token").unwrap(), &serde_json::json!("***"));
@@ -248,6 +249,10 @@ mod tests {
         );
         assert_eq!(
             obj.get("automation_webhook_secret").unwrap(),
+            &serde_json::json!("***")
+        );
+        assert_eq!(
+            obj.get("server_api_key").unwrap(),
             &serde_json::json!("***")
         );
         assert_eq!(obj.get("vault_token").unwrap(), &serde_json::json!("***"));

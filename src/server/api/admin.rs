@@ -133,6 +133,7 @@ pub(crate) fn mask_config_secrets(obj: &mut serde_json::Map<String, serde_json::
         "github_private_key",
         "github_webhook_secret",
         "automation_webhook_secret",
+        "server_api_key",
         "vault_token",
     ] {
         if obj.get(*key).and_then(|v| v.as_str()).is_some() {

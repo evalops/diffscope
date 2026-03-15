@@ -66,6 +66,8 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'advanced', label: 'Advanced' },
 ]
 
+const SERVER_API_KEY_STORAGE_KEY = 'diffscope_server_api_key'
+
 // --------------- provider config ---------------
 
 interface ProviderDef {
@@ -246,6 +248,7 @@ export function Settings() {
   const updateConfig = useUpdateConfig()
   const { data: agentTools } = useAgentTools()
   const [form, setForm] = useState<Record<string, unknown>>({})
+  const [browserApiKey, setBrowserApiKey] = useState(() => localStorage.getItem(SERVER_API_KEY_STORAGE_KEY) ?? '')
   const [pathInstructionEntries, setPathInstructionEntries] = useState<PathInstructionFormState[]>([])
   const [customContextEntries, setCustomContextEntries] = useState<CustomContextFormState[]>([])
   const [saved, setSaved] = useState(false)
@@ -277,15 +280,22 @@ export function Settings() {
   }, [activeTab])
 
   const handleSave = () => {
-    const nextForm = {
+    const nextForm: Record<string, unknown> = {
       ...form,
       paths: buildPathsValue(pathInstructionEntries),
       custom_context: buildCustomContextValue(customContextEntries),
     }
+    const nextServerApiKey = typeof nextForm.server_api_key === 'string'
+      ? nextForm.server_api_key.trim()
+      : ''
 
     setForm(nextForm)
     updateConfig.mutate(nextForm, {
       onSuccess: () => {
+        if (nextServerApiKey && nextServerApiKey !== '***') {
+          localStorage.setItem(SERVER_API_KEY_STORAGE_KEY, nextServerApiKey)
+          setBrowserApiKey(nextServerApiKey)
+        }
         setSaved(true)
         setTimeout(() => setSaved(false), 2000)
       },
@@ -1055,6 +1065,29 @@ export function Settings() {
         <div className="space-y-3">
           {field('Webhook URL', 'automation_webhook_url', 'text', 'https://automation.example.com/hooks/reviews', 'DiffScope posts review.completed, review.failed, and review.timeout events here')}
           {field('Webhook Secret', 'automation_webhook_secret', 'password', '', 'Optional shared secret used to sign outbound webhook payloads')}
+        </div>
+      </Section>
+
+      <Section title="API SECURITY" defaultOpen={false}>
+        <div className="space-y-3">
+          {field('Server API Key', 'server_api_key', 'password', '', 'When set, protected write endpoints require Authorization: Bearer <key> or x-api-key')}
+          {field('Rate Limit / Minute', 'server_rate_limit_per_minute', 'number', '60', 'Maximum protected write requests allowed per minute per configured API key')}
+          <div>
+            <label className="block text-[12px] font-medium text-text-secondary mb-1">Browser Access Key</label>
+            <input
+              type="password"
+              value={browserApiKey}
+              onChange={(e) => {
+                const nextValue = e.target.value
+                setBrowserApiKey(nextValue)
+                if (nextValue.trim()) localStorage.setItem(SERVER_API_KEY_STORAGE_KEY, nextValue.trim())
+                else localStorage.removeItem(SERVER_API_KEY_STORAGE_KEY)
+              }}
+              placeholder="Stored in this browser only"
+              className="w-full bg-surface border border-border rounded px-3 py-1.5 text-[13px] text-text-primary placeholder:text-text-muted/30 focus:outline-none focus:ring-1 focus:ring-accent font-code"
+            />
+            <p className="text-[10px] text-text-muted mt-1">Used for authenticated UI requests only. This value is stored in localStorage and never written to server config unless you also save it as Server API Key.</p>
+          </div>
         </div>
       </Section>
 

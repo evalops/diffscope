@@ -54,6 +54,7 @@ otel = ["opentelemetry", "opentelemetry-otlp", "opentelemetry_sdk", "tracing-ope
 [dev-dependencies]
 tempfile = "3.8"
 mockito = "1.2"
+tower = "0.5"
 
 [profile.release]
 lto = "thin"

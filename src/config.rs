@@ -127,6 +127,19 @@ pub struct AutomationConfig {
     pub webhook_secret: Option<String>,
 }
 
+pub(crate) const DEFAULT_SERVER_RATE_LIMIT_PER_MINUTE: u32 = 60;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServerSecurityConfig {
+    /// Shared API key required for protected server mutations when configured.
+    #[serde(default, rename = "server_api_key")]
+    pub api_key: Option<String>,
+
+    /// Maximum protected API mutations allowed per minute when auth is enabled.
+    #[serde(default, rename = "server_rate_limit_per_minute")]
+    pub rate_limit_per_minute: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// Enable agent loop for iterative tool-calling review (default false).
@@ -467,6 +480,9 @@ pub struct Config {
     #[serde(default, flatten)]
     pub automation: AutomationConfig,
 
+    #[serde(default, flatten)]
+    pub server_security: ServerSecurityConfig,
+
     /// When true, run separate specialized LLM passes for security, correctness,
     /// and style instead of a single monolithic review prompt.
     #[serde(default = "default_false")]
@@ -670,6 +686,7 @@ impl Default for Config {
             providers: HashMap::new(),
             github: GitHubConfig::default(),
             automation: AutomationConfig::default(),
+            server_security: ServerSecurityConfig::default(),
             multi_pass_specialized: false,
             agent: AgentConfig::default(),
             verification: VerificationConfig::default(),
@@ -855,6 +872,23 @@ impl Config {
             self.automation.webhook_secret = std::env::var("DIFFSCOPE_AUTOMATION_WEBHOOK_SECRET")
                 .ok()
                 .filter(|s| !s.trim().is_empty());
+        }
+        if self.server_security.api_key.is_none() {
+            self.server_security.api_key = std::env::var("DIFFSCOPE_SERVER_API_KEY")
+                .ok()
+                .filter(|s| !s.trim().is_empty());
+        }
+        if self.server_security.rate_limit_per_minute.is_none() {
+            self.server_security.rate_limit_per_minute =
+                std::env::var("DIFFSCOPE_SERVER_RATE_LIMIT_PER_MINUTE")
+                    .ok()
+                    .and_then(|raw| raw.trim().parse::<u32>().ok())
+                    .filter(|value| *value > 0);
+        }
+        if self.server_security.api_key.is_some()
+            && self.server_security.rate_limit_per_minute.unwrap_or(0) == 0
+        {
+            self.server_security.rate_limit_per_minute = Some(DEFAULT_SERVER_RATE_LIMIT_PER_MINUTE);
         }
 
         validate_optional_http_url(&mut self.base_url, "base_url");
@@ -1809,6 +1843,39 @@ mod tests {
         config.normalize();
 
         assert!(config.automation.webhook_url.is_none());
+    }
+
+    #[test]
+    fn normalize_defaults_server_rate_limit_when_api_key_present() {
+        let mut config = Config {
+            server_security: ServerSecurityConfig {
+                api_key: Some("shared-key".to_string()),
+                rate_limit_per_minute: None,
+            },
+            ..Config::default()
+        };
+
+        config.normalize();
+
+        assert_eq!(
+            config.server_security.rate_limit_per_minute,
+            Some(DEFAULT_SERVER_RATE_LIMIT_PER_MINUTE)
+        );
+    }
+
+    #[test]
+    fn normalize_preserves_explicit_server_rate_limit() {
+        let mut config = Config {
+            server_security: ServerSecurityConfig {
+                api_key: Some("shared-key".to_string()),
+                rate_limit_per_minute: Some(120),
+            },
+            ..Config::default()
+        };
+
+        config.normalize();
+
+        assert_eq!(config.server_security.rate_limit_per_minute, Some(120));
     }
 
     #[test]

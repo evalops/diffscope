@@ -1,9 +1,24 @@
 const BASE = '/api'
+const SERVER_API_KEY_STORAGE_KEY = 'diffscope_server_api_key'
+
+function buildHeaders(options?: RequestInit): Headers {
+  const headers = new Headers(options?.headers ?? {})
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+
+  const storedApiKey = window.localStorage.getItem(SERVER_API_KEY_STORAGE_KEY)
+  if (storedApiKey && !headers.has('Authorization') && !headers.has('x-api-key')) {
+    headers.set('Authorization', `Bearer ${storedApiKey}`)
+  }
+
+  return headers
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    headers: buildHeaders(options),
   })
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
