@@ -157,7 +157,7 @@ impl StdioMcpServer {
             ),
             "ping" => success_response(id, json!({})),
             "prompts/list" => self.handle_prompts_list(id),
-            "prompts/get" => self.handle_prompts_get(id, params),
+            "prompts/get" => self.handle_prompts_get(id, params).await,
             "tools/list" => self.handle_tools_list(id),
             "tools/call" => self.handle_tools_call(id, params).await,
             _ => error_response(
@@ -203,7 +203,7 @@ impl StdioMcpServer {
         )
     }
 
-    fn handle_prompts_get(&self, id: Value, params: Value) -> Value {
+    async fn handle_prompts_get(&self, id: Value, params: Value) -> Value {
         let params: PromptGetParams = match serde_json::from_value(params) {
             Ok(params) => params,
             Err(err) => {
@@ -221,7 +221,7 @@ impl StdioMcpServer {
             Err(err) => return error_response(Some(id), INVALID_PARAMS, err.to_string(), None),
         };
 
-        match render_prompt(&params.name, arguments) {
+        match render_prompt(Some(&self.state), &params.name, arguments).await {
             Ok(prompt) => match to_value(prompt) {
                 Ok(prompt) => success_response(id, prompt),
                 Err(err) => error_response(Some(id), INVALID_PARAMS, err.to_string(), None),
@@ -963,6 +963,9 @@ mod tests {
         assert!(prompts
             .iter()
             .any(|prompt| prompt["name"] == "fix_until_clean"));
+        assert!(prompts
+            .iter()
+            .any(|prompt| prompt["name"] == "replay_issue"));
     }
 
     #[tokio::test]
@@ -994,6 +997,66 @@ mod tests {
             .unwrap();
         assert!(text.contains("iteration budget of 4"));
         assert!(text.contains("rerun_pr_review"));
+        assert!(text.contains("owner/repo#42"));
+    }
+
+    #[tokio::test]
+    async fn prompts_get_renders_issue_replay_workflow() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("src/lib.rs"),
+            [
+                "pub fn replay_issue(input: &str) {",
+                "    if input.is_empty() {",
+                "        return;",
+                "    }",
+                "",
+                "    let raw = input.trim();",
+                "    println!(\"{}\", raw);",
+                "}",
+                "",
+                "pub fn wrapper(input: &str) {",
+                "    replay_issue(input);",
+                "}",
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let state = test_state(dir.path().to_path_buf());
+        let review = make_review("review-replay", make_comment("comment-replay"));
+        state
+            .reviews
+            .write()
+            .await
+            .insert(review.id.clone(), review);
+
+        let mut server = StdioMcpServer::new(state);
+        initialize_server(&mut server).await;
+
+        let response = server
+            .handle_message(json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "prompts/get",
+                "params": {
+                    "name": "replay_issue",
+                    "arguments": {
+                        "repo": "owner/repo",
+                        "pr_number": 42,
+                        "comment_id": "comment-replay"
+                    }
+                }
+            }))
+            .await
+            .unwrap();
+
+        let text = response["result"]["messages"][0]["content"]["text"]
+            .as_str()
+            .unwrap();
+        assert!(text.contains("comment_id: comment-replay"));
+        assert!(text.contains("File-local context from `src/lib.rs`"));
         assert!(text.contains("owner/repo#42"));
     }
 
