@@ -13,6 +13,7 @@ pub async fn feedback_eval_command(
     input_path: PathBuf,
     output_path: Option<PathBuf>,
     trend_path: Option<PathBuf>,
+    trend_max_entries: usize,
     confidence_threshold: f32,
     eval_report_path: Option<PathBuf>,
 ) -> Result<()> {
@@ -25,6 +26,7 @@ pub async fn feedback_eval_command(
         &loaded,
         output_path.as_deref(),
         trend_path.as_deref(),
+        trend_max_entries,
         confidence_threshold,
         eval_report.as_ref(),
     )

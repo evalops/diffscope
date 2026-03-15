@@ -18,7 +18,7 @@ use self::loading::prepare_fixture_execution;
 use self::result::build_fixture_result;
 use super::super::{EvalFixtureResult, LoadedEvalFixture};
 
-pub(in super::super) use self::artifact::EvalFixtureArtifactContext;
+pub(in super::super) use self::artifact::{prune_eval_artifacts, EvalFixtureArtifactContext};
 
 pub(crate) fn describe_eval_fixture_graph(
     repro_validate: bool,

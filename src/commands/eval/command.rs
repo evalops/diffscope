@@ -10,9 +10,11 @@ mod report;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use tracing::info;
 
 use crate::config;
 
+use super::runner::prune_eval_artifacts;
 use super::{EvalRunFilters, EvalRunMetadata, EvalRunOptions};
 use batch::run_eval_batch;
 use fixtures::run_eval_fixtures;
@@ -29,13 +31,25 @@ pub async fn eval_command(
     if options.trend_file.is_none() {
         options.trend_file = Some(config.eval_trend_path.clone());
     }
+    if let Some(artifact_dir) = options.artifact_dir.as_deref() {
+        let pruned =
+            prune_eval_artifacts(artifact_dir, config.retention.eval_artifact_max_age_days).await?;
+        if pruned > 0 {
+            info!(
+                artifact_dir = %artifact_dir.display(),
+                pruned,
+                "Pruned stale eval artifacts"
+            );
+        }
+    }
     ensure_frontier_eval_models(&config, &options)?;
     if options.repeat > 1 || !options.matrix_models.is_empty() {
         return run_eval_batch(config, &fixtures_dir, output_path.as_deref(), &options).await;
     }
 
     let execution = run_eval_fixtures(&config, &fixtures_dir, &options).await?;
-    let prepared_options = prepare_eval_options(&options)?;
+    let prepared_options =
+        prepare_eval_options(&options, config.retention.trend_history_max_entries)?;
     let report_output_path = output_path.clone().or_else(|| {
         options
             .artifact_dir

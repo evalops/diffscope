@@ -107,12 +107,6 @@ pub struct ReviewEvent {
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// Maximum number of reviews to keep in memory. Oldest completed reviews are pruned.
-pub(crate) const MAX_REVIEWS: usize = 200;
-
-/// Reviews older than this (in seconds) are pruned regardless of status.
-pub(crate) const MAX_REVIEW_AGE_SECS: i64 = 86_400; // 24 hours
-
 /// Maximum allowed diff size in bytes (50 MB).
 pub const MAX_DIFF_SIZE: usize = 50 * 1024 * 1024;
 

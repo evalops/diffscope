@@ -539,13 +539,18 @@ pub(crate) async fn prune_reviews(
     State(state): State<Arc<AppState>>,
     Query(params): Query<PruneParams>,
 ) -> Json<serde_json::Value> {
-    let max_age_secs = params.max_age_days.unwrap_or(30).max(1) * 86400;
-    let max_count = params.max_count.unwrap_or(1000).max(1);
+    let retention = { state.config.read().await.retention.clone() };
+    let max_age_secs = params
+        .max_age_days
+        .unwrap_or(retention.review_max_age_days)
+        .max(1)
+        * 86_400;
+    let max_count = params
+        .max_count
+        .unwrap_or(retention.review_max_count)
+        .max(1);
 
-    // Prune in-memory state first
-    AppState::prune_old_reviews(&state).await;
-
-    match state.storage.prune(max_age_secs, max_count).await {
+    match AppState::prune_reviews_with_limits(&state, max_age_secs, max_count).await {
         Ok(pruned) => {
             info!("Pruned {} old reviews", pruned);
             Json(serde_json::json!({ "ok": true, "pruned": pruned }))

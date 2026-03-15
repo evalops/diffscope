@@ -39,7 +39,8 @@ pub(super) async fn run_eval_batch(
     options: &EvalRunOptions,
 ) -> Result<()> {
     config.verification.fail_open = true;
-    let prepared_options = prepare_eval_options(options)?;
+    let prepared_options =
+        prepare_eval_options(options, config.retention.trend_history_max_entries)?;
     let models = matrix_models(&config, options);
     let repeat_total = options.repeat.max(1);
     let multi_model = models.len() > 1;

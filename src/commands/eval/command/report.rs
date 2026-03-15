@@ -45,7 +45,7 @@ pub(super) async fn materialize_eval_report(
         write_eval_report(&report, path).await?;
     }
     if let Some(path) = prepared_options.trend_path.as_deref() {
-        update_eval_quality_trend(&report, path).await?;
+        update_eval_quality_trend(&report, path, prepared_options.trend_max_entries).await?;
     }
 
     Ok(report)

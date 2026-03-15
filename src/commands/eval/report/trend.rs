@@ -8,6 +8,7 @@ use super::super::EvalReport;
 pub(in super::super) async fn update_eval_quality_trend(
     report: &EvalReport,
     path: &Path,
+    max_entries: usize,
 ) -> Result<()> {
     let Some(entry) = trend_entry_for_report(report) else {
         return Ok(());
@@ -23,6 +24,7 @@ pub(in super::super) async fn update_eval_quality_trend(
         QualityTrend::new()
     };
     trend.entries.push(entry);
+    trim_trend_entries(&mut trend.entries, max_entries);
 
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -33,6 +35,13 @@ pub(in super::super) async fn update_eval_quality_trend(
         .await
         .with_context(|| format!("failed to write trend file {}", path.display()))?;
     Ok(())
+}
+
+fn trim_trend_entries(entries: &mut Vec<TrendEntry>, max_entries: usize) {
+    if entries.len() > max_entries {
+        let excess = entries.len() - max_entries;
+        entries.drain(0..excess);
+    }
 }
 
 fn trend_entry_for_report(report: &EvalReport) -> Option<TrendEntry> {
@@ -213,12 +222,17 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("trend.json");
 
-        update_eval_quality_trend(&sample_report(Some("first"), "2026-03-13T00:00:00Z"), &path)
-            .await
-            .unwrap();
+        update_eval_quality_trend(
+            &sample_report(Some("first"), "2026-03-13T00:00:00Z"),
+            &path,
+            200,
+        )
+        .await
+        .unwrap();
         update_eval_quality_trend(
             &sample_report(Some("second"), "2026-03-13T00:10:00Z"),
             &path,
+            200,
         )
         .await
         .unwrap();
@@ -257,5 +271,31 @@ mod tests {
                 .unwrap_or_default(),
             0.8
         );
+    }
+
+    #[tokio::test]
+    async fn update_eval_quality_trend_trims_old_entries() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("trend.json");
+
+        update_eval_quality_trend(
+            &sample_report(Some("first"), "2026-03-13T00:00:00Z"),
+            &path,
+            1,
+        )
+        .await
+        .unwrap();
+        update_eval_quality_trend(
+            &sample_report(Some("second"), "2026-03-13T00:10:00Z"),
+            &path,
+            1,
+        )
+        .await
+        .unwrap();
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        let trend = QualityTrend::from_json(&content).unwrap();
+        assert_eq!(trend.entries.len(), 1);
+        assert_eq!(trend.entries[0].label.as_deref(), Some("second"));
     }
 }

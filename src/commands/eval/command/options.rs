@@ -12,9 +12,13 @@ pub(super) struct PreparedEvalOptions {
     pub(super) baseline: Option<EvalReport>,
     pub(super) threshold_options: EvalThresholdOptions,
     pub(super) trend_path: Option<std::path::PathBuf>,
+    pub(super) trend_max_entries: usize,
 }
 
-pub(super) fn prepare_eval_options(options: &EvalRunOptions) -> Result<PreparedEvalOptions> {
+pub(super) fn prepare_eval_options(
+    options: &EvalRunOptions,
+    trend_max_entries: usize,
+) -> Result<PreparedEvalOptions> {
     let baseline = match options.baseline_report.as_deref() {
         Some(path) => Some(load_eval_report(path)?),
         None => None,
@@ -37,6 +41,7 @@ pub(super) fn prepare_eval_options(options: &EvalRunOptions) -> Result<PreparedE
             max_rule_f1_drop: max_rule_drop_thresholds,
         },
         trend_path: options.trend_file.clone(),
+        trend_max_entries,
     })
 }
 

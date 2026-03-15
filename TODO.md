@@ -129,7 +129,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 81. [x] Split `src/server/api.rs` by domain so the growing platform API stays maintainable.
 82. [x] Split `src/server/state.rs` into session lifecycle, persistence, progress, and GitHub coordination modules.
 83. [x] Add queue depth and worker saturation metrics for long-running review and eval jobs.
-84. [ ] Add retention policies for review artifacts, eval artifacts, and trend histories.
+84. [x] Add retention policies for review artifacts, eval artifacts, and trend histories.
 85. [x] Add storage migrations for richer comment lifecycle and reinforcement schemas.
 86. [ ] Add deployment docs for self-hosted review + analytics + trend retention setups.
 87. [ ] Add secret-management guidance and validation for multi-provider enterprise installs.

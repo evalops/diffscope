@@ -601,16 +601,40 @@ impl StorageBackend for PgStorageBackend {
         Ok(())
     }
 
-    async fn prune(&self, max_age_secs: i64, _max_count: usize) -> anyhow::Result<usize> {
+    async fn prune(&self, max_age_secs: i64, max_count: usize) -> anyhow::Result<usize> {
         let cutoff = chrono::Utc::now() - chrono::Duration::seconds(max_age_secs);
-        // Only prune Pending/Running reviews that are stale (completed reviews are kept forever in PG)
-        let result = sqlx::query(
-            "DELETE FROM reviews WHERE status IN ('Pending', 'Running') AND started_at < $1",
-        )
-        .bind(cutoff)
-        .execute(&self.pool)
-        .await?;
-        Ok(result.rows_affected() as usize)
+        let age_result = sqlx::query("DELETE FROM reviews WHERE started_at < $1")
+            .bind(cutoff)
+            .execute(&self.pool)
+            .await?;
+
+        let total_reviews: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM reviews")
+            .fetch_one(&self.pool)
+            .await?;
+
+        let max_count = max_count.max(1) as i64;
+        let mut count_pruned = 0;
+        if total_reviews.0 > max_count {
+            let to_remove = total_reviews.0 - max_count;
+            let count_result = sqlx::query(
+                r#"
+                DELETE FROM reviews
+                WHERE id IN (
+                    SELECT id
+                    FROM reviews
+                    WHERE status IN ('Complete', 'Failed')
+                    ORDER BY started_at ASC
+                    LIMIT $1
+                )
+                "#,
+            )
+            .bind(to_remove)
+            .execute(&self.pool)
+            .await?;
+            count_pruned = count_result.rows_affected() as usize;
+        }
+
+        Ok(age_result.rows_affected() as usize + count_pruned)
     }
 }
 

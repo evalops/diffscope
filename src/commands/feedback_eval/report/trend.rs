@@ -13,6 +13,7 @@ pub(in super::super) async fn update_feedback_eval_trend(
     report: &FeedbackEvalReport,
     eval_report: Option<&EvalReport>,
     path: &Path,
+    max_entries: usize,
 ) -> Result<()> {
     let mut trend = if path.exists() {
         let content = tokio::fs::read_to_string(path)
@@ -26,6 +27,7 @@ pub(in super::super) async fn update_feedback_eval_trend(
     trend
         .entries
         .push(trend_entry_for_report(report, eval_report));
+    trim_trend_entries(&mut trend.entries, max_entries);
 
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -36,6 +38,13 @@ pub(in super::super) async fn update_feedback_eval_trend(
         .await
         .with_context(|| format!("failed to write feedback trend file {}", path.display()))?;
     Ok(())
+}
+
+fn trim_trend_entries(entries: &mut Vec<FeedbackEvalTrendEntry>, max_entries: usize) {
+    if entries.len() > max_entries {
+        let excess = entries.len() - max_entries;
+        entries.drain(0..excess);
+    }
 }
 
 fn trend_entry_for_report(
@@ -216,6 +225,7 @@ mod tests {
             &sample_feedback_report(),
             Some(&sample_eval_report()),
             &path,
+            200,
         )
         .await
         .unwrap();
@@ -223,6 +233,7 @@ mod tests {
             &sample_feedback_report(),
             Some(&sample_eval_report()),
             &path,
+            200,
         )
         .await
         .unwrap();
@@ -241,5 +252,33 @@ mod tests {
             trend.entries[0].attention_by_rule[0].name,
             "sec.sql.injection"
         );
+    }
+
+    #[tokio::test]
+    async fn update_feedback_eval_trend_trims_old_entries() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("feedback-trend.json");
+
+        update_feedback_eval_trend(
+            &sample_feedback_report(),
+            Some(&sample_eval_report()),
+            &path,
+            1,
+        )
+        .await
+        .unwrap();
+        update_feedback_eval_trend(
+            &sample_feedback_report(),
+            Some(&sample_eval_report()),
+            &path,
+            1,
+        )
+        .await
+        .unwrap();
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        let trend = FeedbackEvalTrend::from_json(&content).unwrap();
+        assert_eq!(trend.entries.len(), 1);
+        assert_eq!(trend.entries[0].eval_label.as_deref(), Some("frontier-e2e"));
     }
 }

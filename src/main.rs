@@ -803,6 +803,7 @@ async fn main() -> Result<()> {
                 input,
                 output,
                 trend_file.or_else(|| Some(config.feedback_eval_trend_path.clone())),
+                config.retention.trend_history_max_entries,
                 confidence_threshold,
                 eval_report,
             )

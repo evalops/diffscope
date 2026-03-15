@@ -211,6 +211,49 @@ impl Default for VerificationConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetentionConfig {
+    #[serde(default = "default_review_retention_max_age_days")]
+    pub review_max_age_days: i64,
+
+    #[serde(default = "default_review_retention_max_count")]
+    pub review_max_count: usize,
+
+    #[serde(default = "default_eval_artifact_retention_max_age_days")]
+    pub eval_artifact_max_age_days: i64,
+
+    #[serde(default = "default_trend_history_max_entries")]
+    pub trend_history_max_entries: usize,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            review_max_age_days: default_review_retention_max_age_days(),
+            review_max_count: default_review_retention_max_count(),
+            eval_artifact_max_age_days: default_eval_artifact_retention_max_age_days(),
+            trend_history_max_entries: default_trend_history_max_entries(),
+        }
+    }
+}
+
+impl RetentionConfig {
+    pub fn normalize(&mut self) {
+        if self.review_max_age_days <= 0 {
+            self.review_max_age_days = default_review_retention_max_age_days();
+        }
+        if self.review_max_count == 0 {
+            self.review_max_count = default_review_retention_max_count();
+        }
+        if self.eval_artifact_max_age_days <= 0 {
+            self.eval_artifact_max_age_days = default_eval_artifact_retention_max_age_days();
+        }
+        if self.trend_history_max_entries == 0 {
+            self.trend_history_max_entries = default_trend_history_max_entries();
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_model")]
     pub model: String,
@@ -318,6 +361,9 @@ pub struct Config {
 
     #[serde(default = "default_feedback_eval_trend_path")]
     pub feedback_eval_trend_path: PathBuf,
+
+    #[serde(default)]
+    pub retention: RetentionConfig,
 
     /// Path to the convention store file for learned review patterns.
     /// Defaults to ~/.local/share/diffscope/conventions.json if not set.
@@ -581,6 +627,7 @@ impl Default for Config {
             feedback_path: default_feedback_path(),
             eval_trend_path: default_eval_trend_path(),
             feedback_eval_trend_path: default_feedback_eval_trend_path(),
+            retention: RetentionConfig::default(),
             convention_store_path: None,
             system_prompt: None,
             api_key: None,
@@ -888,6 +935,7 @@ impl Config {
         if self.feedback_eval_trend_path.as_os_str().is_empty() {
             self.feedback_eval_trend_path = default_feedback_eval_trend_path();
         }
+        self.retention.normalize();
 
         if let Some(command) = &self.symbol_index_lsp_command {
             if command.trim().is_empty() {
@@ -1424,6 +1472,22 @@ fn default_symbol_index_lsp_languages() -> HashMap<String, String> {
 
 fn default_feedback_path() -> PathBuf {
     PathBuf::from(".diffscope.feedback.json")
+}
+
+fn default_review_retention_max_age_days() -> i64 {
+    30
+}
+
+fn default_review_retention_max_count() -> usize {
+    1000
+}
+
+fn default_eval_artifact_retention_max_age_days() -> i64 {
+    30
+}
+
+fn default_trend_history_max_entries() -> usize {
+    200
 }
 
 fn default_eval_trend_path() -> PathBuf {
@@ -2355,5 +2419,34 @@ agent_tools_enabled: []
         let yaml = serde_yaml::to_string(&original).unwrap();
         let restored: Config = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(original.agent.tools_enabled, restored.agent.tools_enabled);
+    }
+
+    #[test]
+    fn test_retention_defaults_are_present() {
+        let config = Config::default();
+        assert_eq!(config.retention.review_max_age_days, 30);
+        assert_eq!(config.retention.review_max_count, 1000);
+        assert_eq!(config.retention.eval_artifact_max_age_days, 30);
+        assert_eq!(config.retention.trend_history_max_entries, 200);
+    }
+
+    #[test]
+    fn test_retention_normalize_resets_invalid_values() {
+        let mut config = Config {
+            retention: RetentionConfig {
+                review_max_age_days: 0,
+                review_max_count: 0,
+                eval_artifact_max_age_days: -7,
+                trend_history_max_entries: 0,
+            },
+            ..Config::default()
+        };
+
+        config.normalize();
+
+        assert_eq!(config.retention.review_max_age_days, 30);
+        assert_eq!(config.retention.review_max_count, 1000);
+        assert_eq!(config.retention.eval_artifact_max_age_days, 30);
+        assert_eq!(config.retention.trend_history_max_entries, 200);
     }
 }

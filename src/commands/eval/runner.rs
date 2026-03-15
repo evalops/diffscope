@@ -4,5 +4,5 @@ mod execute;
 mod matching;
 
 pub(super) use execute::{
-    describe_eval_fixture_graph, run_eval_fixture, EvalFixtureArtifactContext,
+    describe_eval_fixture_graph, prune_eval_artifacts, run_eval_fixture, EvalFixtureArtifactContext,
 };

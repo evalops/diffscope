@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -100,6 +100,76 @@ pub(super) async fn maybe_write_fixture_artifact(
     Ok(Some(artifact_path.display().to_string()))
 }
 
+pub(crate) async fn prune_eval_artifacts(
+    artifact_dir: &std::path::Path,
+    max_age_days: i64,
+) -> Result<usize> {
+    let artifact_dir = artifact_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || prune_eval_artifacts_blocking(&artifact_dir, max_age_days))
+        .await
+        .context("eval artifact retention task failed")?
+}
+
+fn prune_eval_artifacts_blocking(
+    artifact_dir: &std::path::Path,
+    max_age_days: i64,
+) -> Result<usize> {
+    if !artifact_dir.exists() {
+        return Ok(0);
+    }
+
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(
+            max_age_days.max(1) as u64 * 86_400,
+        ))
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    prune_eval_artifacts_before(artifact_dir, cutoff)
+}
+
+fn prune_eval_artifacts_before(
+    artifact_dir: &std::path::Path,
+    cutoff: std::time::SystemTime,
+) -> Result<usize> {
+    let mut removed = 0;
+    prune_eval_artifacts_tree(artifact_dir, cutoff, true, &mut removed)?;
+    Ok(removed)
+}
+
+fn prune_eval_artifacts_tree(
+    path: &std::path::Path,
+    cutoff: std::time::SystemTime,
+    preserve_root: bool,
+    removed: &mut usize,
+) -> Result<()> {
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let metadata = std::fs::symlink_metadata(&entry_path)?;
+
+        if metadata.is_dir() {
+            prune_eval_artifacts_tree(&entry_path, cutoff, false, removed)?;
+            if std::fs::read_dir(&entry_path)?.next().is_none() {
+                std::fs::remove_dir(&entry_path)?;
+                *removed += 1;
+            }
+        } else if metadata.is_file()
+            && metadata
+                .modified()
+                .map(|modified| modified < cutoff)
+                .unwrap_or(false)
+        {
+            std::fs::remove_file(&entry_path)?;
+            *removed += 1;
+        }
+    }
+
+    if !preserve_root && std::fs::read_dir(path)?.next().is_none() {
+        return Ok(());
+    }
+
+    Ok(())
+}
+
 fn sanitize_path_segment(value: &str) -> String {
     let mut sanitized = value
         .trim()
@@ -124,5 +194,46 @@ fn sanitize_path_segment(value: &str) -> String {
         "fixture".to_string()
     } else {
         sanitized
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn prune_eval_artifacts_removes_stale_files_and_empty_dirs() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("fixtures");
+        std::fs::create_dir_all(&nested).unwrap();
+        let artifact = nested.join("old.json");
+        std::fs::write(&artifact, "{}").unwrap();
+
+        let removed = prune_eval_artifacts_before(
+            dir.path(),
+            std::time::SystemTime::now() + std::time::Duration::from_secs(1),
+        )
+        .unwrap();
+
+        assert_eq!(removed, 2);
+        assert!(!artifact.exists());
+        assert!(!nested.exists());
+    }
+
+    #[test]
+    fn prune_eval_artifacts_keeps_recent_files() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("fixtures");
+        std::fs::create_dir_all(&nested).unwrap();
+        let artifact = nested.join("recent.json");
+        std::fs::write(&artifact, "{}").unwrap();
+
+        let removed =
+            prune_eval_artifacts_before(dir.path(), std::time::SystemTime::UNIX_EPOCH).unwrap();
+
+        assert_eq!(removed, 0);
+        assert!(artifact.exists());
+        assert!(nested.exists());
     }
 }
