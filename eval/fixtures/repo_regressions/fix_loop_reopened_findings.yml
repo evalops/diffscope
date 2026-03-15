@@ -1,0 +1,28 @@
+name: repo regression - reopened finding telemetry broken
+repo_path: ../../..
+diff: |
+  diff --git a/src/server/api/gh.rs b/src/server/api/gh.rs
+  index eaf02e9..cafef00d 100644
+  --- a/src/server/api/gh.rs
+  +++ b/src/server/api/gh.rs
+  @@ -1075,8 +1075,8 @@ pub(crate) fn build_fix_loop_telemetry(
+           findings_cleared += previous_findings.difference(&current_findings).count();
+           findings_reopened += current_findings
+               .difference(&previous_findings)
+  -            .filter(|finding_id| historical_findings.contains(*finding_id))
+  +            .filter(|finding_id| previous_findings.contains(*finding_id))
+               .count();
+  
+           historical_findings.extend(current_findings);
+expect:
+  must_find:
+    - file: src/server/api/gh.rs
+      contains_any:
+        - reopened findings will never be counted correctly
+        - logic bug in reopened finding telemetry
+        - a finding in current minus previous can never also be in previous_findings
+      rule_id: bug.fix-loop.reopened-finding-telemetry
+  must_not_find:
+    - contains: style
+  min_total: 1
+  max_total: 8

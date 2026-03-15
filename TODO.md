@@ -57,7 +57,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 27. [x] Add "challenge the finding" verification loops where a validator tries to falsify a suspected issue before keeping it.
 28. [ ] Add caching between iterations so repeated codebase retrieval and verification runs are cheaper.
 29. [x] Allow loop policies to differ by profile: conservative auditor, high-autonomy fixer, or report-only.
-30. [ ] Add eval fixtures specifically for loop convergence and reopened-issue regressions.
+30. [x] Add eval fixtures specifically for loop convergence and reopened-issue regressions.
 
 ## 4. Code Graph and Repository Intelligence
 

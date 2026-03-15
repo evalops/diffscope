@@ -173,6 +173,58 @@ expect:
     }
 
     #[test]
+    fn test_checked_in_fix_loop_convergence_fixture_loads_expected_fields() {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/repo_regressions/fix_loop_premature_convergence.yml");
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("repo regression - fix loop premature convergence")
+        );
+        assert_eq!(
+            fixtures[0].fixture.repo_path,
+            Some(std::path::PathBuf::from("../../.."))
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].file.as_deref(),
+            Some("src/server/api/gh.rs")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.fix-loop.premature-convergence")
+        );
+    }
+
+    #[test]
+    fn test_checked_in_fix_loop_reopened_fixture_loads_expected_fields() {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/repo_regressions/fix_loop_reopened_findings.yml");
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("repo regression - reopened finding telemetry broken")
+        );
+        assert_eq!(
+            fixtures[0].fixture.repo_path,
+            Some(std::path::PathBuf::from("../../.."))
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].file.as_deref(),
+            Some("src/server/api/gh.rs")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.fix-loop.reopened-finding-telemetry")
+        );
+    }
+
+    #[test]
     fn test_collect_eval_fixtures_expands_pack_entries_in_sorted_order() {
         let dir = tempdir().unwrap();
         let standard_path = dir.path().join("b-standard.yml");

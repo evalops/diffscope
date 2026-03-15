@@ -1,0 +1,28 @@
+name: repo regression - fix loop premature convergence
+repo_path: ../../..
+diff: |
+  diff --git a/src/server/api/gh.rs b/src/server/api/gh.rs
+  index eaf02e9..deadbeef 100644
+  --- a/src/server/api/gh.rs
+  +++ b/src/server/api/gh.rs
+  @@ -1949,8 +1949,7 @@ pub(crate) async fn run_gh_pr_fix_loop(
+       })?;
+  
+       if latest_summary_ref.merge_readiness == MergeReadiness::Ready
+           && latest_summary_ref.open_blockers == 0
+  -        && latest_summary_ref.open_comments == 0
+       {
+           return Ok(Json(build_pr_fix_loop_response(PrFixLoopResponseArgs {
+               repo: request.repo.clone(),
+expect:
+  must_find:
+    - file: src/server/api/gh.rs
+      contains_any:
+        - prematurely marks the fix loop as converged
+        - unresolved findings can still remain when the loop stops
+        - missing open_comments check in the convergence guard
+      rule_id: bug.fix-loop.premature-convergence
+  must_not_find:
+    - contains: style
+  min_total: 1
+  max_total: 8
