@@ -83,7 +83,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 47. [x] Add explicit "intent mismatch" review checks comparing PR changes to ticket acceptance criteria.
 48. [x] Add review artifacts that show which external context sources influenced a finding.
 49. [x] Add tests for pattern repository resolution across local paths, Git URLs, and broken sources.
-50. [ ] Add analytics on which context sources actually improve acceptance and fix rates.
+50. [x] Add analytics on which context sources actually improve acceptance and fix rates.
 
 ## 6. Review UX and Workflow Integration
 

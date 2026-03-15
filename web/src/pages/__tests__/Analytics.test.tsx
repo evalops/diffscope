@@ -200,6 +200,7 @@ describe('Analytics exports', () => {
     expect(report.reinforcement.summary.feedbackAcceptanceRate).toBe(0.5)
     expect(report.reinforcement.summary.feedbackLearningLabeledTotal).toBe(0)
     expect(report.reinforcement.summary.patternRepositoryFindingTotal).toBe(0)
+    expect(report.reinforcement.summary.contextSourceFindingTotal).toBe(0)
     expect(report.reinforcement.latestAttentionGaps.byCategory[0].name).toBe('Security')
     expect(report.reinforcement.latestAttentionGaps.byRule[0].name).toBe('sec.auth.boundary')
     expect(report.sources.warnings).toContain('feedback trend lagging behind latest review')
@@ -395,6 +396,110 @@ describe('Analytics exports', () => {
     expect(sourceDrilldown?.reviews).toHaveLength(2)
   })
 
+  it('computes context-source acceptance and fix analytics with drilldowns', () => {
+    const contextReview = makeReview()
+    contextReview.id = 'review-2'
+    contextReview.started_at = '2026-03-14T12:00:00Z'
+    contextReview.completed_at = '2026-03-14T12:05:00Z'
+    contextReview.comments = [
+      {
+        ...contextReview.comments[0],
+        id: 'c-3',
+        content: 'Custom context surfaced the missing tenant guard',
+        feedback: 'accept',
+        status: 'Open',
+        tags: ['context-source:custom-context'],
+      },
+      {
+        ...contextReview.comments[1],
+        id: 'c-4',
+        content: 'Ticket context says this styling issue is intentional',
+        feedback: 'reject',
+        status: 'Resolved',
+        resolved_at: '2026-03-14T13:00:00Z',
+        tags: ['context-source:jira-issue'],
+      },
+    ]
+
+    const followupContextReview = makeReview()
+    followupContextReview.id = 'review-3'
+    followupContextReview.started_at = '2026-03-15T12:00:00Z'
+    followupContextReview.completed_at = '2026-03-15T12:05:00Z'
+    followupContextReview.comments = [
+      {
+        ...followupContextReview.comments[0],
+        id: 'c-5',
+        content: 'Linked ticket and shared rules confirmed the auth regression',
+        feedback: 'accept',
+        status: 'Resolved',
+        resolved_at: '2026-03-15T13:00:00Z',
+        tags: [
+          'context-source:jira-issue',
+          'context-source:pattern-repository:acme/security-rules',
+        ],
+      },
+    ]
+    followupContextReview.summary = {
+      ...followupContextReview.summary!,
+      total_comments: 1,
+      by_severity: { Error: 1, Warning: 0, Info: 0, Suggestion: 0 },
+      by_category: { Security: 1 },
+      files_reviewed: 3,
+      overall_score: 9.1,
+      open_comments: 0,
+      open_by_severity: {},
+      open_blocking_comments: 0,
+      open_informational_comments: 0,
+      resolved_comments: 1,
+      dismissed_comments: 0,
+      open_blockers: 0,
+      completeness: {
+        total_findings: 1,
+        acknowledged_findings: 1,
+        fixed_findings: 1,
+        stale_findings: 0,
+      },
+    }
+
+    const reviews = [makeReview(), contextReview, followupContextReview]
+    const analytics = computeAnalytics(reviews)
+
+    expect(analytics.stats.contextSourceFindingTotal).toBe(3)
+    expect(analytics.stats.contextSourceLabeledTotal).toBe(3)
+    expect(analytics.stats.contextSourceAcceptedTotal).toBe(2)
+    expect(analytics.stats.contextSourceRejectedTotal).toBe(1)
+    expect(analytics.stats.contextSourceResolvedTotal).toBe(2)
+    expect(analytics.stats.contextSourceReviewCount).toBe(2)
+    expect(analytics.stats.contextSourceSourceCount).toBe(3)
+    expect(analytics.stats.contextSourceUtilizationRate).toBeCloseTo(2 / 3)
+    expect(analytics.stats.contextSourceAcceptanceRate).toBeCloseTo(2 / 3)
+    expect(analytics.stats.contextSourceBaselineAcceptanceRate).toBeCloseTo(0.5)
+    expect(analytics.stats.contextSourceAcceptanceLift).toBeCloseTo((2 / 3) - 0.5)
+    expect(analytics.stats.contextSourceFixRate).toBeCloseTo(2 / 3)
+    expect(analytics.stats.contextSourceBaselineFixRate).toBeCloseTo(0.5)
+    expect(analytics.stats.contextSourceFixLift).toBeCloseTo((2 / 3) - 0.5)
+    expect(analytics.contextSourceData[0]).toMatchObject({
+      name: 'jira-issue',
+      label: 'Jira issue',
+      total: 2,
+      reviewCount: 2,
+      fixRate: 1,
+    })
+    expect(analytics.contextSourceSeries[1]).toMatchObject({
+      findings: 2,
+      resolved: 1,
+      sourceCount: 2,
+    })
+
+    const sourceDrilldown = buildAnalyticsDrilldown(reviews, {
+      type: 'contextSource',
+      source: 'jira-issue',
+    })
+    expect(sourceDrilldown?.title).toBe('Context source · Jira issue')
+    expect(sourceDrilldown?.comments).toHaveLength(2)
+    expect(sourceDrilldown?.reviews).toHaveLength(2)
+  })
+
   it('builds review, category, and rule drilldowns from review-backed analytics', () => {
     const laterReview = makeReview()
     const laterSummary = laterReview.summary!
@@ -460,6 +565,7 @@ describe('Analytics exports', () => {
     expect(csv).toContain('"reinforcement","summary","","feedbackCoverageRate","1"')
     expect(csv).toContain('"reinforcement","summary","","feedbackLearningLabeledTotal","0"')
     expect(csv).toContain('"reinforcement","summary","","patternRepositoryFindingTotal","0"')
+    expect(csv).toContain('"reinforcement","summary","","contextSourceFindingTotal","0"')
     expect(csv).toContain('"reinforcement","attention_gaps_by_category","Security","gap","-0.38"')
     expect(csv).toContain('"reinforcement","top_accepted_rules","sec.auth.boundary","accepted","1"')
   })

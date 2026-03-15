@@ -19,6 +19,7 @@ const FEEDBACK_LEARNING_REJECT_TAGS = new Set([
   'semantic-feedback:rejected',
 ])
 
+const CONTEXT_SOURCE_TAG_PREFIX = 'context-source:'
 const PATTERN_REPOSITORY_TAG_PREFIX = 'pattern-repository:'
 
 function isLabeledFeedbackComment(comment: ReviewComment): boolean {
@@ -56,6 +57,58 @@ function extractPatternRepositorySources(comment: ReviewComment): string[] {
 
 function isPatternRepositoryComment(comment: ReviewComment): boolean {
   return extractPatternRepositorySources(comment).length > 0
+}
+
+function extractContextSources(comment: ReviewComment): string[] {
+  const explicit = comment.tags
+    .filter(tag => tag.startsWith(CONTEXT_SOURCE_TAG_PREFIX))
+    .map(tag => tag.slice(CONTEXT_SOURCE_TAG_PREFIX.length))
+    .filter(Boolean)
+
+  if (explicit.length > 0) {
+    return Array.from(new Set(explicit))
+  }
+
+  return Array.from(new Set(
+    extractPatternRepositorySources(comment).map(source => `pattern-repository:${source}`),
+  ))
+}
+
+function isContextSourceComment(comment: ReviewComment): boolean {
+  return extractContextSources(comment).length > 0
+}
+
+function formatContextSourceName(name: string): string {
+  if (name.startsWith('pattern-repository:')) {
+    const source = name.slice('pattern-repository:'.length) || 'external'
+    return `Pattern repository · ${source}`
+  }
+
+  const knownLabels: Record<string, string> = {
+    'custom-context': 'Custom context',
+    'dependency-graph': 'Dependency graph',
+    'jira-issue': 'Jira issue',
+    'linear-issue': 'Linear issue',
+    'path-focus': 'Path focus',
+    'related-test-file': 'Related test file',
+    'repository-graph': 'Repository graph',
+    'reverse-dependency-summary': 'Reverse dependency summary',
+    'semantic-retrieval': 'Semantic retrieval',
+    'similar-implementation': 'Similar implementation',
+    'symbol-graph': 'Symbol graph',
+  }
+
+  if (knownLabels[name]) {
+    return knownLabels[name]
+  }
+
+  return name
+    .split(':')
+    .map(part => part
+      .split('-')
+      .map(token => token ? token[0].toUpperCase() + token.slice(1) : token)
+      .join(' '))
+    .join(' · ')
 }
 
 export function computeAnalytics(reviews: ReviewSession[]) {
@@ -239,6 +292,90 @@ export function computeAnalytics(reviews: ReviewSession[]) {
       rejected: totals.rejected,
       reviewCount: totals.reviewIds.size,
       acceptanceRate: totals.labeled > 0 ? totals.accepted / totals.labeled : 0,
+    }))
+    .sort((left, right) => right.total - left.total || right.accepted - left.accepted)
+
+  const contextSourceTotals: Record<string, {
+    total: number
+    labeled: number
+    accepted: number
+    rejected: number
+    resolved: number
+    reviewIds: Set<string>
+  }> = {}
+
+  const contextSourceSeries = completed.map((r, i) => {
+    const contextSourceComments = r.comments.filter(isContextSourceComment)
+    const labeledContextSourceComments = contextSourceComments.filter(isLabeledFeedbackComment)
+    const accepted = labeledContextSourceComments.filter(comment => comment.feedback === 'accept').length
+    const rejected = labeledContextSourceComments.filter(comment => comment.feedback === 'reject').length
+    const resolved = contextSourceComments.filter(comment => comment.status === 'Resolved').length
+    const reviewSources = new Set<string>()
+
+    for (const comment of contextSourceComments) {
+      const sources = Array.from(new Set(extractContextSources(comment)))
+      const isLabeled = isLabeledFeedbackComment(comment)
+      const isResolved = comment.status === 'Resolved'
+
+      for (const source of sources) {
+        reviewSources.add(source)
+        const current = contextSourceTotals[source] ?? {
+          total: 0,
+          labeled: 0,
+          accepted: 0,
+          rejected: 0,
+          resolved: 0,
+          reviewIds: new Set<string>(),
+        }
+
+        current.total += 1
+        if (isLabeled) {
+          current.labeled += 1
+          if (comment.feedback === 'accept') {
+            current.accepted += 1
+          } else if (comment.feedback === 'reject') {
+            current.rejected += 1
+          }
+        }
+        if (isResolved) {
+          current.resolved += 1
+        }
+        current.reviewIds.add(r.id)
+        contextSourceTotals[source] = current
+      }
+    }
+
+    return {
+      reviewId: r.id,
+      idx: i + 1,
+      label: `#${i + 1}`,
+      findings: contextSourceComments.length,
+      labeled: labeledContextSourceComments.length,
+      accepted,
+      rejected,
+      resolved,
+      sourceCount: reviewSources.size,
+      acceptanceRate: labeledContextSourceComments.length > 0
+        ? accepted / labeledContextSourceComments.length
+        : null,
+      fixRate: contextSourceComments.length > 0
+        ? resolved / contextSourceComments.length
+        : null,
+    }
+  })
+
+  const contextSourceData = Object.entries(contextSourceTotals)
+    .map(([name, totals]) => ({
+      name,
+      label: formatContextSourceName(name),
+      total: totals.total,
+      labeled: totals.labeled,
+      accepted: totals.accepted,
+      rejected: totals.rejected,
+      resolved: totals.resolved,
+      reviewCount: totals.reviewIds.size,
+      acceptanceRate: totals.labeled > 0 ? totals.accepted / totals.labeled : 0,
+      fixRate: totals.total > 0 ? totals.resolved / totals.total : 0,
     }))
     .sort((left, right) => right.total - left.total || right.accepted - left.accepted)
 
@@ -458,6 +595,57 @@ export function computeAnalytics(reviews: ReviewSession[]) {
     && patternRepositoryLabeledTotal > 0
     ? patternRepositoryAcceptanceRate - patternRepositoryBaselineAcceptanceRate
     : null
+  const contextSourceFindingTotal = contextSourceSeries.reduce(
+    (sum, point) => sum + point.findings,
+    0,
+  )
+  const contextSourceLabeledTotal = contextSourceSeries.reduce(
+    (sum, point) => sum + point.labeled,
+    0,
+  )
+  const contextSourceAcceptedTotal = contextSourceSeries.reduce(
+    (sum, point) => sum + point.accepted,
+    0,
+  )
+  const contextSourceRejectedTotal = contextSourceSeries.reduce(
+    (sum, point) => sum + point.rejected,
+    0,
+  )
+  const contextSourceResolvedTotal = contextSourceSeries.reduce(
+    (sum, point) => sum + point.resolved,
+    0,
+  )
+  const contextSourceReviewCount = contextSourceSeries.filter(
+    point => point.findings > 0,
+  ).length
+  const contextSourceSourceCount = contextSourceData.length
+  const contextSourceUtilizationRate = completed.length > 0
+    ? contextSourceReviewCount / completed.length
+    : 0
+  const contextSourceAcceptanceRate = contextSourceLabeledTotal > 0
+    ? contextSourceAcceptedTotal / contextSourceLabeledTotal
+    : 0
+  const contextSourceBaselineLabeledTotal = labeledFeedbackTotal - contextSourceLabeledTotal
+  const contextSourceBaselineAcceptedTotal = acceptedFeedbackTotal - contextSourceAcceptedTotal
+  const contextSourceBaselineAcceptanceRate = contextSourceBaselineLabeledTotal > 0
+    ? contextSourceBaselineAcceptedTotal / contextSourceBaselineLabeledTotal
+    : null
+  const contextSourceAcceptanceLift = contextSourceBaselineAcceptanceRate != null
+    && contextSourceLabeledTotal > 0
+    ? contextSourceAcceptanceRate - contextSourceBaselineAcceptanceRate
+    : null
+  const contextSourceFixRate = contextSourceFindingTotal > 0
+    ? contextSourceResolvedTotal / contextSourceFindingTotal
+    : 0
+  const contextSourceBaselineFindingTotal = totalCommentCount - contextSourceFindingTotal
+  const contextSourceBaselineResolvedTotal = totalResolvedComments - contextSourceResolvedTotal
+  const contextSourceBaselineFixRate = contextSourceBaselineFindingTotal > 0
+    ? contextSourceBaselineResolvedTotal / contextSourceBaselineFindingTotal
+    : null
+  const contextSourceFixLift = contextSourceBaselineFixRate != null
+    && contextSourceFindingTotal > 0
+    ? contextSourceFixRate - contextSourceBaselineFixRate
+    : null
 
   const sevTotals: Record<Severity, number> = { Error: 0, Warning: 0, Info: 0, Suggestion: 0 }
   for (const r of completed) {
@@ -480,6 +668,8 @@ export function computeAnalytics(reviews: ReviewSession[]) {
     feedbackLearningSeries,
     patternRepositorySeries,
     patternRepositorySourceData,
+    contextSourceSeries,
+    contextSourceData,
     topAcceptedCategories,
     topRejectedCategories,
     topAcceptedRules,
@@ -535,6 +725,21 @@ export function computeAnalytics(reviews: ReviewSession[]) {
       patternRepositoryBaselineLabeledTotal,
       patternRepositoryBaselineAcceptanceRate,
       patternRepositoryAcceptanceLift,
+      contextSourceFindingTotal,
+      contextSourceLabeledTotal,
+      contextSourceAcceptedTotal,
+      contextSourceRejectedTotal,
+      contextSourceResolvedTotal,
+      contextSourceReviewCount,
+      contextSourceSourceCount,
+      contextSourceUtilizationRate,
+      contextSourceAcceptanceRate,
+      contextSourceBaselineLabeledTotal,
+      contextSourceBaselineAcceptanceRate,
+      contextSourceAcceptanceLift,
+      contextSourceFixRate,
+      contextSourceBaselineFixRate,
+      contextSourceFixLift,
     },
   }
 }
@@ -543,6 +748,7 @@ export type AnalyticsDrilldownSelection =
   | { type: 'review'; reviewId: string }
   | { type: 'category'; category: string }
   | { type: 'rule'; ruleId: string }
+  | { type: 'contextSource'; source: string }
   | { type: 'patternRepositorySource'; source: string }
 
 export interface AnalyticsDrilldown {
@@ -622,6 +828,9 @@ export function buildAnalyticsDrilldown(
       if (selection.type === 'rule') {
         return comment.rule_id?.trim() === selection.ruleId
       }
+      if (selection.type === 'contextSource') {
+        return extractContextSources(comment).includes(selection.source)
+      }
       return extractPatternRepositorySources(comment).includes(selection.source)
     })
     .map(comment => ({ review, label, comment })))
@@ -654,6 +863,8 @@ export function buildAnalyticsDrilldown(
       ? `Category · ${selection.category}`
       : selection.type === 'rule'
         ? `Rule · ${selection.ruleId}`
+        : selection.type === 'contextSource'
+          ? `Context source · ${formatContextSourceName(selection.source)}`
         : `Pattern repository · ${selection.source}`,
     description: `${matches.length} finding${matches.length === 1 ? '' : 's'} across ${reviewMap.size} review${reviewMap.size === 1 ? '' : 's'}.`,
     reviews: Array.from(reviewMap.values()),
@@ -945,6 +1156,21 @@ export interface AnalyticsExportReport {
       patternRepositoryBaselineLabeledTotal: number
       patternRepositoryBaselineAcceptanceRate?: number
       patternRepositoryAcceptanceLift?: number
+      contextSourceFindingTotal: number
+      contextSourceLabeledTotal: number
+      contextSourceAcceptedTotal: number
+      contextSourceRejectedTotal: number
+      contextSourceResolvedTotal: number
+      contextSourceReviewCount: number
+      contextSourceSourceCount: number
+      contextSourceUtilizationRate: number
+      contextSourceAcceptanceRate: number
+      contextSourceBaselineLabeledTotal: number
+      contextSourceBaselineAcceptanceRate?: number
+      contextSourceAcceptanceLift?: number
+      contextSourceFixRate: number
+      contextSourceBaselineFixRate?: number
+      contextSourceFixLift?: number
       latestMicroF1?: number
       latestWeightedScore?: number
       latestAcceptanceRate?: number
@@ -954,6 +1180,8 @@ export interface AnalyticsExportReport {
     feedbackLearningByReview: AnalyticsSnapshot['feedbackLearningSeries']
     patternRepositoryByReview: AnalyticsSnapshot['patternRepositorySeries']
     patternRepositorySources: AnalyticsSnapshot['patternRepositorySourceData']
+    contextSourceByReview: AnalyticsSnapshot['contextSourceSeries']
+    contextSources: AnalyticsSnapshot['contextSourceData']
     topAcceptedCategories: AnalyticsSnapshot['topAcceptedCategories']
     topRejectedCategories: AnalyticsSnapshot['topRejectedCategories']
     topAcceptedRules: AnalyticsSnapshot['topAcceptedRules']
@@ -1021,6 +1249,22 @@ function appendPatternRepositoryRows(
     rows.push({ report: 'reinforcement', group: 'pattern_repository_sources', label: item.name, metric: 'rejected', value: item.rejected })
     rows.push({ report: 'reinforcement', group: 'pattern_repository_sources', label: item.name, metric: 'review_count', value: item.reviewCount })
     rows.push({ report: 'reinforcement', group: 'pattern_repository_sources', label: item.name, metric: 'acceptance_rate', value: item.acceptanceRate })
+  })
+}
+
+function appendContextSourceRows(
+  rows: AnalyticsExportCsvRow[],
+  items: AnalyticsSnapshot['contextSourceData'],
+) {
+  items.forEach(item => {
+    rows.push({ report: 'reinforcement', group: 'context_sources', label: item.name, metric: 'total', value: item.total })
+    rows.push({ report: 'reinforcement', group: 'context_sources', label: item.name, metric: 'labeled', value: item.labeled })
+    rows.push({ report: 'reinforcement', group: 'context_sources', label: item.name, metric: 'accepted', value: item.accepted })
+    rows.push({ report: 'reinforcement', group: 'context_sources', label: item.name, metric: 'rejected', value: item.rejected })
+    rows.push({ report: 'reinforcement', group: 'context_sources', label: item.name, metric: 'resolved', value: item.resolved })
+    rows.push({ report: 'reinforcement', group: 'context_sources', label: item.name, metric: 'review_count', value: item.reviewCount })
+    rows.push({ report: 'reinforcement', group: 'context_sources', label: item.name, metric: 'acceptance_rate', value: item.acceptanceRate })
+    rows.push({ report: 'reinforcement', group: 'context_sources', label: item.name, metric: 'fix_rate', value: item.fixRate })
   })
 }
 
@@ -1102,6 +1346,21 @@ export function buildAnalyticsExportReport(
         patternRepositoryBaselineLabeledTotal: analytics.stats.patternRepositoryBaselineLabeledTotal,
         patternRepositoryBaselineAcceptanceRate: analytics.stats.patternRepositoryBaselineAcceptanceRate ?? undefined,
         patternRepositoryAcceptanceLift: analytics.stats.patternRepositoryAcceptanceLift ?? undefined,
+        contextSourceFindingTotal: analytics.stats.contextSourceFindingTotal,
+        contextSourceLabeledTotal: analytics.stats.contextSourceLabeledTotal,
+        contextSourceAcceptedTotal: analytics.stats.contextSourceAcceptedTotal,
+        contextSourceRejectedTotal: analytics.stats.contextSourceRejectedTotal,
+        contextSourceResolvedTotal: analytics.stats.contextSourceResolvedTotal,
+        contextSourceReviewCount: analytics.stats.contextSourceReviewCount,
+        contextSourceSourceCount: analytics.stats.contextSourceSourceCount,
+        contextSourceUtilizationRate: analytics.stats.contextSourceUtilizationRate,
+        contextSourceAcceptanceRate: analytics.stats.contextSourceAcceptanceRate,
+        contextSourceBaselineLabeledTotal: analytics.stats.contextSourceBaselineLabeledTotal,
+        contextSourceBaselineAcceptanceRate: analytics.stats.contextSourceBaselineAcceptanceRate ?? undefined,
+        contextSourceAcceptanceLift: analytics.stats.contextSourceAcceptanceLift ?? undefined,
+        contextSourceFixRate: analytics.stats.contextSourceFixRate,
+        contextSourceBaselineFixRate: analytics.stats.contextSourceBaselineFixRate ?? undefined,
+        contextSourceFixLift: analytics.stats.contextSourceFixLift ?? undefined,
         latestMicroF1: trendAnalytics.latestEval?.micro_f1,
         latestWeightedScore: trendAnalytics.latestEval?.weighted_score,
         latestAcceptanceRate: trendAnalytics.latestFeedback?.acceptance_rate,
@@ -1111,6 +1370,8 @@ export function buildAnalyticsExportReport(
       feedbackLearningByReview: analytics.feedbackLearningSeries,
       patternRepositoryByReview: analytics.patternRepositorySeries,
       patternRepositorySources: analytics.patternRepositorySourceData,
+      contextSourceByReview: analytics.contextSourceSeries,
+      contextSources: analytics.contextSourceData,
       topAcceptedCategories: analytics.topAcceptedCategories,
       topRejectedCategories: analytics.topRejectedCategories,
       topAcceptedRules: analytics.topAcceptedRules,
@@ -1207,6 +1468,21 @@ export function buildAnalyticsCsv(report: AnalyticsExportReport): string {
     }
   })
   appendPatternRepositoryRows(rows, report.reinforcement.patternRepositorySources)
+  report.reinforcement.contextSourceByReview.forEach(point => {
+    rows.push({ report: 'reinforcement', group: 'context_source_by_review', label: point.label, metric: 'findings', value: point.findings })
+    rows.push({ report: 'reinforcement', group: 'context_source_by_review', label: point.label, metric: 'labeled', value: point.labeled })
+    rows.push({ report: 'reinforcement', group: 'context_source_by_review', label: point.label, metric: 'accepted', value: point.accepted })
+    rows.push({ report: 'reinforcement', group: 'context_source_by_review', label: point.label, metric: 'rejected', value: point.rejected })
+    rows.push({ report: 'reinforcement', group: 'context_source_by_review', label: point.label, metric: 'resolved', value: point.resolved })
+    rows.push({ report: 'reinforcement', group: 'context_source_by_review', label: point.label, metric: 'source_count', value: point.sourceCount })
+    if (point.acceptanceRate != null) {
+      rows.push({ report: 'reinforcement', group: 'context_source_by_review', label: point.label, metric: 'acceptance_rate', value: point.acceptanceRate })
+    }
+    if (point.fixRate != null) {
+      rows.push({ report: 'reinforcement', group: 'context_source_by_review', label: point.label, metric: 'fix_rate', value: point.fixRate })
+    }
+  })
+  appendContextSourceRows(rows, report.reinforcement.contextSources)
   appendFeedbackBreakdownRows(rows, 'top_accepted_categories', report.reinforcement.topAcceptedCategories)
   appendFeedbackBreakdownRows(rows, 'top_rejected_categories', report.reinforcement.topRejectedCategories)
   appendFeedbackBreakdownRows(rows, 'top_accepted_rules', report.reinforcement.topAcceptedRules)
