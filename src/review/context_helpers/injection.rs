@@ -92,6 +92,45 @@ pub fn inject_linked_issue_context(
     }
 }
 
+fn document_source_label(source: &str) -> &str {
+    match source {
+        "design-doc" => "design doc",
+        "rfc" => "RFC",
+        "runbook" => "runbook",
+        _ => "document",
+    }
+}
+
+pub fn inject_document_context(
+    config: &config::Config,
+    diff: &core::UnifiedDiff,
+    context_chunks: &mut Vec<core::LLMContextChunk>,
+) {
+    for document in &config.document_contexts {
+        let mut lines = vec![format!(
+            "Linked {} context: {}",
+            document_source_label(&document.source),
+            document.title
+        )];
+
+        if !document.url.trim().is_empty() {
+            lines.push(format!("URL: {}", document.url.trim()));
+        }
+        if !document.summary.trim().is_empty() {
+            lines.push("Relevant design / runbook context:".to_string());
+            lines.push(document.summary.trim().to_string());
+        }
+
+        context_chunks.push(
+            core::LLMContextChunk::documentation(diff.file_path.clone(), lines.join("\n"))
+                .with_provenance(core::ContextProvenance::document_context(
+                    document.source.clone(),
+                    document.title.clone(),
+                )),
+        );
+    }
+}
+
 pub async fn inject_pattern_repository_context(
     config: &config::Config,
     resolved_repositories: &PatternRepositoryMap,
@@ -249,6 +288,32 @@ mod tests {
         assert!(context_chunks[1]
             .content
             .contains("Deployment manifests should use the new secret name."));
+    }
+
+    #[test]
+    fn inject_document_context_uses_document_provenance() {
+        let mut config = config::Config::default();
+        config.document_contexts = vec![config::DocumentContext {
+            source: "design-doc".to_string(),
+            title: "Checkout resiliency RFC".to_string(),
+            url: "https://github.com/evalops/diffscope/blob/main/docs/rfcs/checkout.md".to_string(),
+            summary: "Keep retries idempotent and preserve queue ordering.".to_string(),
+        }];
+
+        let mut context_chunks = Vec::new();
+        inject_document_context(&config, &diff_for("src/lib.rs"), &mut context_chunks);
+
+        assert_eq!(context_chunks.len(), 1);
+        assert!(context_chunks[0]
+            .content
+            .contains("Linked design doc context: Checkout resiliency RFC"));
+        assert_eq!(
+            context_chunks[0].provenance,
+            Some(core::ContextProvenance::document_context(
+                "design-doc",
+                "Checkout resiliency RFC"
+            ))
+        );
     }
 
     #[tokio::test]

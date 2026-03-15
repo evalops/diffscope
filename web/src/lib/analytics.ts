@@ -86,13 +86,17 @@ function formatContextSourceName(name: string): string {
 
   const knownLabels: Record<string, string> = {
     'custom-context': 'Custom context',
+    'design-doc': 'Design doc',
     'dependency-graph': 'Dependency graph',
+    document: 'Document',
     'jira-issue': 'Jira issue',
     'linear-issue': 'Linear issue',
     'path-focus': 'Path focus',
+    rfc: 'RFC',
     'related-test-file': 'Related test file',
     'repository-graph': 'Repository graph',
     'reverse-dependency-summary': 'Reverse dependency summary',
+    runbook: 'Runbook',
     'semantic-retrieval': 'Semantic retrieval',
     'similar-implementation': 'Similar implementation',
     'symbol-graph': 'Symbol graph',

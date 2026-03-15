@@ -10,6 +10,10 @@ pub enum ContextProvenance {
         name: String,
     },
     CustomContextNotes,
+    DocumentContext {
+        source: String,
+        title: String,
+    },
     JiraIssueContext {
         issue_key: String,
     },
@@ -62,6 +66,13 @@ impl ContextProvenance {
     pub fn jira_issue_context(issue_key: impl Into<String>) -> Self {
         Self::JiraIssueContext {
             issue_key: issue_key.into(),
+        }
+    }
+
+    pub fn document_context(source: impl Into<String>, title: impl Into<String>) -> Self {
+        Self::DocumentContext {
+            source: source.into(),
+            title: title.into(),
         }
     }
 
@@ -118,6 +129,7 @@ impl ContextProvenance {
             }
             Self::Analyzer { .. }
             | Self::CustomContextNotes
+            | Self::DocumentContext { .. }
             | Self::JiraIssueContext { .. }
             | Self::LinearIssueContext { .. }
             | Self::DependencyGraphNeighborhood
@@ -141,6 +153,7 @@ impl ContextProvenance {
         let source = match self {
             Self::ActiveReviewRules | Self::Analyzer { .. } => return None,
             Self::CustomContextNotes => "custom-context".to_string(),
+            Self::DocumentContext { source, .. } => source.trim().to_string(),
             Self::JiraIssueContext { .. } => "jira-issue".to_string(),
             Self::LinearIssueContext { .. } => "linear-issue".to_string(),
             Self::DependencyGraphNeighborhood => "dependency-graph".to_string(),
@@ -165,6 +178,9 @@ impl ContextProvenance {
             Self::ActiveReviewRules => "active review rules".to_string(),
             Self::Analyzer { name } => format!("{name} analyzer"),
             Self::CustomContextNotes => "custom context notes".to_string(),
+            Self::DocumentContext { source, title } => {
+                format!("document context ({source}): {title}")
+            }
             Self::JiraIssueContext { issue_key } => format!("jira issue context: {issue_key}"),
             Self::LinearIssueContext { issue_id } => {
                 format!("linear issue context: {issue_id}")
@@ -261,6 +277,10 @@ mod tests {
             "repository graph metadata"
         );
         assert_eq!(
+            ContextProvenance::document_context("design-doc", "Checkout architecture").to_string(),
+            "document context (design-doc): Checkout architecture"
+        );
+        assert_eq!(
             ContextProvenance::jira_issue_context("ENG-123").to_string(),
             "jira issue context: ENG-123"
         );
@@ -289,6 +309,12 @@ mod tests {
                 .artifact_tag()
                 .as_deref(),
             Some("context-source:symbol-graph")
+        );
+        assert_eq!(
+            ContextProvenance::document_context("runbook", "Pager escalation")
+                .artifact_tag()
+                .as_deref(),
+            Some("context-source:runbook")
         );
         assert_eq!(
             ContextProvenance::jira_issue_context("ENG-123")

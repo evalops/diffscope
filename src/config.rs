@@ -155,6 +155,15 @@ pub struct LinkedIssueContext {
     pub summary: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DocumentContext {
+    pub source: String,
+    pub title: String,
+    pub url: String,
+    #[serde(default)]
+    pub summary: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AutomationConfig {
     /// Outbound webhook URL for downstream automation consumers.
@@ -501,6 +510,9 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub linked_issue_contexts: Vec<LinkedIssueContext>,
 
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub document_contexts: Vec<DocumentContext>,
+
     #[serde(default)]
     pub pattern_repositories: Vec<PatternRepositoryConfig>,
 
@@ -728,6 +740,7 @@ impl Default for Config {
             paths: HashMap::new(),
             custom_context: Vec::new(),
             linked_issue_contexts: Vec::new(),
+            document_contexts: Vec::new(),
             pattern_repositories: Vec::new(),
             rules_files: Vec::new(),
             max_active_rules: default_max_active_rules(),

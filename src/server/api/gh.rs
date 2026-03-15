@@ -1,7 +1,9 @@
 use super::*;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashSet;
+use std::path::Path;
 
 // === GitHub API helpers (use shared HTTP client for connection pooling) ===
 
@@ -116,8 +118,21 @@ struct LinkedIssueCandidate {
     url: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DocumentCandidate {
+    source: String,
+    owner: String,
+    repo: String,
+    git_ref: String,
+    path: String,
+    title_hint: String,
+    url: String,
+}
+
 const MAX_LINKED_ISSUES_PER_PR: usize = 3;
 const MAX_LINKED_ISSUE_SUMMARY_CHARS: usize = 4_000;
+const MAX_DOCUMENT_CONTEXTS_PER_PR: usize = 3;
+const MAX_DOCUMENT_SUMMARY_CHARS: usize = 4_000;
 
 static JIRA_BROWSE_URL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"https?://[^\s)]+/browse/([A-Z][A-Z0-9_]+-\d+)").unwrap());
@@ -125,6 +140,7 @@ static LINEAR_ISSUE_URL_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"https?://linear\.app/[^\s/]+/issue/([A-Z][A-Z0-9_]+-\d+)(?:/[^\s)]*)?").unwrap()
 });
 static ISSUE_KEY_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([A-Z][A-Z0-9_]+-\d+)\b").unwrap());
+static URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"https://[^\s<>()\]]+").unwrap());
 
 async fn fetch_github_pr_metadata(
     client: &reqwest::Client,
@@ -293,24 +309,16 @@ fn push_linked_issue_candidate(
 async fn load_pr_linked_issue_contexts(
     client: &reqwest::Client,
     config: &crate::config::Config,
-    github_token: Option<&str>,
     repo: &str,
     pr_number: u32,
+    metadata: Option<&GitHubPrMetadata>,
 ) -> Vec<crate::config::LinkedIssueContext> {
-    let Some(token) = github_token.filter(|value| !value.trim().is_empty()) else {
-        return Vec::new();
-    };
-
     if !jira_integration_enabled(config) && !linear_integration_enabled(config) {
         return Vec::new();
     }
 
-    let metadata = match fetch_github_pr_metadata(client, token, repo, pr_number).await {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            warn!(repo, pr_number, %error, "Failed to load PR metadata for linked issue context");
-            return Vec::new();
-        }
+    let Some(metadata) = metadata else {
+        return Vec::new();
     };
     let combined_text = format!("{}\n{}", metadata.title, metadata.body);
     let candidates = extract_linked_issue_candidates(&combined_text, config);
@@ -567,6 +575,306 @@ fn truncate_linked_issue_summary(summary: String) -> String {
     }
 
     let mut cutoff = MAX_LINKED_ISSUE_SUMMARY_CHARS;
+    while cutoff > 0 && !summary.is_char_boundary(cutoff) {
+        cutoff -= 1;
+    }
+    format!("{}…", summary[..cutoff].trim_end())
+}
+
+async fn load_pr_document_contexts(
+    client: &reqwest::Client,
+    github_token: Option<&str>,
+    metadata: Option<&GitHubPrMetadata>,
+    linked_issue_contexts: &[crate::config::LinkedIssueContext],
+) -> Vec<crate::config::DocumentContext> {
+    let Some(token) = github_token.filter(|value| !value.trim().is_empty()) else {
+        return Vec::new();
+    };
+    let Some(metadata) = metadata else {
+        return Vec::new();
+    };
+
+    let mut search_text = vec![metadata.title.clone(), metadata.body.clone()];
+    for issue in linked_issue_contexts {
+        if let Some(title) = issue
+            .title
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            search_text.push(title.to_string());
+        }
+        if let Some(url) = issue
+            .url
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            search_text.push(url.to_string());
+        }
+        if !issue.summary.trim().is_empty() {
+            search_text.push(issue.summary.clone());
+        }
+    }
+
+    let candidates = extract_document_candidates(&search_text.join("\n"));
+    let mut contexts = Vec::new();
+    for candidate in candidates {
+        match fetch_github_document_context(client, token, &candidate).await {
+            Ok(context) => contexts.push(context),
+            Err(error) => {
+                warn!(url = %candidate.url, %error, "Failed to load linked document context")
+            }
+        }
+    }
+
+    contexts
+}
+
+fn extract_document_candidates(text: &str) -> Vec<DocumentCandidate> {
+    let mut seen = HashSet::new();
+    let mut candidates = Vec::new();
+
+    for url_match in URL_RE.find_iter(text) {
+        let url = normalize_candidate_url(url_match.as_str());
+        let Some(candidate) = parse_github_document_candidate(&url) else {
+            continue;
+        };
+        if seen.insert(candidate.url.clone()) {
+            candidates.push(candidate);
+        }
+        if candidates.len() >= MAX_DOCUMENT_CONTEXTS_PER_PR {
+            break;
+        }
+    }
+
+    candidates
+}
+
+fn normalize_candidate_url(url: &str) -> String {
+    url.trim_end_matches([')', ']', '}', '.', ',', ';', ':'])
+        .to_string()
+}
+
+fn parse_github_document_candidate(url: &str) -> Option<DocumentCandidate> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let host = parsed.host_str()?;
+    let segments = parsed.path_segments()?.collect::<Vec<_>>();
+
+    let (owner, repo, git_ref, path) = match host {
+        "github.com" if segments.len() >= 5 && segments[2] == "blob" => (
+            segments[0].to_string(),
+            segments[1].to_string(),
+            segments[3].to_string(),
+            segments[4..].join("/"),
+        ),
+        "raw.githubusercontent.com" if segments.len() >= 4 => (
+            segments[0].to_string(),
+            segments[1].to_string(),
+            segments[2].to_string(),
+            segments[3..].join("/"),
+        ),
+        _ => return None,
+    };
+
+    if owner.is_empty() || repo.is_empty() || git_ref.is_empty() || path.is_empty() {
+        return None;
+    }
+    if !is_document_like_path(&path) {
+        return None;
+    }
+
+    let title_hint = infer_document_title(&path);
+    let source = classify_document_source(&format!("{path} {title_hint}"));
+
+    Some(DocumentCandidate {
+        source: source.to_string(),
+        owner,
+        repo,
+        git_ref,
+        path,
+        title_hint,
+        url: url.to_string(),
+    })
+}
+
+fn is_document_like_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+
+    lower.ends_with(".md")
+        || lower.ends_with(".mdx")
+        || lower.ends_with(".markdown")
+        || lower.ends_with(".txt")
+        || lower.ends_with(".rst")
+        || lower.ends_with(".adoc")
+        || lower.contains("/docs/")
+        || lower.contains("/design")
+        || lower.contains("/rfc")
+        || lower.contains("/rfcs/")
+        || lower.contains("/runbook")
+        || lower.contains("/runbooks/")
+        || lower.contains("/adr")
+}
+
+fn classify_document_source(value: &str) -> &'static str {
+    let lower = value.to_ascii_lowercase();
+    if lower.contains("runbook") {
+        "runbook"
+    } else if lower.contains("rfc") || lower.contains("adr") {
+        "rfc"
+    } else if lower.contains("design") {
+        "design-doc"
+    } else {
+        "document"
+    }
+}
+
+fn infer_document_title(path: &str) -> String {
+    let file_name = Path::new(path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Linked document");
+
+    let formatted = file_name
+        .split(['-', '_'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            if part.eq_ignore_ascii_case("rfc") || part.eq_ignore_ascii_case("adr") {
+                part.to_ascii_uppercase()
+            } else {
+                let mut chars = part.chars();
+                match chars.next() {
+                    Some(first) => format!(
+                        "{}{}",
+                        first.to_uppercase().collect::<String>(),
+                        chars.as_str()
+                    ),
+                    None => String::new(),
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if formatted.is_empty() {
+        "Linked document".to_string()
+    } else {
+        formatted
+    }
+}
+
+async fn fetch_github_document_context(
+    client: &reqwest::Client,
+    github_token: &str,
+    candidate: &DocumentCandidate,
+) -> Result<crate::config::DocumentContext, String> {
+    fetch_github_document_context_from_api_base(
+        client,
+        github_token,
+        candidate,
+        "https://api.github.com/",
+    )
+    .await
+}
+
+async fn fetch_github_document_context_from_api_base(
+    client: &reqwest::Client,
+    github_token: &str,
+    candidate: &DocumentCandidate,
+    api_base: &str,
+) -> Result<crate::config::DocumentContext, String> {
+    let mut api_url = reqwest::Url::parse(&format!("{}/", api_base.trim_end_matches('/')))
+        .map_err(|error| format!("Invalid GitHub API base URL: {error}"))?;
+    api_url
+        .path_segments_mut()
+        .map_err(|_| "GitHub API base URL cannot be a base".to_string())?
+        .extend(["repos", &candidate.owner, &candidate.repo, "contents"])
+        .extend(candidate.path.split('/'));
+    api_url
+        .query_pairs_mut()
+        .append_pair("ref", &candidate.git_ref);
+
+    let resp = github_api_get(client, github_token, api_url.as_str()).await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("GitHub contents API returned {status}: {body}"));
+    }
+
+    let payload: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|error| format!("Failed to parse document response: {error}"))?;
+    let content = payload
+        .get("content")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "GitHub contents response did not include file content".to_string())?;
+    let encoding = payload
+        .get("encoding")
+        .and_then(|value| value.as_str())
+        .unwrap_or("base64");
+    if encoding != "base64" {
+        return Err(format!("Unsupported GitHub content encoding: {encoding}"));
+    }
+
+    let decoded = BASE64_STANDARD
+        .decode(content.lines().collect::<String>())
+        .map_err(|error| format!("Failed to decode GitHub document content: {error}"))?;
+    let text = String::from_utf8(decoded)
+        .map_err(|error| format!("GitHub document was not valid UTF-8 text: {error}"))?;
+    let title = extract_document_title(&text, &candidate.title_hint);
+
+    Ok(crate::config::DocumentContext {
+        source: candidate.source.clone(),
+        title,
+        url: candidate.url.clone(),
+        summary: truncate_document_summary(extract_document_summary_text(&text)),
+    })
+}
+
+fn extract_document_title(content: &str, fallback: &str) -> String {
+    for line in strip_markdown_frontmatter(content).lines() {
+        let trimmed = line.trim();
+        if let Some(heading) = trimmed.strip_prefix("#") {
+            let title = heading.trim_start_matches('#').trim();
+            if !title.is_empty() {
+                return title.to_string();
+            }
+        }
+    }
+
+    fallback.trim().to_string()
+}
+
+fn extract_document_summary_text(content: &str) -> String {
+    let without_frontmatter = strip_markdown_frontmatter(content);
+    let excerpt = without_frontmatter
+        .lines()
+        .take(120)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    normalize_multiline_text(&excerpt)
+}
+
+fn strip_markdown_frontmatter(content: &str) -> String {
+    let normalized_content = content.replace("\r\n", "\n");
+    let normalized = normalized_content.trim_start_matches('\u{feff}');
+    if let Some(rest) = normalized.strip_prefix("---\n") {
+        if let Some(idx) = rest.find("\n---\n") {
+            return rest[idx + 5..].to_string();
+        }
+    }
+
+    normalized.to_string()
+}
+
+fn truncate_document_summary(summary: String) -> String {
+    let summary = normalize_multiline_text(&summary);
+    if summary.len() <= MAX_DOCUMENT_SUMMARY_CHARS {
+        return summary;
+    }
+
+    let mut cutoff = MAX_DOCUMENT_SUMMARY_CHARS;
     while cutoff > 0 && !summary.is_char_boundary(cutoff) {
         cutoff -= 1;
     }
@@ -2936,12 +3244,28 @@ pub(crate) async fn run_pr_review_task(
         return;
     }
 
+    let pr_metadata = match github_token
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        Some(token) => {
+            match fetch_github_pr_metadata(&state.http_client, token, &repo, pr_number).await {
+                Ok(metadata) => Some(metadata),
+                Err(error) => {
+                    warn!(repo, pr_number, %error, "Failed to load PR metadata for linked context");
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+
     let linked_issue_contexts = load_pr_linked_issue_contexts(
         &state.http_client,
         &config,
-        github_token.as_deref(),
         &repo,
         pr_number,
+        pr_metadata.as_ref(),
     )
     .await;
     if !linked_issue_contexts.is_empty() {
@@ -2952,6 +3276,23 @@ pub(crate) async fn run_pr_review_task(
             "Loaded PR-linked issue context"
         );
         config.linked_issue_contexts = linked_issue_contexts;
+    }
+
+    let document_contexts = load_pr_document_contexts(
+        &state.http_client,
+        github_token.as_deref(),
+        pr_metadata.as_ref(),
+        &config.linked_issue_contexts,
+    )
+    .await;
+    if !document_contexts.is_empty() {
+        info!(
+            repo,
+            pr_number,
+            document_context_count = document_contexts.len(),
+            "Loaded document-backed review context"
+        );
+        config.document_contexts = document_contexts;
     }
 
     let llm_start = std::time::Instant::now();
@@ -3789,5 +4130,100 @@ mod tests {
             extract_jira_description_text(&description),
             "Keep the API contract aligned.\nPreserve the shipped status enum."
         );
+    }
+
+    #[test]
+    fn extract_document_candidates_detects_design_docs_rfcs_and_runbooks() {
+        let candidates = extract_document_candidates(
+            "See https://github.com/evalops/diffscope/blob/main/docs/design/checkout-architecture.md, https://github.com/evalops/diffscope/blob/main/docs/rfcs/0007-replay-loop.md, and https://raw.githubusercontent.com/evalops/diffscope/main/docs/runbooks/review-degradation.md for context.",
+        );
+
+        assert_eq!(candidates.len(), 3);
+        assert_eq!(candidates[0].source, "design-doc");
+        assert_eq!(candidates[0].path, "docs/design/checkout-architecture.md");
+        assert_eq!(candidates[1].source, "rfc");
+        assert_eq!(candidates[1].path, "docs/rfcs/0007-replay-loop.md");
+        assert_eq!(candidates[2].source, "runbook");
+        assert_eq!(candidates[2].path, "docs/runbooks/review-degradation.md");
+    }
+
+    #[test]
+    fn extract_document_title_and_summary_strip_frontmatter() {
+        let content = r#"---
+title: ignored
+owner: review
+---
+# Replay loop RFC
+
+Keep fix loops resumable.
+Preserve replay checkpoints.
+"#;
+
+        assert_eq!(
+            extract_document_title(content, "Fallback Title"),
+            "Replay loop RFC"
+        );
+        assert_eq!(
+            extract_document_summary_text(content),
+            "# Replay loop RFC\n\nKeep fix loops resumable.\nPreserve replay checkpoints."
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_github_document_context_extracts_title_and_summary() {
+        use base64::Engine as _;
+
+        let mut server = mockito::Server::new_async().await;
+        let body = base64::engine::general_purpose::STANDARD.encode(
+            "---\ntitle: ignored\n---\n# Checkout architecture\n\nPreserve idempotency.\nUse the queue worker for retries.\n",
+        );
+        let mock = server
+            .mock(
+                "GET",
+                "/repos/evalops/diffscope/contents/docs/design/checkout.md",
+            )
+            .match_query(mockito::Matcher::UrlEncoded(
+                "ref".to_string(),
+                "main".to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "encoding": "base64",
+                    "content": body,
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let candidate = DocumentCandidate {
+            source: "design-doc".to_string(),
+            owner: "evalops".to_string(),
+            repo: "diffscope".to_string(),
+            git_ref: "main".to_string(),
+            path: "docs/design/checkout.md".to_string(),
+            title_hint: "Checkout".to_string(),
+            url: "https://github.com/evalops/diffscope/blob/main/docs/design/checkout.md"
+                .to_string(),
+        };
+
+        let context = fetch_github_document_context_from_api_base(
+            &reqwest::Client::new(),
+            "gh-token",
+            &candidate,
+            &format!("{}/", server.url()),
+        )
+        .await
+        .unwrap();
+
+        mock.assert_async().await;
+        assert_eq!(context.source, "design-doc");
+        assert_eq!(context.title, "Checkout architecture");
+        assert!(context.summary.contains("Preserve idempotency."));
+        assert!(context
+            .summary
+            .contains("Use the queue worker for retries."));
     }
 }

@@ -14,6 +14,11 @@ pub(in super::super) async fn inject_repository_context(
         diff,
         context_chunks,
     );
+    super::super::super::super::context_helpers::inject_document_context(
+        &services.config,
+        diff,
+        context_chunks,
+    );
     super::super::super::super::context_helpers::inject_custom_context(
         &services.config,
         &services.context_fetcher,
