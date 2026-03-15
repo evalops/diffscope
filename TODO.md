@@ -52,7 +52,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 22. [ ] Reuse the existing DAG runtime to model iterative review/fix loops as resumable workflow nodes.
 23. [x] Add a max-iteration policy and loop budget controls for autonomous review convergence.
 24. [ ] Add "issue replay" prompts that hand unresolved findings back to a coding agent with file-local context.
-25. [ ] Add a handoff contract from reviewer findings to fix agents with rule IDs, evidence, and suggested diffs.
+25. [x] Add a handoff contract from reviewer findings to fix agents with rule IDs, evidence, and suggested diffs.
 26. [ ] Persist loop-level telemetry: iterations, fixes attempted, findings cleared, findings reopened.
 27. [x] Add "challenge the finding" verification loops where a validator tries to falsify a suspected issue before keeping it.
 28. [ ] Add caching between iterations so repeated codebase retrieval and verification runs are cheaper.

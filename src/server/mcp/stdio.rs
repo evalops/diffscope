@@ -279,6 +279,7 @@ impl StdioMcpServer {
             "get_pr_readiness" => self.get_pr_readiness(arguments).await,
             "get_pr_comments" => self.get_pr_comments(arguments).await,
             "get_pr_findings" => self.get_pr_findings(arguments).await,
+            "get_fix_handoff" => self.get_fix_handoff(arguments).await,
             "list_events" => self.list_events(arguments).await,
             "get_event_stats" => self.get_event_stats(arguments).await,
             "get_analytics_trends" => self.get_analytics_trends().await,
@@ -362,6 +363,14 @@ impl StdioMcpServer {
     async fn get_pr_findings(&self, arguments: Value) -> Result<Value> {
         let params: api::PrFindingsParams = parse_arguments(arguments)?;
         match api::get_gh_pr_findings(State(self.state.clone()), Query(params)).await {
+            Ok(response) => to_value(response.0),
+            Err((_, message)) => anyhow::bail!(message),
+        }
+    }
+
+    async fn get_fix_handoff(&self, arguments: Value) -> Result<Value> {
+        let params: api::PrFixHandoffParams = parse_arguments(arguments)?;
+        match api::get_gh_pr_fix_handoff(State(self.state.clone()), Query(params)).await {
             Ok(response) => to_value(response.0),
             Err((_, message)) => anyhow::bail!(message),
         }
@@ -723,6 +732,21 @@ fn tool_specs() -> Vec<ToolSpec> {
             ),
         },
         ToolSpec {
+            name: "get_fix_handoff",
+            description: "Return a machine-friendly fix-agent handoff contract with rule IDs, evidence, and suggested diffs for the latest PR review.",
+            input_schema: object_schema(
+                json!({
+                    "repo": { "type": "string", "description": "GitHub repo in owner/repo format" },
+                    "pr_number": { "type": "integer", "description": "GitHub pull request number" },
+                    "include_resolved": {
+                        "type": "boolean",
+                        "description": "Whether resolved and dismissed findings should also be included in the handoff contract"
+                    }
+                }),
+                &["repo", "pr_number"],
+            ),
+        },
+        ToolSpec {
             name: "list_events",
             description: "List wide review events with optional analytics filters.",
             input_schema: object_schema(list_event_filter_properties(), &[]),
@@ -978,6 +1002,7 @@ mod tests {
         let tool_names: Vec<&str> = tool_specs().iter().map(|tool| tool.name).collect();
         assert!(tool_names.contains(&"review_pr"));
         assert!(tool_names.contains(&"get_event_stats"));
+        assert!(tool_names.contains(&"get_fix_handoff"));
         assert!(tool_names.contains(&"get_learned_rules"));
         assert!(tool_names.contains(&"submit_comment_feedback"));
         assert!(tool_names.contains(&"update_comment_lifecycle"));
@@ -1006,6 +1031,47 @@ mod tests {
         let content = &response["result"]["structuredContent"];
         assert_eq!(content["repo_path"], state.repo_path.display().to_string());
         assert_eq!(content["active_reviews"], 0);
+    }
+
+    #[tokio::test]
+    async fn get_fix_handoff_tool_returns_structured_contract() {
+        let dir = tempdir().unwrap();
+        let state = test_state(dir.path().to_path_buf());
+        let mut review = make_review("review-handoff", make_comment("comment-handoff"));
+        review.summary.as_mut().unwrap().open_blockers = 1;
+        state
+            .reviews
+            .write()
+            .await
+            .insert(review.id.clone(), review.clone());
+
+        let mut server = StdioMcpServer::new(state);
+        initialize_server(&mut server).await;
+
+        let response = server
+            .handle_message(json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_fix_handoff",
+                    "arguments": {
+                        "repo": "owner/repo",
+                        "pr_number": 42
+                    }
+                }
+            }))
+            .await
+            .unwrap();
+
+        let contract = &response["result"]["structuredContent"];
+        assert_eq!(contract["contract_version"], 1);
+        assert_eq!(contract["latest_review_id"], "review-handoff");
+        assert_eq!(contract["findings"][0]["rule_id"], "sec.missing-guard");
+        assert!(contract["findings"][0]["evidence"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("missing input"));
     }
 
     #[tokio::test]

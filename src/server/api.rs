@@ -702,6 +702,39 @@ mod tests {
         comment
     }
 
+    fn make_handoff_comment(id: &str, status: CommentStatus) -> crate::core::Comment {
+        crate::core::Comment {
+            id: id.to_string(),
+            file_path: std::path::PathBuf::from(format!("src/{id}.rs")),
+            line_number: if status == CommentStatus::Resolved {
+                30
+            } else {
+                12
+            },
+            content: format!("Investigate {id} input validation"),
+            rule_id: Some(format!("rule.{id}")),
+            severity: if status == CommentStatus::Resolved {
+                crate::core::comment::Severity::Info
+            } else {
+                crate::core::comment::Severity::Warning
+            },
+            category: crate::core::comment::Category::Security,
+            suggestion: Some(format!("Apply the {id} guard")),
+            confidence: 0.91,
+            code_suggestion: Some(crate::core::comment::CodeSuggestion {
+                original_code: "run(user_input);".to_string(),
+                suggested_code: "run(validated_input);".to_string(),
+                explanation: format!("Validate {id} before execution"),
+                diff: "- run(user_input);\n+ run(validated_input);".to_string(),
+            }),
+            tags: vec!["fix-handoff".to_string()],
+            fix_effort: crate::core::comment::FixEffort::Medium,
+            feedback: None,
+            status,
+            resolved_at: (status == CommentStatus::Resolved).then_some(123),
+        }
+    }
+
     #[test]
     fn test_comment_search_filter_parses_aliases() {
         assert_eq!(
@@ -902,6 +935,89 @@ mod tests {
             groups.iter().map(|group| group.count).collect::<Vec<_>>(),
             vec![1, 1, 1]
         );
+    }
+
+    #[test]
+    fn test_build_pr_fix_handoff_response_filters_resolved_findings_by_default() {
+        let mut summary = CommentSynthesizer::generate_summary(&[]);
+        summary.open_blockers = 1;
+        summary.merge_readiness = MergeReadiness::NeedsAttention;
+        summary.readiness_reasons = vec!["critical finding remains open".to_string()];
+
+        let review = ReviewSession {
+            id: "review-handoff".to_string(),
+            status: ReviewStatus::Complete,
+            diff_source: "pr:owner/repo#42".to_string(),
+            github_head_sha: Some("abc123".to_string()),
+            github_post_results_requested: Some(false),
+            started_at: 10,
+            completed_at: Some(20),
+            comments: vec![
+                make_handoff_comment("resolved", CommentStatus::Resolved),
+                make_handoff_comment("open", CommentStatus::Open),
+            ],
+            summary: Some(summary),
+            files_reviewed: 2,
+            error: None,
+            pr_summary_text: None,
+            diff_content: None,
+            event: None,
+            progress: None,
+        };
+
+        let handoff = build_pr_fix_handoff_response("owner/repo", 42, Some(&review), false);
+
+        assert_eq!(handoff.contract_version, 1);
+        assert_eq!(handoff.latest_review_id.as_deref(), Some("review-handoff"));
+        assert_eq!(handoff.total_findings, 2);
+        assert_eq!(handoff.findings_included, 1);
+        assert_eq!(handoff.findings[0].rule_id.as_deref(), Some("rule.open"));
+        assert_eq!(handoff.findings[0].file_path, "src/open.rs");
+        assert_eq!(
+            handoff.findings[0].evidence.content,
+            "Investigate open input validation"
+        );
+        assert_eq!(
+            handoff.findings[0].suggested_diff.as_deref(),
+            Some("- run(user_input);\n+ run(validated_input);")
+        );
+        assert_eq!(
+            handoff.merge_readiness,
+            Some(MergeReadiness::NeedsAttention)
+        );
+        assert_eq!(handoff.open_blockers, Some(1));
+    }
+
+    #[test]
+    fn test_build_pr_fix_handoff_response_can_include_resolved_findings() {
+        let review = ReviewSession {
+            id: "review-handoff".to_string(),
+            status: ReviewStatus::Complete,
+            diff_source: "pr:owner/repo#42".to_string(),
+            github_head_sha: Some("abc123".to_string()),
+            github_post_results_requested: Some(false),
+            started_at: 10,
+            completed_at: Some(20),
+            comments: vec![
+                make_handoff_comment("resolved", CommentStatus::Resolved),
+                make_handoff_comment("open", CommentStatus::Open),
+            ],
+            summary: Some(CommentSynthesizer::generate_summary(&[])),
+            files_reviewed: 2,
+            error: None,
+            pr_summary_text: None,
+            diff_content: None,
+            event: None,
+            progress: None,
+        };
+
+        let handoff = build_pr_fix_handoff_response("owner/repo", 42, Some(&review), true);
+
+        assert_eq!(handoff.findings_included, 2);
+        assert!(handoff
+            .findings
+            .iter()
+            .any(|finding| finding.lifecycle_status == CommentStatus::Resolved));
     }
 
     fn make_pr_review_session(

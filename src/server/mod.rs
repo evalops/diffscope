@@ -133,6 +133,7 @@ pub async fn start_server(config: Config, host: &str, port: u16) -> anyhow::Resu
         .route("/gh/pr-readiness", get(api::get_gh_pr_readiness))
         .route("/gh/pr-comments", get(api::get_gh_pr_comments))
         .route("/gh/pr-findings", get(api::get_gh_pr_findings))
+        .route("/gh/pr-fix-handoff", get(api::get_gh_pr_fix_handoff))
         .route("/gh/review", post(api::start_pr_review))
         .route("/gh/review/rerun", post(api::rerun_pr_review))
         .route("/agent/tools", get(api::get_agent_tools))

@@ -501,6 +501,13 @@ pub(crate) struct PrFindingsParams {
     pub group_by: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct PrFixHandoffParams {
+    pub repo: String,
+    pub pr_number: u32,
+    pub include_resolved: Option<bool>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommentSearchFilter {
     All,
@@ -607,6 +614,60 @@ pub(crate) struct PrFindingsResponse {
     pub groups: Vec<PrFindingsGroup>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct FixAgentEvidence {
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct FixAgentFinding {
+    pub comment_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<String>,
+    pub file_path: String,
+    pub line_number: usize,
+    pub severity: crate::core::comment::Severity,
+    pub category: crate::core::comment::Category,
+    pub lifecycle_status: CommentStatus,
+    pub fix_effort: crate::core::comment::FixEffort,
+    pub confidence: f32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    pub evidence: FixAgentEvidence,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_diff: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct PrFixHandoffResponse {
+    pub contract_version: u32,
+    pub repo: String,
+    pub pr_number: u32,
+    pub diff_source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_review_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_review_status: Option<ReviewStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_readiness: Option<MergeReadiness>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_blockers: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub readiness_reasons: Vec<String>,
+    pub total_findings: usize,
+    pub findings_included: usize,
+    #[serde(default)]
+    pub findings: Vec<FixAgentFinding>,
+}
+
 pub(crate) fn filter_comments_by_search_filter(
     comments: &[crate::core::Comment],
     filter: CommentSearchFilter,
@@ -668,6 +729,111 @@ pub(crate) fn group_pr_findings(
             }
         })
         .collect()
+}
+
+fn should_include_fix_handoff_finding(
+    comment: &crate::core::Comment,
+    include_resolved: bool,
+) -> bool {
+    include_resolved || comment.status == CommentStatus::Open
+}
+
+fn fix_handoff_severity_rank(severity: &crate::core::comment::Severity) -> usize {
+    match severity {
+        crate::core::comment::Severity::Error => 0,
+        crate::core::comment::Severity::Warning => 1,
+        crate::core::comment::Severity::Info => 2,
+        crate::core::comment::Severity::Suggestion => 3,
+    }
+}
+
+pub(crate) fn build_fix_agent_findings(
+    comments: &[crate::core::Comment],
+    include_resolved: bool,
+) -> Vec<FixAgentFinding> {
+    let mut findings = comments
+        .iter()
+        .filter(|comment| should_include_fix_handoff_finding(comment, include_resolved))
+        .map(|comment| FixAgentFinding {
+            comment_id: comment.id.clone(),
+            rule_id: comment.rule_id.clone(),
+            file_path: comment.file_path.display().to_string(),
+            line_number: comment.line_number,
+            severity: comment.severity.clone(),
+            category: comment.category.clone(),
+            lifecycle_status: comment.status,
+            fix_effort: comment.fix_effort.clone(),
+            confidence: comment.confidence,
+            tags: comment.tags.clone(),
+            evidence: FixAgentEvidence {
+                content: comment.content.clone(),
+                suggestion: comment.suggestion.clone(),
+                explanation: comment
+                    .code_suggestion
+                    .as_ref()
+                    .map(|suggestion| suggestion.explanation.clone()),
+                original_code: comment
+                    .code_suggestion
+                    .as_ref()
+                    .map(|suggestion| suggestion.original_code.clone()),
+            },
+            suggested_diff: comment
+                .code_suggestion
+                .as_ref()
+                .map(|suggestion| suggestion.diff.clone()),
+            suggested_code: comment
+                .code_suggestion
+                .as_ref()
+                .map(|suggestion| suggestion.suggested_code.clone()),
+        })
+        .collect::<Vec<_>>();
+
+    findings.sort_by(|left, right| {
+        fix_handoff_severity_rank(&left.severity)
+            .cmp(&fix_handoff_severity_rank(&right.severity))
+            .then_with(|| left.file_path.cmp(&right.file_path))
+            .then_with(|| left.line_number.cmp(&right.line_number))
+            .then_with(|| left.comment_id.cmp(&right.comment_id))
+    });
+
+    findings
+}
+
+pub(crate) fn build_pr_fix_handoff_response(
+    repo: &str,
+    pr_number: u32,
+    latest_review: Option<&ReviewSession>,
+    include_resolved: bool,
+) -> PrFixHandoffResponse {
+    let diff_source = pr_diff_source(repo, pr_number);
+    let total_findings = latest_review
+        .as_ref()
+        .map(|review| review.comments.len())
+        .unwrap_or_default();
+    let findings = latest_review
+        .as_ref()
+        .map(|review| build_fix_agent_findings(&review.comments, include_resolved))
+        .unwrap_or_default();
+    let summary = latest_review
+        .as_ref()
+        .and_then(|review| review.summary.as_ref());
+
+    PrFixHandoffResponse {
+        contract_version: 1,
+        repo: repo.to_string(),
+        pr_number,
+        diff_source,
+        latest_review_id: latest_review.map(|review| review.id.clone()),
+        latest_review_status: latest_review.map(|review| review.status.clone()),
+        merge_readiness: summary.map(|summary| summary.merge_readiness),
+        open_blockers: summary.map(|summary| summary.open_blockers),
+        readiness_reasons: summary
+            .map(|summary| summary.readiness_reasons.clone())
+            .unwrap_or_default(),
+        total_findings,
+        findings_included: findings.len(),
+        findings,
+    }
 }
 
 #[derive(Serialize)]
@@ -999,6 +1165,33 @@ pub(crate) async fn get_gh_pr_findings(
         total_findings: findings.len(),
         groups,
     }))
+}
+
+pub(crate) async fn get_gh_pr_fix_handoff(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PrFixHandoffParams>,
+) -> Result<Json<PrFixHandoffResponse>, (StatusCode, String)> {
+    if !is_valid_repo_name(&params.repo) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid repo format. Expected 'owner/repo'.".to_string(),
+        ));
+    }
+
+    if params.pr_number == 0 || params.pr_number > 999_999_999 {
+        return Err((StatusCode::BAD_REQUEST, "Invalid PR number.".to_string()));
+    }
+
+    let include_resolved = params.include_resolved.unwrap_or(false);
+    let inventory = load_review_inventory(&state).await;
+    let latest_review = latest_pr_review_session(&inventory, &params.repo, params.pr_number);
+
+    Ok(Json(build_pr_fix_handoff_response(
+        &params.repo,
+        params.pr_number,
+        latest_review.as_ref(),
+        include_resolved,
+    )))
 }
 
 // === GitHub PR Review ===
