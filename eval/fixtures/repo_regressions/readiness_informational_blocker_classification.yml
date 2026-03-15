@@ -1,0 +1,37 @@
+name: repo regression - informational findings counted as blockers
+repo_path: ../../..
+diff: |
+  diff --git a/src/core/comment/summary.rs b/src/core/comment/summary.rs
+  index 1111111..deadbeef 100644
+  --- a/src/core/comment/summary.rs
+  +++ b/src/core/comment/summary.rs
+  @@ -34,14 +34,14 @@ pub(super) fn generate_summary(comments: &[Comment]) -> ReviewSummary {
+          match comment.status {
+              CommentStatus::Open => {
+                  open_comments += 1;
+                  *open_by_severity
+                      .entry(comment.severity.to_string())
+                      .or_insert(0) += 1;
+  -                if comment.severity.is_blocking() {
+  +                if comment.severity.is_blocking() || comment.severity.is_informational() {
+                      open_blocking_comments += 1;
+                      open_blockers += 1;
+                  }
+                  if comment.severity.is_informational() {
+                      open_informational_comments += 1;
+                  }
+expect:
+  must_find:
+    - file: src/core/comment/summary.rs
+      contains_any:
+        - informational findings will be counted as blockers
+        - info and suggestion comments should not increase open_blockers
+        - merge readiness becomes too strict because informational findings are treated as blocking
+      rule_id: bug.readiness.informational-blocker-classification
+  must_not_find:
+    - contains: style
+  summary:
+    merge_readiness: NeedsAttention
+    min_open_blockers: 1
+  min_total: 1
+  max_total: 8

@@ -20,8 +20,8 @@ use super::artifact::{
 use super::loading::PreparedFixtureExecution;
 use super::repro::maybe_run_reproduction_validation;
 use super::result::{
-    append_total_comment_failures, build_benchmark_metrics, convert_agent_activity,
-    convert_verification_report, FixtureResultDetails,
+    append_review_summary_failures, append_total_comment_failures, build_benchmark_metrics,
+    convert_agent_activity, convert_verification_report, FixtureResultDetails,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -439,11 +439,13 @@ fn spawn_stage(
             let Some(_) = context.match_summary.as_ref() else {
                 anyhow::bail!("comment count validation requires expectation matches");
             };
+            let review_summary = core::CommentSynthesizer::generate_summary(&context.comments);
             let total_comments = context.total_comments;
             let expectations = context.prepared.fixture.expect.clone();
             let mut failures = context.failures.clone();
             Ok(async move {
                 append_total_comment_failures(&mut failures, total_comments, &expectations);
+                append_review_summary_failures(&mut failures, &review_summary, &expectations);
                 Ok(EvalFixtureStageOutput::CommentCountValidation { failures })
             }
             .boxed())

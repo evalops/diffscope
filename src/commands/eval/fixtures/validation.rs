@@ -4,6 +4,7 @@ use regex::Regex;
 use super::super::EvalFixture;
 
 pub(super) fn validate_eval_fixture(fixture: &EvalFixture) -> Result<()> {
+    let fixture_name = fixture.name.as_deref().unwrap_or("<unnamed>");
     for pattern in fixture
         .expect
         .must_find
@@ -16,12 +17,13 @@ pub(super) fn validate_eval_fixture(fixture: &EvalFixture) -> Result<()> {
                     anyhow::anyhow!(
                         "Invalid regex '{}' in fixture '{}': {}",
                         pattern_text,
-                        fixture.name.as_deref().unwrap_or("<unnamed>"),
+                        fixture_name,
                         error
                     )
                 })?;
             }
         }
     }
+    fixture.expect.summary.validate(fixture_name)?;
     Ok(())
 }

@@ -140,7 +140,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 ## 10. Eval, Benchmarking, and Model Governance
 
 91. [ ] Add eval fixtures for external-context alignment, not just diff-local correctness.
-92. [ ] Add eval fixtures for merge-readiness judgments and unresolved-blocker classification.
+92. [x] Add eval fixtures for merge-readiness judgments and unresolved-blocker classification.
 93. [ ] Add eval fixtures for addressed-vs-stale finding lifecycle inference.
 94. [x] Add eval fixtures for multi-hop graph reasoning across call chains and contract edges.
 95. [ ] Add eval runs that compare single-pass review against agentic loop review.

@@ -56,6 +56,7 @@ pub(super) fn expand_community_fixture_pack(
                         .collect(),
                     min_total: fixture.min_total,
                     max_total: fixture.max_total,
+                    summary: Default::default(),
                 },
             };
             validate_eval_fixture(&eval_fixture)?;

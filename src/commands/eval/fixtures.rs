@@ -225,6 +225,100 @@ expect:
     }
 
     #[test]
+    fn test_checked_in_readiness_blocker_fixture_loads_summary_expectations() {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "eval/fixtures/repo_regressions/readiness_informational_blocker_classification.yml",
+        );
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("repo regression - informational findings counted as blockers")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.readiness.informational-blocker-classification")
+        );
+        assert_eq!(
+            fixtures[0]
+                .fixture
+                .expect
+                .summary
+                .merge_readiness
+                .as_deref(),
+            Some("NeedsAttention")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.summary.min_open_blockers,
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_checked_in_current_head_stale_fixture_loads_summary_expectations() {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/repo_regressions/readiness_current_head_stale.yml");
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("repo regression - current head staleness ignored")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.readiness.current-head-staleness")
+        );
+        assert_eq!(
+            fixtures[0]
+                .fixture
+                .expect
+                .summary
+                .merge_readiness
+                .as_deref(),
+            Some("NeedsAttention")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.summary.min_open_blockers,
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn test_checked_in_inconclusive_verification_fixture_loads_summary_expectations() {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("eval/fixtures/repo_regressions/readiness_inconclusive_verification.yml");
+
+        let fixtures = load_eval_fixtures_from_path(&fixture_path).unwrap();
+
+        assert_eq!(fixtures.len(), 1);
+        assert_eq!(
+            fixtures[0].fixture.name.as_deref(),
+            Some("repo regression - inconclusive verification no longer blocks readiness")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.must_find[0].rule_id.as_deref(),
+            Some("bug.readiness.inconclusive-verification")
+        );
+        assert_eq!(
+            fixtures[0]
+                .fixture
+                .expect
+                .summary
+                .merge_readiness
+                .as_deref(),
+            Some("NeedsAttention")
+        );
+        assert_eq!(
+            fixtures[0].fixture.expect.summary.min_open_blockers,
+            Some(1)
+        );
+    }
+
+    #[test]
     fn test_collect_eval_fixtures_expands_pack_entries_in_sorted_order() {
         let dir = tempdir().unwrap();
         let standard_path = dir.path().join("b-standard.yml");

@@ -1,0 +1,36 @@
+name: repo regression - inconclusive verification no longer blocks readiness
+repo_path: ../../..
+diff: |
+  diff --git a/src/core/comment/summary.rs b/src/core/comment/summary.rs
+  index 3333333..deadbeef 100644
+  --- a/src/core/comment/summary.rs
+  +++ b/src/core/comment/summary.rs
+  @@ -114,13 +114,8 @@ pub(super) fn apply_review_runtime_state(
+      );
+  
+      let mut reasons = Vec::new();
+  -    if matches!(
+  -        summary.verification.state,
+  -        ReviewVerificationState::Inconclusive
+  -    ) {
+  -        reasons.push("verification was inconclusive or fail-open; rerun this review".to_string());
+  -    }
+      if stale_review {
+          reasons.push("new commits landed after this review".to_string());
+      }
+      summary.readiness_reasons = reasons;
+expect:
+  must_find:
+    - file: src/core/comment/summary.rs
+      contains_any:
+        - inconclusive verification will no longer force needs re-review
+        - fail-open verification warnings must still block merge readiness
+        - verification can be inconclusive but this change lets the summary stay ready or needs attention
+      rule_id: bug.readiness.inconclusive-verification
+  must_not_find:
+    - contains: style
+  summary:
+    merge_readiness: NeedsAttention
+    min_open_blockers: 1
+  min_total: 1
+  max_total: 8

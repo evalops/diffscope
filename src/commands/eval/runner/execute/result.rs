@@ -29,6 +29,14 @@ pub(super) fn append_total_comment_failures(
     }
 }
 
+pub(super) fn append_review_summary_failures(
+    failures: &mut Vec<String>,
+    summary: &crate::core::comment::ReviewSummary,
+    expectations: &EvalExpectations,
+) {
+    expectations.summary.append_failures(failures, summary);
+}
+
 pub(super) fn build_benchmark_metrics(
     prepared: &PreparedFixtureExecution,
     total_comments: usize,

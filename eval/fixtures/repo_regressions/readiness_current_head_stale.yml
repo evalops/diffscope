@@ -1,0 +1,36 @@
+name: repo regression - current head staleness ignored
+repo_path: ../../..
+diff: |
+  diff --git a/src/server/pr_readiness.rs b/src/server/pr_readiness.rs
+  index 2222222..deadbeef 100644
+  --- a/src/server/pr_readiness.rs
+  +++ b/src/server/pr_readiness.rs
+  @@ -145,11 +145,11 @@ pub(crate) fn is_review_stale(
+          .github_head_sha
+          .as_ref()
+          .zip(latest_by_source.get(&session.diff_source))
+          .is_some_and(|(current_head, latest)| latest.head_sha != *current_head);
+      let current_head_stale = session
+          .github_head_sha
+          .as_deref()
+          .zip(current_head_sha)
+          .is_some_and(|(reviewed_head, current_head)| reviewed_head != current_head);
+  
+  -    latest_known_head_stale || current_head_stale
+  +    latest_known_head_stale
+   }
+expect:
+  must_find:
+    - file: src/server/pr_readiness.rs
+      contains_any:
+        - stale reviews can be treated as fresh when the current head sha changes
+        - dropping current_head_stale means stale reviews can stay marked ready
+        - readiness will miss a newer pr head when no newer review session exists
+      rule_id: bug.readiness.current-head-staleness
+  must_not_find:
+    - contains: style
+  summary:
+    merge_readiness: NeedsAttention
+    min_open_blockers: 1
+  min_total: 1
+  max_total: 8
