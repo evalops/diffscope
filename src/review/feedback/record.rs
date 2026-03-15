@@ -31,6 +31,27 @@ pub fn record_comment_feedback_stats(
     }
 }
 
+pub fn record_comment_feedback_stats_at(
+    store: &mut FeedbackStore,
+    comment: &core::Comment,
+    accepted: bool,
+    timestamp: i64,
+) {
+    let key = classify_comment_type(comment).as_str().to_string();
+    let stats = store.by_comment_type.entry(key).or_default();
+    if accepted {
+        stats.accepted = stats.accepted.saturating_add(1);
+    } else {
+        stats.rejected = stats.rejected.saturating_add(1);
+    }
+
+    let file_patterns = derive_file_patterns(&comment.file_path);
+    store.record_feedback_patterns(&comment.category.to_string(), &file_patterns, accepted);
+    if let Some(rule_id) = normalize_rule_id(comment.rule_id.as_deref()) {
+        store.record_rule_feedback_patterns_at(&rule_id, &file_patterns, accepted, timestamp);
+    }
+}
+
 pub fn record_comment_dismissal_stats(store: &mut FeedbackStore, comment: &core::Comment) {
     let key = classify_comment_type(comment).as_str().to_string();
     let stats = store.by_comment_type.entry(key).or_default();
@@ -65,6 +86,29 @@ pub fn record_comment_resolution_stats(
     }
 }
 
+pub fn record_comment_resolution_stats_at(
+    store: &mut FeedbackStore,
+    comment: &core::Comment,
+    outcome: CommentResolutionOutcome,
+    timestamp: i64,
+) {
+    let key = classify_comment_type(comment).as_str().to_string();
+    let stats = store.by_comment_type.entry(key).or_default();
+    let addressed = matches!(outcome, CommentResolutionOutcome::Addressed);
+
+    if addressed {
+        stats.addressed = stats.addressed.saturating_add(1);
+    } else {
+        stats.not_addressed = stats.not_addressed.saturating_add(1);
+    }
+
+    let file_patterns = derive_file_patterns(&comment.file_path);
+    store.record_outcome_patterns(&comment.category.to_string(), &file_patterns, addressed);
+    if let Some(rule_id) = normalize_rule_id(comment.rule_id.as_deref()) {
+        store.record_rule_outcome_patterns_at(&rule_id, &file_patterns, addressed, timestamp);
+    }
+}
+
 pub fn apply_comment_feedback_signal(
     store: &mut FeedbackStore,
     comment: &core::Comment,
@@ -80,6 +124,27 @@ pub fn apply_comment_feedback_signal(
 
     if changed {
         record_comment_feedback_stats(store, comment, accepted);
+    }
+
+    changed
+}
+
+pub fn apply_comment_feedback_signal_at(
+    store: &mut FeedbackStore,
+    comment: &core::Comment,
+    accepted: bool,
+    timestamp: i64,
+) -> bool {
+    let changed = if accepted {
+        store.suppress.remove(&comment.id);
+        store.accept.insert(comment.id.clone())
+    } else {
+        store.accept.remove(&comment.id);
+        store.suppress.insert(comment.id.clone())
+    };
+
+    if changed {
+        record_comment_feedback_stats_at(store, comment, accepted, timestamp);
     }
 
     changed
@@ -107,6 +172,24 @@ pub fn apply_comment_resolution_outcome_signal(
 
     if changed {
         record_comment_resolution_stats(store, comment, outcome);
+    }
+
+    changed
+}
+
+pub fn apply_comment_resolution_outcome_signal_at(
+    store: &mut FeedbackStore,
+    comment: &core::Comment,
+    outcome: CommentResolutionOutcome,
+    timestamp: i64,
+) -> bool {
+    let changed = match outcome {
+        CommentResolutionOutcome::Addressed => store.addressed.insert(comment.id.clone()),
+        CommentResolutionOutcome::NotAddressed => store.not_addressed.insert(comment.id.clone()),
+    };
+
+    if changed {
+        record_comment_resolution_stats_at(store, comment, outcome, timestamp);
     }
 
     changed
@@ -143,8 +226,12 @@ mod tests {
         let comment = sample_comment();
         let mut store = FeedbackStore::default();
 
-        assert!(apply_comment_feedback_signal(&mut store, &comment, true));
-        assert!(!apply_comment_feedback_signal(&mut store, &comment, true));
+        assert!(apply_comment_feedback_signal_at(
+            &mut store, &comment, true, 1_000
+        ));
+        assert!(!apply_comment_feedback_signal_at(
+            &mut store, &comment, true, 1_000,
+        ));
 
         assert!(store.accept.contains(&comment.id));
         assert_eq!(store.by_category["Security"].accepted, 1);
@@ -161,6 +248,10 @@ mod tests {
         assert_eq!(
             store.by_rule_file_pattern["sec.sql.injection|*.rs"].accepted,
             1
+        );
+        assert_eq!(
+            store.by_rule["sec.sql.injection"].decayed_total_at(1_000),
+            Some(1.0)
         );
     }
 

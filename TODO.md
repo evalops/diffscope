@@ -27,7 +27,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 3. [x] Feed addressed/not-addressed outcomes into the reinforcement store alongside thumbs.
 4. [x] Separate false-positive rejections from "valid but won't fix" dismissals in stored feedback.
 5. [ ] Weight reinforcement by reviewer role or trust level when GitHub identity is available.
-6. [ ] Add rule-level reinforcement decay so old team preferences do not dominate forever.
+6. [x] Add rule-level reinforcement decay so old team preferences do not dominate forever.
 7. [x] Add path-scoped reinforcement buckets so teams can prefer different standards in `tests/`, `scripts/`, and production code.
 8. [ ] Persist explanation text from follow-up feedback replies and mine it into reusable review guidance.
 9. [ ] Learn "preferred phrasing" for accepted comments so comment tone and specificity improve over time.

@@ -46,6 +46,10 @@ pub(crate) use verification::VerificationReuseCache;
 #[allow(unused_imports)]
 pub(crate) use context_helpers::PatternRepositoryMap;
 #[allow(unused_imports)]
+pub(crate) use feedback::{
+    apply_comment_feedback_signal_at, apply_comment_resolution_outcome_signal_at,
+};
+#[allow(unused_imports)]
 pub(crate) use feedback::{FeedbackStore, FeedbackTypeStats};
 #[allow(unused_imports)]
 pub(crate) use filters::{

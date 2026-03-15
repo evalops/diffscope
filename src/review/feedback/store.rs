@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+const RULE_REINFORCEMENT_DECAY_HALF_LIFE_SECS: f64 = 30.0 * 24.0 * 60.0 * 60.0;
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct FeedbackTypeStats {
     #[serde(default)]
@@ -26,6 +28,41 @@ impl FeedbackTypeStats {
     }
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct DecayedFeedbackStats {
+    #[serde(default)]
+    pub positive: f32,
+    #[serde(default)]
+    pub negative: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_event_at: Option<i64>,
+}
+
+impl DecayedFeedbackStats {
+    fn counts_at(&self, timestamp: i64) -> (f32, f32) {
+        let Some(last_event_at) = self.last_event_at else {
+            return (self.positive, self.negative);
+        };
+
+        let elapsed_secs = (timestamp - last_event_at).max(0) as f64;
+        let decay = 0.5f64.powf(elapsed_secs / RULE_REINFORCEMENT_DECAY_HALF_LIFE_SECS) as f32;
+        (self.positive * decay, self.negative * decay)
+    }
+
+    fn record_signal(&mut self, positive_signal: bool, timestamp: i64) {
+        let (mut positive, mut negative) = self.counts_at(timestamp);
+        if positive_signal {
+            positive += 1.0;
+        } else {
+            negative += 1.0;
+        }
+
+        self.positive = positive;
+        self.negative = negative;
+        self.last_event_at = Some(timestamp);
+    }
+}
+
 /// Tracks explicit and outcome-derived reinforcement counts for a specific pattern.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct FeedbackPatternStats {
@@ -39,6 +76,8 @@ pub struct FeedbackPatternStats {
     pub addressed: usize,
     #[serde(default)]
     pub not_addressed: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decayed: Option<DecayedFeedbackStats>,
 }
 
 impl FeedbackPatternStats {
@@ -60,6 +99,30 @@ impl FeedbackPatternStats {
 
     pub fn negative_total(&self) -> usize {
         self.rejected + self.not_addressed
+    }
+
+    pub fn decayed_acceptance_rate_at(&self, timestamp: i64) -> Option<f32> {
+        let (positive, negative) = self.decayed_counts_at(timestamp)?;
+        let total = positive + negative;
+        if total <= f32::EPSILON {
+            return Some(0.5);
+        }
+        Some(positive / total)
+    }
+
+    pub fn decayed_total_at(&self, timestamp: i64) -> Option<f32> {
+        let (positive, negative) = self.decayed_counts_at(timestamp)?;
+        Some(positive + negative)
+    }
+
+    pub fn record_decayed_signal(&mut self, positive_signal: bool, timestamp: i64) {
+        self.decayed
+            .get_or_insert_with(DecayedFeedbackStats::default)
+            .record_signal(positive_signal, timestamp);
+    }
+
+    fn decayed_counts_at(&self, timestamp: i64) -> Option<(f32, f32)> {
+        Some(self.decayed.as_ref()?.counts_at(timestamp))
     }
 }
 
@@ -145,17 +208,37 @@ impl FeedbackStore {
     ) where
         S: AsRef<str>,
     {
+        self.record_rule_feedback_patterns_at(
+            rule_id,
+            file_patterns,
+            accepted,
+            current_timestamp(),
+        );
+    }
+
+    /// Record a feedback event across normalized rule-id buckets at a specific timestamp.
+    pub fn record_rule_feedback_patterns_at<S>(
+        &mut self,
+        rule_id: &str,
+        file_patterns: &[S],
+        accepted: bool,
+        timestamp: i64,
+    ) where
+        S: AsRef<str>,
+    {
         let Some(rule_id) = normalize_feedback_key(rule_id) else {
             return;
         };
 
         let rule_stats = self.by_rule.entry(rule_id.clone()).or_default();
         update_pattern_stats(rule_stats, accepted);
+        rule_stats.record_decayed_signal(accepted, timestamp);
 
         for pattern in collect_unique_patterns(file_patterns) {
             let composite = format!("{}|{}", rule_id, pattern);
             let comp_stats = self.by_rule_file_pattern.entry(composite).or_default();
             update_pattern_stats(comp_stats, accepted);
+            comp_stats.record_decayed_signal(accepted, timestamp);
         }
     }
 
@@ -227,19 +310,43 @@ impl FeedbackStore {
     ) where
         S: AsRef<str>,
     {
+        self.record_rule_outcome_patterns_at(
+            rule_id,
+            file_patterns,
+            addressed,
+            current_timestamp(),
+        );
+    }
+
+    /// Record an addressed/not-addressed outcome across normalized rule-id buckets at a specific timestamp.
+    pub fn record_rule_outcome_patterns_at<S>(
+        &mut self,
+        rule_id: &str,
+        file_patterns: &[S],
+        addressed: bool,
+        timestamp: i64,
+    ) where
+        S: AsRef<str>,
+    {
         let Some(rule_id) = normalize_feedback_key(rule_id) else {
             return;
         };
 
         let rule_stats = self.by_rule.entry(rule_id.clone()).or_default();
         update_pattern_outcome(rule_stats, addressed);
+        rule_stats.record_decayed_signal(addressed, timestamp);
 
         for pattern in collect_unique_patterns(file_patterns) {
             let composite = format!("{}|{}", rule_id, pattern);
             let comp_stats = self.by_rule_file_pattern.entry(composite).or_default();
             update_pattern_outcome(comp_stats, addressed);
+            comp_stats.record_decayed_signal(addressed, timestamp);
         }
     }
+}
+
+fn current_timestamp() -> i64 {
+    chrono::Utc::now().timestamp()
 }
 
 fn update_pattern_stats(stats: &mut FeedbackPatternStats, accepted: bool) {

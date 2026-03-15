@@ -2,8 +2,14 @@ use tracing::info;
 
 use crate::core;
 
-use super::super::feedback::{derive_file_patterns, FeedbackStore};
+use super::super::feedback::{derive_file_patterns, FeedbackPatternStats, FeedbackStore};
 use super::super::rule_helpers::normalize_rule_id;
+
+#[derive(Debug, Clone, Copy)]
+struct FeedbackConfidenceStats {
+    acceptance_rate: f32,
+    total: f32,
+}
 
 pub fn apply_confidence_threshold(
     comments: Vec<core::Comment>,
@@ -38,6 +44,8 @@ pub fn apply_feedback_confidence_adjustment(
     feedback: &FeedbackStore,
     min_observations: usize,
 ) -> Vec<core::Comment> {
+    let timestamp = chrono::Utc::now().timestamp();
+
     comments
         .into_iter()
         .map(|mut comment| {
@@ -45,9 +53,9 @@ pub fn apply_feedback_confidence_adjustment(
                 comment.confidence = (comment.confidence * 1.15).clamp(0.0, 1.0);
                 push_feedback_calibration_tag(&mut comment, "feedback-calibration:accepted-id");
             }
-            if let Some(stats) = lookup_feedback_confidence_stats(&comment, feedback) {
-                if stats.total() >= min_observations {
-                    let rate = stats.acceptance_rate();
+            if let Some(stats) = lookup_feedback_confidence_stats(&comment, feedback, timestamp) {
+                if stats.total >= min_observations as f32 {
+                    let rate = stats.acceptance_rate;
                     let adjustment = 0.75 + rate * 0.5;
                     let previous_confidence = comment.confidence;
                     comment.confidence = (comment.confidence * adjustment).clamp(0.0, 1.0);
@@ -76,10 +84,11 @@ fn push_feedback_tag(comment: &mut core::Comment, tag: &str) {
     }
 }
 
-fn lookup_feedback_confidence_stats<'a>(
+fn lookup_feedback_confidence_stats(
     comment: &core::Comment,
-    feedback: &'a FeedbackStore,
-) -> Option<&'a super::super::feedback::FeedbackPatternStats> {
+    feedback: &FeedbackStore,
+    timestamp: i64,
+) -> Option<FeedbackConfidenceStats> {
     let category = comment.category.to_string();
     let file_patterns = derive_file_patterns(&comment.file_path);
     let rule_id = normalize_rule_id(comment.rule_id.as_deref());
@@ -89,24 +98,59 @@ fn lookup_feedback_confidence_stats<'a>(
         .and_then(|rule_id| {
             file_patterns.iter().find_map(|pattern| {
                 let key = format!("{rule_id}|{pattern}");
-                feedback.by_rule_file_pattern.get(&key)
+                feedback
+                    .by_rule_file_pattern
+                    .get(&key)
+                    .map(|stats| rule_confidence_stats(stats, timestamp))
             })
         })
         .or_else(|| {
-            rule_id
-                .as_deref()
-                .and_then(|rule_id| feedback.by_rule.get(rule_id))
+            rule_id.as_deref().and_then(|rule_id| {
+                feedback
+                    .by_rule
+                    .get(rule_id)
+                    .map(|stats| rule_confidence_stats(stats, timestamp))
+            })
         })
         .or_else(|| {
             file_patterns.iter().find_map(|pattern| {
                 let key = format!("{category}|{pattern}");
-                feedback.by_category_file_pattern.get(&key)
+                feedback
+                    .by_category_file_pattern
+                    .get(&key)
+                    .map(raw_confidence_stats)
             })
         })
         .or_else(|| {
-            file_patterns
-                .iter()
-                .find_map(|pattern| feedback.by_file_pattern.get(pattern))
+            file_patterns.iter().find_map(|pattern| {
+                feedback
+                    .by_file_pattern
+                    .get(pattern)
+                    .map(raw_confidence_stats)
+            })
         })
-        .or_else(|| feedback.by_category.get(&category))
+        .or_else(|| {
+            feedback
+                .by_category
+                .get(&category)
+                .map(raw_confidence_stats)
+        })
+}
+
+fn raw_confidence_stats(stats: &FeedbackPatternStats) -> FeedbackConfidenceStats {
+    FeedbackConfidenceStats {
+        acceptance_rate: stats.acceptance_rate(),
+        total: stats.total() as f32,
+    }
+}
+
+fn rule_confidence_stats(stats: &FeedbackPatternStats, timestamp: i64) -> FeedbackConfidenceStats {
+    FeedbackConfidenceStats {
+        acceptance_rate: stats
+            .decayed_acceptance_rate_at(timestamp)
+            .unwrap_or_else(|| stats.acceptance_rate()),
+        total: stats
+            .decayed_total_at(timestamp)
+            .unwrap_or_else(|| stats.total() as f32),
+    }
 }

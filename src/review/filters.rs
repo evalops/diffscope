@@ -572,6 +572,35 @@ mod tests {
     }
 
     #[test]
+    fn feedback_confidence_uses_decayed_rule_history() {
+        let mut feedback = FeedbackStore::default();
+        let now = chrono::Utc::now().timestamp();
+        let stale = now - (4 * 30 * 24 * 60 * 60);
+
+        for _ in 0..32 {
+            feedback.record_rule_feedback_patterns_at("sec.sql.injection", &["*.rs"], false, stale);
+        }
+        for _ in 0..4 {
+            feedback.record_rule_feedback_patterns_at("sec.sql.injection", &["*.rs"], true, now);
+        }
+
+        let mut comment = build_comment(
+            "c1",
+            core::comment::Category::Security,
+            core::comment::Severity::Error,
+            0.8,
+        );
+        comment.rule_id = Some("sec.sql.injection".to_string());
+
+        let result = apply_feedback_confidence_adjustment(vec![comment], &feedback, 5);
+        assert!(
+            result[0].confidence > 0.8,
+            "Expected recent rule-level accepts to outweigh stale rejects, got {}",
+            result[0].confidence
+        );
+    }
+
+    #[test]
     fn feedback_confidence_boosts_exactly_accepted_comment_ids() {
         let mut feedback = FeedbackStore::default();
         feedback.accept.insert("c1".to_string());

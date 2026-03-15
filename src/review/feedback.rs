@@ -20,13 +20,15 @@ pub use persistence::{load_feedback_store, load_feedback_store_from_path, save_f
 #[allow(unused_imports)]
 pub use record::{
     apply_comment_dismissal_signal, apply_comment_feedback_signal,
-    apply_comment_resolution_outcome_signal, record_comment_dismissal_stats,
-    record_comment_feedback_stats, record_comment_resolution_stats, CommentResolutionOutcome,
+    apply_comment_feedback_signal_at, apply_comment_resolution_outcome_signal,
+    apply_comment_resolution_outcome_signal_at, record_comment_dismissal_stats,
+    record_comment_feedback_stats, record_comment_feedback_stats_at,
+    record_comment_resolution_stats, record_comment_resolution_stats_at, CommentResolutionOutcome,
 };
 #[allow(unused_imports)]
 pub use semantic::{record_semantic_feedback_example, record_semantic_feedback_examples};
 #[allow(unused_imports)]
-pub use store::{FeedbackPatternStats, FeedbackStore, FeedbackTypeStats};
+pub use store::{DecayedFeedbackStats, FeedbackPatternStats, FeedbackStore, FeedbackTypeStats};
 
 #[cfg(test)]
 mod tests {
@@ -72,6 +74,21 @@ mod tests {
         store.dismissed.insert("c3".to_string());
         store.addressed.insert("c4".to_string());
         store.not_addressed.insert("c5".to_string());
+        store.by_rule.insert(
+            "style.rule".to_string(),
+            FeedbackPatternStats {
+                accepted: 1,
+                rejected: 2,
+                dismissed: 0,
+                addressed: 0,
+                not_addressed: 0,
+                decayed: Some(DecayedFeedbackStats {
+                    positive: 0.75,
+                    negative: 1.25,
+                    last_event_at: Some(123),
+                }),
+            },
+        );
         store.by_comment_type.insert(
             "style".to_string(),
             FeedbackTypeStats {
@@ -95,6 +112,10 @@ mod tests {
         assert_eq!(deserialized.by_comment_type["style"].dismissed, 3);
         assert_eq!(deserialized.by_comment_type["style"].addressed, 4);
         assert_eq!(deserialized.by_comment_type["style"].not_addressed, 5);
+        assert_eq!(
+            deserialized.by_rule["style.rule"].decayed_total_at(123),
+            Some(2.0)
+        );
     }
 
     #[test]
@@ -120,6 +141,7 @@ mod tests {
             dismissed: 0,
             addressed: 0,
             not_addressed: 0,
+            decayed: None,
         };
         assert_eq!(stats.acceptance_rate(), 1.0);
         assert_eq!(stats.total(), 10);
@@ -133,6 +155,7 @@ mod tests {
             dismissed: 0,
             addressed: 0,
             not_addressed: 0,
+            decayed: None,
         };
         assert_eq!(stats.acceptance_rate(), 0.0);
     }
@@ -145,6 +168,7 @@ mod tests {
             dismissed: 0,
             addressed: 0,
             not_addressed: 0,
+            decayed: None,
         };
         assert!((stats.acceptance_rate() - 0.3).abs() < f32::EPSILON);
     }
@@ -157,10 +181,45 @@ mod tests {
             dismissed: 0,
             addressed: 3,
             not_addressed: 1,
+            decayed: None,
         };
 
         assert!((stats.acceptance_rate() - (4.0 / 6.0)).abs() < f32::EPSILON);
         assert_eq!(stats.total(), 6);
+    }
+
+    #[test]
+    fn rule_feedback_decay_prioritizes_recent_signals() {
+        let half_life = 30 * 24 * 60 * 60;
+        let mut store = FeedbackStore::default();
+
+        for _ in 0..32 {
+            store.record_rule_feedback_patterns_at("sec.sql.injection", &["*.rs"], false, 1_000);
+        }
+        for _ in 0..4 {
+            store.record_rule_feedback_patterns_at(
+                "sec.sql.injection",
+                &["*.rs"],
+                true,
+                1_000 + (4 * half_life),
+            );
+        }
+
+        let stats = &store.by_rule["sec.sql.injection"];
+        let decayed_total = stats.decayed_total_at(1_000 + (4 * half_life)).unwrap();
+        let decayed_rate = stats
+            .decayed_acceptance_rate_at(1_000 + (4 * half_life))
+            .unwrap();
+
+        assert!(
+            decayed_total >= 5.0,
+            "expected enough fresh signal, got {decayed_total}"
+        );
+        assert!(
+            decayed_rate > 0.6,
+            "expected recent accepts to outweigh stale rejects, got {decayed_rate}"
+        );
+        assert!(stats.acceptance_rate() < 0.2);
     }
 
     // ── record_feedback tests ─────────────────────────────────────────────

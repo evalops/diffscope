@@ -41,9 +41,12 @@ fn build_feedback_store_from_reviews(
     };
 
     for session in &sessions {
+        let timestamp = feedback_event_timestamp(session);
         for comment in &session.comments {
             if let Some(accepted) = normalize_feedback_label(comment.feedback.as_deref()) {
-                if review::apply_comment_feedback_signal(&mut store, comment, accepted) {
+                if review::apply_comment_feedback_signal_at(
+                    &mut store, comment, accepted, timestamp,
+                ) {
                     if accepted {
                         summary.accepted += 1;
                     } else {
@@ -110,10 +113,11 @@ fn backfill_not_addressed_outcomes(
                 .filter(|comment| comment.status == CommentStatus::Open)
             {
                 if current_comment_ids.contains(comment.id.as_str())
-                    && review::apply_comment_resolution_outcome_signal(
+                    && review::apply_comment_resolution_outcome_signal_at(
                         store,
                         comment,
                         review::CommentResolutionOutcome::NotAddressed,
+                        feedback_event_timestamp(current),
                     )
                 {
                     not_addressed += 1;
@@ -161,6 +165,10 @@ fn normalize_feedback_label(label: Option<&str>) -> Option<bool> {
         "reject" | "rejected" => Some(false),
         _ => None,
     }
+}
+
+fn feedback_event_timestamp(session: &ReviewSession) -> i64 {
+    session.completed_at.unwrap_or(session.started_at)
 }
 
 #[cfg(test)]
@@ -360,6 +368,57 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&map_store).unwrap(),
             serde_json::to_value(&list_store).unwrap()
+        );
+    }
+
+    #[test]
+    fn build_feedback_store_replays_rule_decay_in_chronological_order() {
+        let half_life = 30 * 24 * 60 * 60;
+
+        let stale_rejects = (0..32)
+            .map(|index| {
+                let mut comment = sample_comment(
+                    &format!("Stale reject {index}"),
+                    Category::Security,
+                    "src/lib.rs",
+                );
+                comment.feedback = Some("reject".to_string());
+                comment.rule_id = Some("SEC.SQL.INJECTION".to_string());
+                comment.id = format!("stale-reject-{index}");
+                comment
+            })
+            .collect::<Vec<_>>();
+        let recent_accepts = (0..4)
+            .map(|index| {
+                let mut comment = sample_comment(
+                    &format!("Recent accept {index}"),
+                    Category::Security,
+                    "src/lib.rs",
+                );
+                comment.feedback = Some("accept".to_string());
+                comment.rule_id = Some("SEC.SQL.INJECTION".to_string());
+                comment.id = format!("recent-accept-{index}");
+                comment
+            })
+            .collect::<Vec<_>>();
+
+        let (store, _) = build_feedback_store_from_reviews(vec![
+            sample_review_session("stale", 1_000, "raw", None, stale_rejects),
+            sample_review_session(
+                "recent",
+                1_000 + (4 * half_life),
+                "raw",
+                None,
+                recent_accepts,
+            ),
+        ]);
+
+        let stats = &store.by_rule["sec.sql.injection"];
+        let recent_timestamp = 1_000 + (4 * half_life) + 1;
+        assert!(stats.acceptance_rate() < 0.2);
+        assert!(
+            stats.decayed_acceptance_rate_at(recent_timestamp).unwrap() > 0.6,
+            "expected recent accepts to outweigh stale rejects after replay"
         );
     }
 }
