@@ -12,13 +12,14 @@ use std::sync::Arc;
 use tracing::info;
 
 use super::super::{api, state::AppState};
+use super::prompts::{prompt_specs, render_prompt};
 use super::protocol::{
     error_response, read_message, success_response, write_message, INVALID_PARAMS, INVALID_REQUEST,
     METHOD_NOT_FOUND, SERVER_NOT_INITIALIZED,
 };
 
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
-const SERVER_INSTRUCTIONS: &str = "DiffScope exposes repository review, PR readiness, analytics, and feedback-management tools over MCP. Review-starting tools are asynchronous; poll get_review, list_reviews, or get_pr_readiness after starting a review.";
+const SERVER_INSTRUCTIONS: &str = "DiffScope exposes repository review, PR readiness, analytics, feedback-management tools, and reusable agent workflows over MCP. Review-starting tools are asynchronous; poll get_review, list_reviews, or get_pr_readiness after starting a review.";
 
 pub(crate) async fn start_mcp_server(config: crate::config::Config) -> Result<()> {
     let state = Arc::new(AppState::new(config).await?);
@@ -45,6 +46,13 @@ impl ToolSpec {
 
 #[derive(Deserialize)]
 struct ToolCallParams {
+    name: String,
+    #[serde(default)]
+    arguments: Value,
+}
+
+#[derive(Deserialize)]
+struct PromptGetParams {
     name: String,
     #[serde(default)]
     arguments: Value,
@@ -148,6 +156,8 @@ impl StdioMcpServer {
                 None,
             ),
             "ping" => success_response(id, json!({})),
+            "prompts/list" => self.handle_prompts_list(id),
+            "prompts/get" => self.handle_prompts_get(id, params),
             "tools/list" => self.handle_tools_list(id),
             "tools/call" => self.handle_tools_call(id, params).await,
             _ => error_response(
@@ -168,6 +178,9 @@ impl StdioMcpServer {
             json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {
+                    "prompts": {
+                        "listChanged": false,
+                    },
                     "tools": {
                         "listChanged": false,
                     }
@@ -179,6 +192,42 @@ impl StdioMcpServer {
                 "instructions": SERVER_INSTRUCTIONS,
             }),
         )
+    }
+
+    fn handle_prompts_list(&self, id: Value) -> Value {
+        success_response(
+            id,
+            json!({
+                "prompts": prompt_specs(),
+            }),
+        )
+    }
+
+    fn handle_prompts_get(&self, id: Value, params: Value) -> Value {
+        let params: PromptGetParams = match serde_json::from_value(params) {
+            Ok(params) => params,
+            Err(err) => {
+                return error_response(
+                    Some(id),
+                    INVALID_PARAMS,
+                    format!("Invalid prompts/get params: {err}"),
+                    None,
+                )
+            }
+        };
+
+        let arguments = match normalize_object_arguments(params.arguments, "Prompt arguments") {
+            Ok(arguments) => arguments,
+            Err(err) => return error_response(Some(id), INVALID_PARAMS, err.to_string(), None),
+        };
+
+        match render_prompt(&params.name, arguments) {
+            Ok(prompt) => match to_value(prompt) {
+                Ok(prompt) => success_response(id, prompt),
+                Err(err) => error_response(Some(id), INVALID_PARAMS, err.to_string(), None),
+            },
+            Err(err) => error_response(Some(id), INVALID_PARAMS, err.to_string(), None),
+        }
     }
 
     fn handle_tools_list(&self, id: Value) -> Value {
@@ -206,7 +255,7 @@ impl StdioMcpServer {
             }
         };
 
-        let arguments = match normalize_tool_arguments(params.arguments) {
+        let arguments = match normalize_object_arguments(params.arguments, "Tool arguments") {
             Ok(arguments) => arguments,
             Err(err) => return error_response(Some(id), INVALID_PARAMS, err.to_string(), None),
         };
@@ -419,11 +468,11 @@ impl StdioMcpServer {
     }
 }
 
-fn normalize_tool_arguments(arguments: Value) -> Result<Value> {
+fn normalize_object_arguments(arguments: Value, label: &str) -> Result<Value> {
     match arguments {
         Value::Null => Ok(json!({})),
         Value::Object(_) => Ok(arguments),
-        _ => anyhow::bail!("Tool arguments must be a JSON object"),
+        _ => anyhow::bail!("{label} must be a JSON object"),
     }
 }
 
@@ -857,9 +906,71 @@ mod tests {
 
         assert_eq!(response["result"]["serverInfo"]["name"], "diffscope");
         assert_eq!(
+            response["result"]["capabilities"]["prompts"]["listChanged"],
+            false
+        );
+        assert_eq!(
             response["result"]["capabilities"]["tools"]["listChanged"],
             false
         );
+    }
+
+    #[tokio::test]
+    async fn prompts_list_returns_reusable_workflows() {
+        let dir = tempdir().unwrap();
+        let state = test_state(dir.path().to_path_buf());
+        let mut server = StdioMcpServer::new(state);
+        initialize_server(&mut server).await;
+
+        let response = server
+            .handle_message(json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "prompts/list",
+                "params": {}
+            }))
+            .await
+            .unwrap();
+
+        let prompts = response["result"]["prompts"].as_array().unwrap();
+        assert!(prompts
+            .iter()
+            .any(|prompt| prompt["name"] == "check_pr_readiness"));
+        assert!(prompts
+            .iter()
+            .any(|prompt| prompt["name"] == "fix_until_clean"));
+    }
+
+    #[tokio::test]
+    async fn prompts_get_renders_fix_loop_workflow() {
+        let dir = tempdir().unwrap();
+        let state = test_state(dir.path().to_path_buf());
+        let mut server = StdioMcpServer::new(state);
+        initialize_server(&mut server).await;
+
+        let response = server
+            .handle_message(json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "prompts/get",
+                "params": {
+                    "name": "fix_until_clean",
+                    "arguments": {
+                        "repo": "owner/repo",
+                        "pr_number": 42,
+                        "max_iterations": 4
+                    }
+                }
+            }))
+            .await
+            .unwrap();
+
+        let text = response["result"]["messages"][0]["content"]["text"]
+            .as_str()
+            .unwrap();
+        assert!(text.contains("iteration budget of 4"));
+        assert!(text.contains("rerun_pr_review"));
+        assert!(text.contains("owner/repo#42"));
     }
 
     #[test]

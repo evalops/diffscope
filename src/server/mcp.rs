@@ -1,3 +1,5 @@
+#[path = "mcp/prompts.rs"]
+mod prompts;
 #[path = "mcp/protocol.rs"]
 mod protocol;
 #[path = "mcp/stdio.rs"]

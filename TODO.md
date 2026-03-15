@@ -120,7 +120,7 @@ This roadmap is derived from deep research into Greptile's public docs, blog, MC
 75. [x] Add a "trigger re-review" API that reuses existing PR metadata and loop policy.
 76. [x] Add APIs for comment resolution and lifecycle updates, not just thumbs.
 77. [x] Add an MCP server for DiffScope with review, analytics, and rule-management tools.
-78. [ ] Add reusable agent skills/workflows for checking PR readiness and running fix loops.
+78. [x] Add reusable agent skills/workflows for checking PR readiness and running fix loops.
 79. [ ] Add signed webhook or event-stream integration for downstream automation consumers.
 80. [ ] Add rate-limited API auth and audit trails for automation-heavy deployments.
 
